@@ -71,7 +71,6 @@ legend { padding: 0; font-weight: 750; font-size: 1.02rem; margin-bottom: 10px; 
 .mode strong { font-size: 1.7rem; }
 .mode-body > span, .time-row { font-size: .93rem; color: var(--muted); }
 .mode small { font-size: .78rem; font-weight: 700; color: var(--ink); }
-.mode:not(:has(:disabled)) small { display: none; }
 .time-row { margin: 18px 0; align-items: baseline; }
 .time-row strong { margin-left: 4px; color: var(--ink); }
 .clock { align-self: center; display: inline-block; position: relative; width: 16px; height: 16px; flex: none; border: 1.7px solid var(--ink); border-radius: 50%; }

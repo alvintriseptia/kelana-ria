@@ -79,7 +79,10 @@ export async function exerciseChooser(context, origin, dist, results) {
     assert.ok(await solo.isChecked() && await claim.isChecked() && await hide.isDisabled(), 'Solo Hide & Seek link resolves to solo Claim');
     const chooserTree = (await cdp.send('Accessibility.getFullAXTree')).nodes.filter(node => !node.ignored);
     const radios = chooserTree.filter(node => node.role.value === 'radio');
+    const claimRadio = radios.find(node => node.name.value.includes('Claim the City'));
     const hideRadio = radios.find(node => node.name.value.includes('Hide & Seek'));
+    assert.ok(claimRadio?.name.value.includes('1–2 pemain'), 'Claim format shows supported player counts');
+    assert.ok(hideRadio?.name.value.includes('Perlu 2 pemain'), 'Hide & Seek format shows supported player count');
     assert.ok(hideRadio?.properties.some(prop => prop.name === 'disabled' && prop.value.value), 'Chromium exposes disabled Hide & Seek');
     assert.equal(radios.filter(node => node.properties.some(prop => prop.name === 'checked' && prop.value.value === 'true')).length, 2);
     const notice = page.getByRole('status');
@@ -90,6 +93,7 @@ export async function exerciseChooser(context, origin, dist, results) {
     await tabTo(page, solo);
     await page.keyboard.press('ArrowRight');
     assert.ok(await duo.isChecked() && await hide.isEnabled());
+    assert.ok(await page.getByText('1–2 pemain').isVisible() && await page.getByText('Perlu 2 pemain').isVisible());
     await tabTo(page, claim);
     await page.keyboard.press('ArrowRight');
     assert.ok(await hide.isChecked());
