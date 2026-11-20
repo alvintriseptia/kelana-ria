@@ -29,6 +29,16 @@ class QueueTests(unittest.TestCase):
         self.assertTrue(agent.claim(api, 8, "abc"))
         self.assertFalse(agent.claim(api, 8, "abc"))
 
+    def test_missing_dependency_does_not_block_next_ticket(self):
+        def ticket(n, dep):
+            return {"number": n, "labels": [], "body": f"## Dependencies\n{dep}",
+                    "html_url": "https://example.invalid"}
+        with patch.object(agent, "pages", return_value=[ticket(4, "#404"), ticket(5, "None")]), \
+             patch.object(agent, "api", side_effect=agent.ApiError("HTTP 404")), \
+             patch.object(agent, "claim", return_value=True) as claim:
+            agent.pickup("base")
+            claim.assert_called_once_with(agent.api, 5, "base")
+
     def test_resume_without_new_claim(self):
         api = Mock(side_effect=[{"state": "open"}, {"ref": "refs/heads/agent/issue-8"}])
         agent.resume(api, 8)
@@ -92,6 +102,19 @@ class ScopeTests(unittest.TestCase):
 
 
 class MergeTests(unittest.TestCase):
+    def test_ci_run_belongs_to_pr_and_base(self):
+        run = {"pull_requests": [{"number": 16, "head": {"sha": "a"}, "base": {"sha": "b"}}]}
+        self.assertTrue(agent.tested_revision(run, 16, "a", "b"))
+        self.assertFalse(agent.tested_revision(run, 15, "a", "b"))
+        self.assertFalse(agent.tested_revision(run, 16, "a", "old"))
+        self.assertFalse(agent.tested_revision({}, 16, "a", "b"))
+
+    def test_closes_only_the_claimed_issue(self):
+        node = {"number": 5, "repository": {"nameWithOwner": agent.REPO}}
+        self.assertTrue(agent.closes_claim({"totalCount": 1, "nodes": [node]}, 5))
+        self.assertFalse(agent.closes_claim({"totalCount": 2, "nodes": [node, node]}, 5))
+        self.assertFalse(agent.closes_claim({"totalCount": 0, "nodes": []}, 5))
+
     def test_ci_requires_current_head_successful_jobs(self):
         run = {"path": ".github/workflows/factory.yml", "event": "pull_request",
                "head_sha": "abc", "status": "completed", "conclusion": "success",

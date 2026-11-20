@@ -92,7 +92,14 @@ def pickup(base):
         except ValueError as error:
             print(f"Skipping #{number}: {error}", file=sys.stderr)
             continue
-        if not all(completed(api(f"issues/{dep}")) for dep in needs):
+        try:
+            ready = all(completed(api(f"issues/{dep}")) for dep in needs)
+        except ApiError as error:
+            if "HTTP 404" not in str(error):
+                raise
+            print(f"Skipping #{number}: dependency unavailable", file=sys.stderr)
+            continue
+        if not ready:
             continue
         if claim(api, number, base):
             print(f"Claimed #{number} on {branch(number)}\n{issue['html_url']}")
@@ -155,6 +162,32 @@ def green(run, head, source, jobs):
             and all(job["conclusion"] == "success" for job in jobs))
 
 
+def tested_revision(run, number, head, base):
+    return any(p["number"] == number and p["head"]["sha"] == head and p["base"]["sha"] == base
+               for p in run.get("pull_requests", []))
+
+
+def closes_claim(links, issue):
+    return links["totalCount"] == 1 and links["nodes"] == [
+        {"number": issue, "repository": {"nameWithOwner": REPO}}]
+
+
+def closing_issues(number):
+    query = """
+    query($number: Int!) {
+      repository(owner: "alvintriseptia", name: "kelana-ria") {
+        pullRequest(number: $number) {
+          closingIssuesReferences(first: 2) {
+            totalCount nodes { number repository { nameWithOwner } }
+          }
+        }
+      }
+    }"""
+    raw = subprocess.check_output(["gh", "api", "graphql", "-f", f"query={query}",
+                                   "-F", f"number={number}"], text=True)
+    return json.loads(raw)["data"]["repository"]["pullRequest"]["closingIssuesReferences"]
+
+
 def current_main(root):
     # Fetch this repository explicitly. The caller may use a separate checkout for feature work.
     git(root, "fetch", "-q", f"https://github.com/{REPO}.git", "refs/heads/main")
@@ -189,7 +222,8 @@ def merge(root, number, base):
         raise ValueError("Maintainer review required for this diff")
 
     runs = [run for run in pages(f"actions/runs?head_sha={head}&event=pull_request", "workflow_runs")
-            if run["path"] == FLOW and run["head_branch"] == source]
+            if run["path"] == FLOW and run["head_branch"] == source
+            and tested_revision(run, number, head, base)]
     if not runs:
         raise ValueError("Missing Factory CI")
     run = max(runs, key=lambda r: (r["id"], r["run_attempt"]))
@@ -198,19 +232,25 @@ def merge(root, number, base):
         raise ValueError("Factory CI has not passed on this revision")
 
     query = subprocess.check_output(["gh", "pr", "view", str(number), "--repo", REPO,
-                                     "--json", "reviewDecision,statusCheckRollup"], text=True)
+                                     "--json", "reviewDecision,latestReviews,statusCheckRollup"], text=True)
     review = json.loads(query)
-    if review["reviewDecision"] in {"CHANGES_REQUESTED", "REVIEW_REQUIRED"}:
+    if (review["reviewDecision"] in {"CHANGES_REQUESTED", "REVIEW_REQUIRED"}
+            or any(r["state"] == "CHANGES_REQUESTED" for r in review["latestReviews"])):
         raise ValueError("Review is outstanding")
     checks = review["statusCheckRollup"]
     if not checks or any((c.get("conclusion") or c.get("state")) != "SUCCESS" for c in checks):
         raise ValueError("All reported checks must succeed")
+    if not closes_claim(closing_issues(number), int(issue)):
+        raise ValueError("GitHub must link only the claimed issue for closure")
     if api("git/ref/heads/main")["object"]["sha"] != base:
         raise ValueError("Main advanced during verification")
     result = api(f"pulls/{number}/merge", method="PUT", sha=head, merge_method="squash")
     if not result["merged"]:
         raise ValueError(result["message"])
     print(f"Merged PR #{number} at {result['sha']}")
+    merged = api(f"git/commits/{result['sha']}")
+    if [parent["sha"] for parent in merged["parents"]] != [base]:
+        raise ValueError("PR was merged concurrently with another update. Verify the merged revision and report on the issue.")
 
 
 def main():
