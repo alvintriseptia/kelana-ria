@@ -22,6 +22,8 @@ Read the claimed issue and use the [GitHub delivery skill](.agents/skills/github
 
 ## Verify and deliver
 
+For workspace changes, run `npm ci` and `npm run build` with the Node version in `.nvmrc`. The [workspace guide](README.md) lists package boundaries and focused builds.
+
 Run `python3 -m unittest discover -s factory -v` from the issue worktree. Add the issue-specific checks from the relevant skill. Open a PR against main with a standalone `Closes #N` line and links to evidence. Monitor CI and fix recoverable failures.
 
 From clean current main, use `python3 factory/agent.py merge PR_NUMBER REVIEWED_SHA` only for supporting documentation or edits to approved neutral copy. Read the diff for accuracy and meaning first. You review gameplay, code, payments, CI, skills, policy and PRD changes as maintainer. The session can continue with other ready issues while a PR awaits your review.
