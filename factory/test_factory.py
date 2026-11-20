@@ -52,7 +52,7 @@ class ScopeTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.git("init", "-q")
         self.put("factory/copy-keys.json", '["nav.home"]')
-        self.put("src/locales/id.json", '{"nav.home":"Beranda","rules":"Win"}')
+        self.put("apps/web/src/locales/id.json", '{"nav.home":"Beranda","rules":"Win"}')
         self.base = self.commit()
 
     def git(self, *args):
@@ -77,7 +77,7 @@ class ScopeTests(unittest.TestCase):
         self.assertTrue(self.eligible())
 
     def test_neutral_copy(self):
-        self.put("src/locales/id.json", '{"nav.home":"Menu utama","rules":"Win"}')
+        self.put("apps/web/src/locales/id.json", '{"nav.home":"Menu utama","rules":"Win"}')
         self.assertTrue(self.eligible())
 
     def test_mixed_scope(self):
@@ -90,7 +90,7 @@ class ScopeTests(unittest.TestCase):
                        {"nav.home": "Hi {name}", "rules": "Win"},
                        {"nav.home": "<b>Home</b>", "rules": "Win"},
                        {"nav.home": "First", "rules": "Win", "new": "Added"}]:
-            self.put("src/locales/id.json", json.dumps(values))
+            self.put("apps/web/src/locales/id.json", json.dumps(values))
             self.assertFalse(self.eligible())
 
     def test_executable_and_symlink(self):

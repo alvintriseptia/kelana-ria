@@ -1,0 +1,12 @@
+{
+  "name": "@kelana-ria/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --build"
+  },
+  "dependencies": {
+    "@kelana-ria/contracts": "0.0.0"
+  }
+}

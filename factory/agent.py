@@ -146,7 +146,7 @@ def routine_scope(root, base, head):
             return False
         if re.fullmatch(r"docs/(qa|guides)/[a-z0-9][a-z0-9-]*\.md", path):
             kinds.add("docs")
-        elif path == "src/locales/id.json" and status == "M" and eligible_copy(root, base, head, path):
+        elif path == "apps/web/src/locales/id.json" and status == "M" and eligible_copy(root, base, head, path):
             kinds.add("copy")
         else:
             return False
