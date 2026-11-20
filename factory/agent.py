@@ -198,8 +198,10 @@ def current_main(root):
     return base
 
 
-def merge(root, number, base):
+def merge(root, number, base, reviewed_sha):
     pull = api(f"pulls/{number}")
+    if pull["head"]["sha"] != reviewed_sha:
+        raise ValueError("PR head changed since the diff was reviewed")
     source = pull["head"]["ref"]
     match = re.fullmatch(r"agent/issue-([1-9]\d*)", source)
     if (not match or pull["state"] != "open" or pull["draft"] or pull["base"]["ref"] != "main"
@@ -258,7 +260,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("pickup")
     for name in ["resume", "merge"]:
-        commands.add_parser(name).add_argument("number", type=int)
+        sub = commands.add_parser(name)
+        sub.add_argument("number", type=int)
+        if name == "merge":
+            sub.add_argument("reviewed_sha", help="Full commit SHA of the inspected diff")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     base = current_main(root)
@@ -267,7 +272,7 @@ def main():
     elif args.command == "resume":
         resume(api, args.number)
     else:
-        merge(root, args.number, base)
+        merge(root, args.number, base, args.reviewed_sha)
 
 
 if __name__ == "__main__":

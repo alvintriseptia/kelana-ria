@@ -102,6 +102,37 @@ class ScopeTests(unittest.TestCase):
 
 
 class MergeTests(unittest.TestCase):
+    def test_refuses_revision_after_semantic_review(self):
+        pull = {"head": {"ref": "agent/issue-2", "sha": "new", "repo": {"full_name": agent.REPO}},
+                "state": "open", "draft": False, "base": {"ref": "main", "sha": "base"}}
+        with patch.object(agent, "api", return_value=pull) as api:
+            with self.assertRaisesRegex(ValueError, "reviewed"):
+                agent.merge(".", 16, "base", "old")
+            self.assertEqual(len(api.call_args_list), 1)
+
+    def test_complete_merge_gate(self):
+        pull = {"head": {"ref": "agent/issue-2", "sha": "new", "repo": {"full_name": agent.REPO}},
+                "state": "open", "draft": False, "base": {"ref": "main", "sha": "base"},
+                "body": "Closes #2"}
+        run = {"id": 8, "run_attempt": 1, "path": agent.FLOW, "event": "pull_request",
+               "head_branch": "agent/issue-2", "status": "completed", "conclusion": "success",
+               "head_sha": "new", "head_repository": {"full_name": agent.REPO},
+               "pull_requests": [{"number": 16, "base": {"sha": "base"}, "head": {"sha": "new"}}]}
+        results = {"pulls/16": pull, "issues/2": {"state": "open", "labels": [{"name": "ready"}]},
+                   "git/ref/heads/main": {"object": {"sha": "base"}},
+                   "pulls/16/merge": {"merged": True, "sha": "merged"},
+                   "git/commits/merged": {"parents": [{"sha": "base"}]}}
+        reviews = {"reviewDecision": "", "latestReviews": [], "statusCheckRollup": [{"conclusion": "SUCCESS"}]}
+        links = {"totalCount": 1, "nodes": [{"number": 2, "repository": {"nameWithOwner": agent.REPO}}]}
+        with patch.object(agent, "api", side_effect=lambda path, **kw: results[path]) as api, \
+             patch.object(agent, "git", side_effect=[b"", b"new", b"base"]), \
+             patch.object(agent, "pages", side_effect=[[run], [{"name": "factory", "conclusion": "success"}]]), \
+             patch.object(agent, "routine_scope", return_value=True), \
+             patch.object(agent, "closing_issues", return_value=links), \
+             patch.object(subprocess, "check_output", return_value=json.dumps(reviews)):
+            agent.merge(".", 16, "base", "new")
+            api.assert_any_call("pulls/16/merge", method="PUT", sha="new", merge_method="squash")
+
     def test_ci_run_belongs_to_pr_and_base(self):
         run = {"pull_requests": [{"number": 16, "head": {"sha": "a"}, "base": {"sha": "b"}}]}
         self.assertTrue(agent.tested_revision(run, 16, "a", "b"))
