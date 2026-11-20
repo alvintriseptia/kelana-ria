@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f7f6ed">
+  <meta name="description" content="Pilih permainan jelajah Jakarta untuk satu atau dua pemain.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="stylesheet" href="/src/style.css">
+  <title>Pilih permainan · Kelana Ria</title>
+</head>
+<body>
+  <header class="mast"><div class="mast-inner">
+    <div class="brand"><img src="/icons/icon-192.png" width="38" height="38" alt="">Kelana Ria</div>
+    <button class="guide-button" type="button" id="guide-open"><span class="book" aria-hidden="true"></span><span data-copy="nav.guide">Panduan</span></button>
+  </div></header>
+  <main>
+    <h1>Pilih permainan</h1>
+    <p class="intro">Jelajahi Jakarta dengan berjalan kaki dan naik transportasi umum.</p>
+    <div class="layout">
+      <section class="board" aria-labelledby="board-heading">
+        <div class="art">
+          <img src="/src/assets/jakarta.webp" alt="" width="800" height="550" fetchpriority="high">
+          <div class="caption"><span class="map-pin" aria-hidden="true"></span><h2 id="board-heading">Jakarta</h2></div>
+        </div>
+        <div class="board-info">
+          <label for="board">Cakupan papan</label>
+          <select id="board" name="board" form="chooser">
+            <option value="compact">Jakarta (Compact)</option>
+            <option value="jakarta-wide">Jakarta (Wide)</option>
+          </select>
+          <p id="extent">Sekitar Blok M, Senayan, dan Palmerah.</p>
+          <div class="station"><span class="station-dot" aria-hidden="true"></span><span>Titik awal <strong>CSW–ASEAN</strong></span></div>
+        </div>
+      </section>
+
+      <form id="chooser">
+        <fieldset class="people"><legend>Jumlah pemain</legend>
+          <div class="segments">
+            <label><input type="radio" name="players" value="1" checked><span>Solo</span></label>
+            <label><input type="radio" name="players" value="2"><span>Berdua</span></label>
+          </div>
+        </fieldset>
+        <fieldset class="formats"><legend>Format permainan</legend>
+          <label class="mode">
+            <input type="radio" name="format" value="claim-the-city" checked>
+            <span class="mode-body"><strong lang="en">Claim the City</strong><span id="claim-objective">Klaim 4 tempat di setidaknya 2 zona sebelum waktu habis.</span></span>
+          </label>
+          <label class="mode">
+            <input type="radio" name="format" value="hide-and-seek" disabled>
+            <span class="mode-body"><strong lang="en">Hide &amp; Seek</strong><span>Bergantian sembunyi dan mencari. Waktu sembunyi terlama menang.</span><small>Perlu 2 pemain</small></span>
+          </label>
+        </fieldset>
+        <p class="time-row"><span class="clock" aria-hidden="true"></span><span>Durasi uji coba <strong id="duration">60 menit</strong></span></p>
+        <button class="primary" type="submit">Lihat ringkasan <span aria-hidden="true">→</span></button>
+        <p class="sr-only" role="status" id="feedback"></p>
+        <noscript>Aktifkan JavaScript untuk mengubah pilihan permainan.</noscript>
+      </form>
+    </div>
+  </main>
+  <dialog id="guide" aria-labelledby="guide-heading">
+    <div class="dialog-body">
+      <h2 id="guide-heading" tabindex="-1" autofocus>Panduan bermain</h2>
+      <h3 lang="en">Claim the City</h3><p>Kunjungi tempat di papan, lakukan check-in, lalu selesaikan tantangannya. Saat bermain berdua, kuasai zona terbanyak untuk menang.</p>
+      <h3 lang="en">Hide &amp; Seek</h3><p>Dua pemain bergantian sembunyi. Gunakan petunjuk untuk menemukan temanmu. Bandingkan waktu sembunyi setelah kedua giliran selesai.</p>
+      <p>Perjalanan memakai data seluler dan tarif transportasi biasa. Lokasi diperlukan saat check-in.</p>
+      <p class="credit">Terinspirasi oleh <a href="https://nebula.tv/jetlag" lang="en">Jet Lag: The Game</a>, karya Adam Chase, Sam Denby, dan Ben Doyle. Kelana Ria adalah proyek independen.</p>
+      <form method="dialog"><button class="secondary" data-copy="dialog.close">Tutup</button></form>
+    </div>
+  </dialog>
+  <dialog id="summary" aria-labelledby="summary-heading">
+    <div class="dialog-body">
+      <h2 id="summary-heading" tabindex="-1" autofocus>Ringkasan permainan</h2>
+      <h3 id="summary-format" lang="en"></h3><p id="summary-goal"></p>
+      <dl>
+        <dt>Pemain</dt><dd id="summary-players"></dd>
+        <dt>Papan</dt><dd id="summary-board"></dd>
+        <dt>Titik awal</dt><dd>CSW–ASEAN</dd>
+        <dt>Durasi uji coba</dt><dd id="summary-time"></dd>
+      </dl>
+      <p>Berjalan kaki atau gunakan MRT, KRL, dan Transjakarta. Siapkan data seluler dan ongkos perjalanan.</p>
+      <p class="preview-note">Pratinjau pengaturan. Sesi permainan belum tersedia.</p>
+      <form method="dialog"><button class="secondary">Kembali ke pilihan</button></form>
+    </div>
+  </dialog>
+  <script type="module" src="/src/index.ts"></script>
+</body>
+</html>

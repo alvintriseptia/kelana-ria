@@ -18,10 +18,19 @@ npm run build
 python3 -m unittest discover -s factory -v
 ```
 
-The TypeScript build compiles the contracts before their consumers and writes each workspace's output to its own `dist/` directory. For a focused build, run `npm run build --workspace @kelana-ria/web` or substitute `@kelana-ria/api`. Run `npm run clean` to clear compiler outputs.
+The build compiles contracts before their consumers and bundles the deployable static web app in `apps/web/dist/`. For a focused build, run `npm run build --workspace @kelana-ria/web` or substitute `@kelana-ria/api`. Run `npm run clean` to clear compiler outputs.
 
 Add dependencies to the workspace that imports them, for example with `npm install <package> --workspace @kelana-ria/web`. Commit the root lockfile with dependency changes. Both apps import public types from `@kelana-ria/contracts` using `import type`.
 
 ## Development
 
-Use the [agent guide](AGENTS.md) to claim an issue and deliver a linked PR. The [PWA shell issue](https://github.com/alvintriseptia/kelana-ria/issues/3) owns the first runnable player screen, installability checks and mobile performance baseline.
+Run `npm run dev` to open the game chooser locally. For installation and offline checks, serve the production build with `npm run preview --workspace @kelana-ria/web` on localhost or an HTTPS origin. Serve the web build at the root path. The service worker verifies the original build bytes before caching the shell.
+
+To reproduce the mobile checks after building:
+
+```sh
+npx --no-install playwright install chromium
+npm run qa --workspace @kelana-ria/web
+```
+
+The checks exercise the chooser, keyboard flow, Chromium installability and offline launch. They also measure three cold loads at 390 × 844 with a 4× CPU slowdown and throttled mobile network. Screenshots, traces and the run report are written to `apps/web/qa-results/` and uploaded with PR checks. Use the [agent guide](AGENTS.md) to claim the next issue.
