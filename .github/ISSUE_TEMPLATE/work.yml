@@ -1,0 +1,33 @@
+name: Delivery issue
+description: Define a player or maintainer outcome for a Codex session.
+title: "[Work] "
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What will a player, creator, reviewer or maintainer be able to do?
+    validations:
+      required: true
+  - type: input
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Enter None or comma-separated issue numbers.
+      placeholder: "#2, #5"
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Requirements
+      description: Link PRD sections and acceptance IDs, or identify the factory requirement.
+    validations:
+      required: true
+  - type: textarea
+    id: verification
+    attributes:
+      label: Verification
+      description: Specify the checks and evidence, including simulation, sandbox or field conditions.
+    validations:
+      required: true
