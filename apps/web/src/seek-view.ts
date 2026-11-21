@@ -48,7 +48,7 @@ type Controls = {
   startOpen: boolean;
   point?: SoloPoint;
   feedback?: Feedback;
-  map: { shown: boolean; failed: boolean; url: string };
+  map: { shown: boolean; failed: boolean; vectorMode: boolean; url: string };
   clueDraft: ClueDraft;
 };
 
@@ -240,14 +240,17 @@ function board(room: SeekRoom, { point: selected, busy, map }: Controls) {
   const startId = escapeText(room.edition.start.id);
   const startName = escapeText(room.edition.start.name);
   const startBranch = room.clues?.branches[room.edition.start.id];
+  const mapBody = !map.shown ? "" : map.failed
+    ? `<p class="solo-map-notice" role="status">Peta tidak tersedia. Lanjutkan lewat daftar titik.</p>${action("Muat ulang peta", "retry-map")}`
+    : map.vectorMode
+      ? `<div id="seek-vector-map"><p class="solo-map-notice" role="status">Memuat peta vektor…</p></div>`
+      : `${schematicBoard(room.edition, map.url, Boolean(type) && !busy, labelFor)}<div class="solo-actions">${action("Buka peta vektor (MapLibre)", "vector-map")}</div>`;
   return `<section class="solo-board" aria-labelledby="seek-board-heading">
     <div class="solo-section-heading">
       <h2 id="seek-board-heading" tabindex="-1">${type === "lock" ? "Pilih titik sembunyi" : type === "investigate" ? "Selidiki titik" : "Titik di papan"}</h2>
       <button class="secondary" type="button" data-action="map" data-focus="map" aria-expanded="${map.shown}" aria-controls="seek-map">${map.shown ? "Tutup peta" : "Lihat peta"}</button>
     </div>
-    <div id="seek-map" ${map.shown ? "" : "hidden"}>${!map.shown ? "" : map.failed
-      ? `<p class="solo-map-notice" role="status">Peta tidak tersedia. Lanjutkan lewat daftar titik.</p>${action("Muat ulang peta", "retry-map")}`
-      : schematicBoard(room.edition, map.url, Boolean(type) && !busy, labelFor)}</div>
+    <div id="seek-map" ${map.shown ? "" : "hidden"}>${mapBody}</div>
     <div class="solo-zone">
       <h3>${canReference ? `<button class="seek-start-point" type="button" data-action="point" data-point="${startId}"
         data-focus="list-${startId}" aria-controls="seek-action" ${busy ? "disabled" : ""}>${startName}</button>` : startName} <small>Titik awal</small>

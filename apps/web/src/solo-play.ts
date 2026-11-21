@@ -1,6 +1,7 @@
 import type { LocationFix, MapConfig, SoloAction, SoloChallenge, SoloPoint, SoloReply, SoloSession } from "@kelana-ria/contracts";
 import { action, checkpointList, escapeText, remaining, result, schematic, score, wib } from "./solo-view";
 import { getLocation } from "./device-location";
+import { fetchMapConfig } from "./map-config";
 import "./solo-play.css";
 
 const apiPath = "/api/solo";
@@ -439,27 +440,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
 
   async function resolveMapConfig(requestSignal: AbortSignal): Promise<MapConfig> {
     if (mapConfig) return mapConfig;
-    try {
-      const response = await fetch("/api/map/config", {
-        cache: "no-store",
-        signal: AbortSignal.any([signal, requestSignal, AbortSignal.timeout(4_000)]),
-      });
-      if (response.ok) {
-        mapConfig = (await response.json()) as MapConfig;
-        return mapConfig;
-      }
-    } catch {
-      // Offline or unconfigured falls back cleanly to offline-vector / schematic.
-    }
-    mapConfig = {
-      mode: "offline-vector",
-      styleUrl: null,
-      attribution: "Geoapify · © OpenStreetMap contributors · Transjakarta GTFS (CC BY 4.0)",
-      mapLibreLicenseUrl: "/licenses/maplibre-gl.txt",
-      tileCreditCost: 0.25,
-      routingCreditCost: 1,
-      freeDailyCredits: 3000,
-    };
+    mapConfig = await fetchMapConfig(AbortSignal.any([signal, requestSignal]));
     return mapConfig;
   }
 

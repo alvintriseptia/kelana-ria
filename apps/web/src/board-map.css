@@ -43,6 +43,44 @@
   outline-offset: 1px;
 }
 
+.board-map-radars {
+  list-style: none;
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  background: #f5f6ee;
+  border-top: 1px solid #d5d7cc;
+  font-size: 0.8rem;
+  color: #1c2b24;
+}
+
+.board-map-radars li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.board-map-radar-badge {
+  display: inline-block;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.74rem;
+}
+
+.board-map-radar-in {
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.board-map-radar-out {
+  background: #b45309;
+  color: #ffffff;
+}
+
 .board-map-attribution {
   margin: 0;
   padding: 0.5rem 0.75rem;

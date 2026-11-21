@@ -1,6 +1,7 @@
-import type { DuoAction, DuoReply, DuoRoom, GameBoard, LocationFix, SoloChallenge, SoloPoint } from "@kelana-ria/contracts";
+import type { DuoAction, DuoReply, DuoRoom, GameBoard, LocationFix, MapConfig, SoloChallenge, SoloPoint } from "@kelana-ria/contracts";
 import { getLocation } from "./device-location";
 import { board, checkpointPanel, entry, lobby, result, score } from "./duo-view";
+import { fetchMapConfig } from "./map-config";
 import { boardDisplayName, inviteUrl, pendingEntry, player, roomCodePattern, roomTransport, type EntryAction, type Feedback } from "./multiplayer-room";
 import { action, remaining, wib } from "./solo-view";
 import "./solo-play.css";
@@ -65,6 +66,9 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   let confirmingExit = false;
   let mapShown = false;
   let mapFailed = false;
+  let mapVectorMode = false;
+  let mapConfig: MapConfig | undefined;
+  let vectorMap: { destroy: () => void } | undefined;
   let eligibility = "";
 
   root.innerHTML = `<nav class="solo-nav" aria-label="Navigasi simulasi">
@@ -130,8 +134,58 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
       ? `${room.visits[selectedId] > now()}:${room.cooldowns[selectedId] > now()}` : "";
   }
 
+  async function resolveMapConfig() {
+    if (mapConfig) return mapConfig;
+    mapConfig = await fetchMapConfig(signal);
+    return mapConfig;
+  }
+
+  async function mountVectorMap(state: DuoRoom) {
+    const host = root.querySelector<HTMLElement>("#duo-vector-map");
+    if (!host || signal.aborted) return;
+    try {
+      const config = await resolveMapConfig();
+      const { mountBoardMap } = await import("./board-map");
+      if (signal.aborted || !mapShown || !mapVectorMode || !root.contains(host)) return;
+      vectorMap?.destroy();
+      vectorMap = mountBoardMap({
+        container: host,
+        config,
+        start: state.edition.start,
+        checkpoints: state.edition.checkpoints.map(point => {
+          const owner = state.owners[point.id];
+          return {
+            ...point,
+            claimed: Boolean(owner),
+            label: owner ? `Diklaim ${player[owner]}` : undefined,
+            selectable: state.phase === "active" && !owner && !busy && !pending,
+          };
+        }),
+        selectedId,
+        onSelect(checkpointId) {
+          if (busy || pending || room?.phase !== "active") return;
+          selectPoint(checkpointId);
+          paint("#duo-action-heading");
+          if (Object.hasOwn(room.visits, checkpointId)) void refresh(checkpointId);
+        },
+        onError() {
+          if (signal.aborted) return;
+          mapFailed = true;
+          mapVectorMode = false;
+          paint();
+        },
+      });
+    } catch {
+      if (!signal.aborted) {
+        mapFailed = true;
+        mapVectorMode = false;
+        paint();
+      }
+    }
+  }
+
   function renderRoom(state: DuoRoom, locked: boolean) {
-    const boardMarkup = board(state, selectedId, { shown: mapShown, failed: mapFailed, url: mapUrl });
+    const boardMarkup = board(state, selectedId, { shown: mapShown, failed: mapFailed, vectorMode: mapVectorMode, url: mapUrl });
     if (state.phase === "finished" || state.phase === "canceled") {
       return `${result(state, locked)}${state.phase === "finished" ? `<div class="duo-final-board">${boardMarkup}</div>` : ""}`;
     }
@@ -163,6 +217,8 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
 
   function paint(focus?: string) {
     if (signal.aborted) return;
+    vectorMap?.destroy();
+    vectorMap = undefined;
     boardLabelEl.textContent = boardDisplayName(room?.edition.board ?? requestedBoard);
     const focused = document.activeElement as HTMLElement | null;
     const key = focused?.dataset.focus;
@@ -183,6 +239,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
     if (join) join.value = joinInput;
     eligibility = eligibilityState();
     updateClock();
+    if (room && mapShown && mapVectorMode && !mapFailed) void mountVectorMap(room);
     let target = focus ? root.querySelector<HTMLElement>(focus) : undefined;
     if (!target && key) target = root.querySelector<HTMLElement>(`[data-focus="${CSS.escape(key)}"]`);
     if (!target && key?.startsWith("map-")) target = root.querySelector<HTMLElement>('[data-focus="map"]');
@@ -458,6 +515,22 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
       case "copy": void copy(); break;
       case "map":
         mapShown = !mapShown;
+        if (!mapShown) {
+          vectorMap?.destroy();
+          vectorMap = undefined;
+        } else if (!mapVectorMode) {
+          void resolveMapConfig().then(config => {
+            if (!signal.aborted && mapShown && !mapVectorMode && config.mode === "geoapify-vector") {
+              mapVectorMode = true;
+              paint();
+            }
+          });
+        }
+        paint();
+        break;
+      case "vector-map":
+        mapVectorMode = true;
+        mapFailed = false;
         paint();
         break;
       case "retry-map":
@@ -546,6 +619,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   if (pending) paint();
   else void refresh();
   return () => {
+    vectorMap?.destroy();
     mount.abort();
     window.clearInterval(clock);
     window.clearInterval(poll);

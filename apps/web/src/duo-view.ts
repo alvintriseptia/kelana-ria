@@ -118,17 +118,24 @@ function ownership(owner: DuoSeat | undefined) {
   return owner ? `Diklaim ${player[owner]}` : undefined;
 }
 
-export function board(state: DuoRoom, selectedId: string | undefined, map: { shown: boolean; failed: boolean; url: string }) {
+export function board(
+  state: DuoRoom,
+  selectedId: string | undefined,
+  map: { shown: boolean; failed: boolean; vectorMode: boolean; url: string },
+) {
   const lobby = state.phase === "lobby";
   const active = state.phase === "active";
+  const mapBody = !map.shown ? "" : map.failed
+    ? `<p class="solo-map-notice" role="status">Peta tidak tersedia. Lanjutkan lewat daftar landmark.</p>${action("Muat ulang peta", "retry-map")}`
+    : map.vectorMode
+      ? `<div id="duo-vector-map"><p class="solo-map-notice" role="status">Memuat peta vektor…</p></div>`
+      : `${schematicBoard(state.edition, map.url, active, id => ownership(state.owners[id]))}<div class="solo-actions">${action("Buka peta vektor (MapLibre)", "vector-map")}</div>`;
   return `<section class="solo-board" aria-labelledby="duo-board-heading">
     <div class="solo-section-heading">
       <h2 id="duo-board-heading" tabindex="-1">${active ? "Pilih landmark" : "Landmark di papan"}</h2>
       <button class="secondary" type="button" data-action="map" data-focus="map" aria-expanded="${map.shown}" aria-controls="duo-map">${map.shown ? "Tutup peta" : "Lihat peta"}</button>
     </div>
-    <div id="duo-map" ${map.shown ? "" : "hidden"}>${!map.shown ? "" : map.failed
-      ? `<p class="solo-map-notice" role="status">Peta tidak tersedia. Lanjutkan lewat daftar landmark.</p>${action("Muat ulang peta", "retry-map")}`
-      : schematicBoard(state.edition, map.url, active, id => ownership(state.owners[id]))}</div>
+    <div id="duo-map" ${map.shown ? "" : "hidden"}>${mapBody}</div>
     ${state.zones.map(zone => `<section class="solo-zone" aria-label="Zona ${escapeText(zone.name)}" data-zone="${escapeText(zone.name)}">
       <h3>${escapeText(zone.name)}${lobby ? "" : ` <small>${zone.owner ? `Dikuasai ${player[zone.owner]}` : "Netral"}</small>`}</h3>
       ${lobby ? "" : `<p class="duo-zone-count">Pemain 1: ${zone.host} · Pemain 2: ${zone.guest}</p>`}
