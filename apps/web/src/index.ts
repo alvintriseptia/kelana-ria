@@ -58,10 +58,10 @@ function update(writeUrl = false) {
   document.getElementById("summary-board")!.textContent = board.selectedOptions[0]!.textContent;
   playButton.hidden = false;
   packsButton.hidden = wide || seeking;
-  playButton.textContent = seeking ? "Coba simulasi Hide & Seek" : game.players === 2 ? "Coba simulasi berdua" : "Coba simulasi";
-  document.getElementById("summary-travel")!.hidden = true;
+  playButton.textContent = seeking ? "Main Hide & Seek" : game.players === 2 ? "Main berdua" : "Main Solo";
+  document.getElementById("summary-travel")!.hidden = false;
   document.getElementById("summary-note")!.textContent =
-    "Coba edisi simulasi dengan lokasi virtual. Kamu bisa bermain dari mana saja.";
+    "Gratis dimainkan di Jakarta dengan GPS perangkat.";
   if (writeUrl) {
     const url = new URL(location.href);
     url.searchParams.set("players", String(game.players));
@@ -130,7 +130,7 @@ async function showRoute() {
     document.title = "Pilih permainan · Kelana Ria";
     play.replaceChildren();
     if (unsupportedSeek) {
-      feedback.textContent = "Simulasi Hide & Seek tersedia untuk dua pemain di Jakarta (Compact) atau Jakarta (Wide). Pilih pengaturan itu untuk bermain.";
+      feedback.textContent = "Hide & Seek tersedia untuk dua pemain di Jakarta (Compact) atau Jakarta (Wide). Pilih pengaturan itu untuk bermain.";
       feedback.classList.remove("sr-only");
     }
     if (wasPlaying) form.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus();
@@ -142,8 +142,8 @@ async function showRoute() {
   document.title = mode === "creator-packs" ? "Paket Kreator · Kelana Ria" : `${format} · Kelana Ria`;
   const heading = mode === "creator-packs"
     ? '<h1>Paket Kreator Jakarta</h1><p class="intro">Jakarta (Compact) · Claim the City · Tinjauan &amp; Katalog</p>'
-    : `<h1 lang="en">${format}</h1><p class="intro">${boardLabel} · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Edisi siap pakai · Simulasi</p>`;
-  play.innerHTML = `${heading}<p role="status">Membuka simulasi…</p>`;
+    : `<h1 lang="en">${format}</h1><p class="intro">${boardLabel} · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Gratis</p>`;
+  play.innerHTML = `${heading}<p role="status">Membuka permainan…</p>`;
   try {
     const mount = seeking ? (await import("./seek-play")).mountSeekPlay
       : mode === "creator-packs" ? (await import("./pack-play")).mountPackPlay
@@ -153,7 +153,7 @@ async function showRoute() {
   } catch {
     if (currentNavigation !== navigation) return;
     play.innerHTML = `${heading}
-      <p class="intro" role="alert">Simulasi belum bisa dibuka. Periksa koneksi lalu coba lagi.</p>
+      <p class="intro" role="alert">Permainan belum bisa dibuka. Periksa koneksi lalu coba lagi.</p>
       <button id="play-reload" class="secondary" type="button">Coba lagi</button>
       <button id="play-back" class="secondary" type="button">Kembali ke pilihan</button>`;
     const { signal } = routeEvents;

@@ -2,6 +2,7 @@ import type { LocationFix, MapConfig, SoloAction, SoloChallenge, SoloPoint, Solo
 import { action, checkpointList, escapeText, remaining, result, schematic, score, wib } from "./solo-view";
 import { getLocation } from "./device-location";
 import { fetchMapConfig } from "./map-config";
+import { defaultSimulatedLocation, isSimulatedLocationAllowed } from "./runtime-config";
 import "./solo-play.css";
 
 const apiPath = "/api/solo";
@@ -73,10 +74,11 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   let vectorMap: { destroy: () => void } | undefined;
   let confirmingAbandon = false;
   let eligibility = "";
+  let allowSimulate = defaultSimulatedLocation;
 
-  root.innerHTML = `<nav class="solo-nav" aria-label="Navigasi simulasi">
+  root.innerHTML = `<nav class="solo-nav" aria-label="Navigasi permainan">
     ${action("Kembali ke pilihan", "back", "solo-back")}
-    <span class="solo-label">Simulasi</span>
+    <span class="solo-label" id="solo-mode-badge">${allowSimulate ? "Mode QA" : "Gratis"}</span>
   </nav>
   <header class="solo-header">
     <h1 id="solo-title" tabindex="-1" lang="en">Claim the City</h1>
@@ -90,7 +92,15 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   const connection = root.querySelector<HTMLElement>("#solo-connection")!;
   const announcement = root.querySelector<HTMLElement>("#solo-announcement")!;
   const originBadge = root.querySelector<HTMLElement>("#solo-origin-badge")!;
+  const modeBadge = root.querySelector<HTMLElement>("#solo-mode-badge")!;
   root.querySelector<HTMLElement>("#solo-title")!.focus();
+
+  void isSimulatedLocationAllowed(signal).then((allowed) => {
+    if (signal.aborted || allowed === allowSimulate) return;
+    allowSimulate = allowed;
+    updateText(modeBadge, allowSimulate ? "Mode QA" : "Gratis");
+    if (!busy && !pending && !choiceId) paint();
+  });
 
   function estimatedNow() {
     return session ? session.now + performance.now() - serverSampleAt : Date.now();
@@ -167,7 +177,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
         <section class="solo-objective" aria-labelledby="solo-brief-heading">
           <h2 id="solo-brief-heading">Misi kamu</h2>
           <p>Klaim <strong>${targets.landmarks} landmark</strong> di setidaknya <strong>${targets.zones} zona</strong> dalam <strong>${Math.round(durationMs / 60_000)} menit</strong>.</p>
-          <p>Check-in lalu jawab satu tantangan untuk mengklaim landmark. Sesi ini memakai titik dan tantangan uji untuk bermain dari mana saja.</p>
+          <p>Check-in di lokasi lalu jawab satu tantangan untuk mengklaim landmark. Gratis dimainkan di Jakarta dengan GPS perangkat.</p>
           <p class="solo-edition">Edisi ${escapeText(id)} (${originText}${fallbackNote}) · Berjalan kaki, MRT, KRL, dan Transjakarta adalah pilihan perjalanan dalam aturan permainan${routeText}.</p>
         </section>
         <section class="solo-ticket" id="solo-action" aria-labelledby="solo-action-heading">
@@ -193,7 +203,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   function locationActions(verified = false) {
     return `${seekingLocation ? '<p role="status">Meminta lokasi perangkat…</p>' : ""}
       ${action("Check-in", "gps", verified ? "secondary" : "primary", busy || !!pending)}
-      ${action("Simulasikan lokasi di sini", "simulate", "secondary", busy || !!pending)}`;
+      ${allowSimulate ? action("Simulasikan lokasi di sini", "simulate", "secondary", busy || !!pending) : ""}`;
   }
 
   function checkpointAction(state: SoloSession) {
@@ -221,7 +231,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
           </label>`).join("")}
         </fieldset>
         ${cooldown > 0 ? '<p class="solo-cooldown" data-cooldown></p>' : ""}
-        ${!freshVisit ? "<p>Posisi perlu diverifikasi lagi. Kirim jawaban untuk meminta lokasi perangkat, atau perbarui lokasi dengan simulasi.</p>" : ""}
+        ${!freshVisit ? `<p>${allowSimulate ? "Posisi perlu diverifikasi lagi. Kirim jawaban untuk meminta lokasi perangkat, atau perbarui lokasi dengan simulasi." : "Posisi perlu diverifikasi lagi. Kirim jawaban untuk meminta lokasi perangkat."}</p>` : ""}
         <button class="primary" type="submit" data-focus="answer" ${busy || cooldown > 0 || pending ? "disabled" : ""}>Kirim jawaban</button>
       </form>` : `<p>Lakukan check-in di ${escapeText(point.name)} untuk membuka tantangan.</p>`}
       ${!available || !freshVisit ? `<div class="solo-actions">${locationActions(!!available)}</div>` : ""}
@@ -565,7 +575,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
         break;
       }
       case "gps": if (point) void locatePoint(point, false); break;
-      case "simulate": if (point) void locatePoint(point, true); break;
+      case "simulate": if (allowSimulate && point) void locatePoint(point, true); break;
       case "start": void send({ type: "start" }); break;
       case "replay": void send({ type: "replay" }); break;
       case "fresh-edition": void send({ type: "replay", freshEdition: true }); break;

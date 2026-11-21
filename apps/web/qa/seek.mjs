@@ -12,7 +12,7 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const results = join(root, "qa-results");
 await mkdir(results, { recursive: true });
 let clockOffset = 0;
-const api = createSoloServer({ databasePath: ":memory:", now: () => Date.now() + clockOffset });
+const api = createSoloServer({ databasePath: ":memory:", now: () => Date.now() + clockOffset, allowSimulatedLocation: true });
 api.listen(0, "127.0.0.1");
 await once(api, "listening");
 
@@ -86,7 +86,7 @@ try {
   await host.page.getByText("Berdua", { exact: true }).click();
   await host.page.locator('label').filter({ has: host.page.locator('input[value="hide-and-seek"]') }).click();
   await click(host, "Lihat ringkasan");
-  await click(host, "Coba simulasi Hide & Seek");
+  await click(host, "Main Hide & Seek");
   const created = (await post(host, "Buat ruang", "create")).room;
   assert.equal(created.phase, "lobby");
   const endpoint = origin + "/api/seek/" + encodeURIComponent(created.code);

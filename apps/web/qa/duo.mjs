@@ -20,7 +20,7 @@ const answers = {
   "plaza-senayan": "03.00",
 };
 let offset = 0;
-const api = createSoloServer({ databasePath: ":memory:", now: () => Date.now() + offset });
+const api = createSoloServer({ databasePath: ":memory:", now: () => Date.now() + offset, allowSimulatedLocation: true });
 api.listen(0, "127.0.0.1");
 await once(api, "listening");
 await mkdir(results, { recursive: true });
@@ -71,7 +71,7 @@ try {
   await host.page.goto(origin);
   await host.page.getByText("Berdua", { exact: true }).click();
   await click(host, "Lihat ringkasan");
-  await click(host, "Coba simulasi berdua");
+  await click(host, "Main berdua");
   const createIds = [];
   let createdCode;
   const interceptCreate = async route => {
