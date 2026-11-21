@@ -3,6 +3,7 @@ import { getLocation } from "./device-location";
 import { board, checkpointPanel, entry, lobby, result, score } from "./duo-view";
 import { fetchMapConfig } from "./map-config";
 import { boardDisplayName, inviteUrl, pendingEntry, player, roomCodePattern, roomTransport, type EntryAction, type Feedback } from "./multiplayer-room";
+import { defaultSimulatedLocation, isSimulatedLocationAllowed } from "./runtime-config";
 import { action, remaining, wib } from "./solo-view";
 import "./solo-play.css";
 import "./duo-play.css";
@@ -70,14 +71,15 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   let mapConfig: MapConfig | undefined;
   let vectorMap: { destroy: () => void } | undefined;
   let eligibility = "";
+  let allowSimulate = defaultSimulatedLocation;
 
-  root.innerHTML = `<nav class="solo-nav" aria-label="Navigasi simulasi">
+  root.innerHTML = `<nav class="solo-nav" aria-label="Navigasi permainan">
     ${action("Kembali ke pilihan", "back", "solo-back")}
-    <span class="solo-label">Simulasi</span>
+    <span class="solo-label" id="duo-mode-badge">${allowSimulate ? "Mode QA" : "Gratis"}</span>
   </nav>
   <header class="solo-header">
     <h1 id="duo-title" tabindex="-1" lang="en">Claim the City</h1>
-    <p><strong id="duo-board-label">${boardDisplayName(requestedBoard)}</strong> · Berdua <span>Edisi siap pakai</span></p>
+    <p><strong id="duo-board-label">${boardDisplayName(requestedBoard)}</strong> · Berdua <span>Gratis</span></p>
   </header>
   <p id="duo-announcement" class="sr-only" role="status" aria-atomic="true"></p>
   <div id="duo-connection" class="solo-connection" hidden></div>
@@ -87,7 +89,15 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   const connection = root.querySelector<HTMLElement>("#duo-connection")!;
   const announcement = root.querySelector<HTMLElement>("#duo-announcement")!;
   const boardLabelEl = root.querySelector<HTMLElement>("#duo-board-label")!;
+  const modeBadge = root.querySelector<HTMLElement>("#duo-mode-badge")!;
   root.querySelector<HTMLElement>("#duo-title")!.focus();
+
+  void isSimulatedLocationAllowed(signal).then((allowed) => {
+    if (signal.aborted || allowed === allowSimulate) return;
+    allowSimulate = allowed;
+    modeBadge.textContent = allowSimulate ? "Mode QA" : "Gratis";
+    if (!busy && !pending && !choiceId) paint();
+  });
 
   function now() {
     return room ? room.now + performance.now() - serverSampleAt : Date.now();
@@ -200,8 +210,8 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
       ${score(state)}
     </section>` : "";
     const panels = active
-      ? checkpointPanel(state, selectedPoint(), challenge, choiceId, now(), locked, seekingLocation, feedback)
-      : lobby(state, now(), startOpen, locked, seekingLocation, feedback);
+      ? checkpointPanel(state, selectedPoint(), challenge, choiceId, now(), locked, seekingLocation, feedback, allowSimulate)
+      : lobby(state, now(), startOpen, locked, seekingLocation, feedback, allowSimulate);
     const exit = active ? "Keluar dari ronde" : state.seat === "host" ? "Batalkan ruang" : "Keluar dari ruang";
     return `${progress}
       <div class="solo-layout">${panels}${boardMarkup}</div>
@@ -558,7 +568,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
         paint(point && !room?.owners[point.id] ? `[data-focus="list-${CSS.escape(point.id)}"]` : "#duo-board-heading");
         break;
       case "gps": if (point) void locate(point, false); break;
-      case "simulate": if (point) void locate(point, true); break;
+      case "simulate": if (allowSimulate && point) void locate(point, true); break;
       case "confirm-exit":
       case "cancel-exit":
         confirmingExit = button.dataset.action === "confirm-exit";

@@ -141,7 +141,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
   container.innerHTML = `<div class="board-map-shell">
     <div class="board-map-canvas" role="region" aria-label="Peta interaktif papan permainan"></div>
     <p class="board-map-attribution">
-      ${config.mode === "geoapify-vector" ? "Peta vektor langsung" : "Peta vektor luring (simulasi)"} ·
+      ${config.mode === "geoapify-vector" ? "Peta vektor langsung" : "Peta vektor luring"} ·
       <a href="https://www.geoapify.com/" target="_blank" rel="noopener noreferrer">© Geoapify</a> ·
       <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a> ·
       Transjakarta GTFS (CC BY 4.0) ·

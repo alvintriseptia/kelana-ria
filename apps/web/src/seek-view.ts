@@ -31,7 +31,7 @@ function objective(room?: SeekRoom) {
   return `<section class="solo-objective" aria-labelledby="seek-objective-heading">
     <h2 id="seek-objective-heading">Bergantian sembunyi dan mencari</h2>
     <p>Setiap pemain bersembunyi sekali. Skor tertinggi menang. Skor menggabungkan waktu sembunyi sejak pencari dilepas dan bonus kartu. Skor yang sama berakhir seri.</p>
-    <p>Mulai di <strong>${escapeText(edition?.start.name ?? "CSW–ASEAN")}</strong>. Edisi simulasi siap pakai bisa dimainkan dari mana saja.</p>
+    <p>Mulai di <strong>${escapeText(edition?.start.name ?? "CSW–ASEAN")}</strong>. Gratis dimainkan berdua di Jakarta dengan GPS perangkat.</p>
     ${edition ? `<p><strong>${minutes(edition.headStartMs)} menit</strong> untuk sembunyi, <strong>${minutes(edition.searchMs)} menit</strong> untuk mencari setiap giliran, dan <strong>${minutes(edition.regroupMs)} menit</strong> untuk berkumpul kembali.</p>` : ""}
     <p class="solo-edition">${edition ? `Edisi ${escapeText(edition.id)} · ` : ""}Berjalan kaki, MRT, KRL, dan Transjakarta. Perjalanan sungguhan memakai data seluler dan ongkos biasa.</p>
   </section>`;
@@ -46,6 +46,7 @@ type Controls = {
   busy: boolean;
   locating: boolean;
   startOpen: boolean;
+  allowSimulate: boolean;
   point?: SoloPoint;
   feedback?: Feedback;
   map: { shown: boolean; failed: boolean; vectorMode: boolean; url: string };
@@ -83,11 +84,11 @@ const locationLabels = {
   reference: ["Check-in untuk petunjuk", "Simulasikan check-in untuk petunjuk"],
 };
 
-function locationActions({ busy }: Controls, type: keyof typeof locationLabels) {
+function locationActions({ busy, allowSimulate }: Controls, type: keyof typeof locationLabels) {
   const [device, simulated] = locationLabels[type];
   const reference = type === "reference";
   return `${action(device, reference ? "gps-reference" : "gps", reference ? "secondary" : "primary", busy)}
-    ${action(simulated, reference ? "simulate-reference" : "simulate", "secondary", busy)}`;
+    ${allowSimulate ? action(simulated, reference ? "simulate-reference" : "simulate", "secondary", busy) : ""}`;
 }
 
 const locatingNotice = (controls: Controls) => controls.locating ? '<p role="status">Meminta lokasi perangkat…</p>' : "";

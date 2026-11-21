@@ -11,7 +11,7 @@ import { phoneOptions } from "./profile.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const results = join(root, "qa-results");
-const api = createSoloServer({ databasePath: ":memory:" });
+const api = createSoloServer({ databasePath: ":memory:", allowSimulatedLocation: true });
 api.listen(0, "127.0.0.1");
 await once(api, "listening");
 await mkdir(results, { recursive: true });

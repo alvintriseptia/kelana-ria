@@ -3,7 +3,7 @@ import type { LocationFix } from "@kelana-ria/contracts";
 export function getLocation(): Promise<LocationFix> {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
-      reject(new Error("Lokasi tidak tersedia di browser ini. Gunakan lokasi simulasi atau coba browser lain."));
+      reject(new Error("Lokasi tidak tersedia di browser ini. Izinkan akses lokasi atau coba browser lain."));
       return;
     }
     navigator.geolocation.getCurrentPosition(({ coords, timestamp }) => resolve({

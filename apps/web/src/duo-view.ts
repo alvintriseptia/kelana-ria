@@ -6,7 +6,7 @@ export function entry(code: string, busy: boolean, feedback: Feedback | undefine
   return roomEntry("duo", code, busy, feedback, `<section class="solo-objective" aria-labelledby="duo-objective-heading">
     <h2 id="duo-objective-heading">Kuasai zona terbanyak</h2>
     <p>Berlomba mengklaim landmark di Jakarta. Klaim lebih banyak landmark di satu zona daripada lawan untuk menguasainya.</p>
-    <p>Simulasi ini memakai edisi uji siap pakai. Kedua pemain bisa bermain dari lokasi mana saja.</p>
+    <p>Gratis dimainkan berdua di Jakarta dengan GPS perangkat.</p>
   </section>`);
 }
 
@@ -19,14 +19,14 @@ function seatMarkup(state: DuoRoom, seat: DuoSeat) {
   </li>`;
 }
 
-export function locationActions(busy: boolean, seeking: boolean, verified = false) {
+export function locationActions(busy: boolean, seeking: boolean, verified = false, allowSimulate = false) {
   return `${seeking ? '<p role="status">Meminta lokasi perangkat…</p>' : ""}
     ${action("Check-in", "gps", verified ? "secondary" : "primary", busy)}
-    ${action("Simulasikan lokasi di sini", "simulate", "secondary", busy)}`;
+    ${allowSimulate ? action("Simulasikan lokasi di sini", "simulate", "secondary", busy) : ""}`;
 }
 
 export function lobby(
-  state: DuoRoom, now: number, startOpen: boolean, busy: boolean, seeking: boolean, feedback: Feedback | undefined,
+  state: DuoRoom, now: number, startOpen: boolean, busy: boolean, seeking: boolean, feedback: Feedback | undefined, allowSimulate = false,
 ) {
   const verified = (state.startVerifiedUntil ?? 0) > now;
   const ready = state.seats[state.seat].ready;
@@ -46,7 +46,7 @@ export function lobby(
       <section class="solo-ticket" aria-labelledby="duo-room-heading">
         <h2 id="duo-room-heading" tabindex="-1">Ruang tunggu</h2>
         ${inviteMarkup(state.code, state.seat === "host" && state.paidPack?.players !== 1, "duo-claim", state.edition.board)}
-        <ul class="duo-seats" aria-label="Kursi pemain">${activeSeats.map}(seat => seatMarkup(state, seat)).join("")}</ul>
+        <ul class="duo-seats" aria-label="Kursi pemain">${activeSeats.map(seat => seatMarkup(state, seat)).join("")}</ul>
       </section>
       <section class="solo-ticket" id="duo-action" aria-labelledby="duo-action-heading">
         <span class="solo-start-label">Titik awal</span>
@@ -62,7 +62,7 @@ export function lobby(
           ${allReady && state.seat === "host" ? action("Mulai", "start", "primary", busy || !verified) : ""}
           ${verified && !ready ? action("Saya siap", "ready", "primary", busy) : ""}
           ${ready ? action("Batalkan siap", "unready", "secondary", busy) : ""}
-          ${startOpen && !verified ? locationActions(busy, seeking)
+          ${startOpen && !verified ? locationActions(busy, seeking, false, allowSimulate)
             : !verified ? action("Check-in di titik awal", "open-start", "primary", busy) : ""}
         </div>
       </section>
@@ -71,7 +71,7 @@ export function lobby(
 
 export function checkpointPanel(
   state: DuoRoom, point: SoloPoint | undefined, challenge: SoloChallenge | undefined, choiceId: string,
-  now: number, busy: boolean, seeking: boolean, feedback: Feedback | undefined,
+  now: number, busy: boolean, seeking: boolean, feedback: Feedback | undefined, allowSimulate = false,
 ) {
   if (!point) return `<section class="solo-ticket solo-instructions" id="duo-action" aria-labelledby="duo-action-heading">
     <h2 id="duo-action-heading" tabindex="-1">Check-in dan klaim</h2>
@@ -97,10 +97,10 @@ export function checkpointPanel(
         </label>`).join("")}
       </fieldset>
       ${coolingDown ? '<p data-cooldown></p>' : ""}
-      ${!freshVisit ? "<p>Posisi perlu diverifikasi ulang. Kirim jawaban untuk meminta lokasi perangkat atau simulasikan lokasi sebelum mengirim.</p>" : ""}
+      ${!freshVisit ? `<p>${allowSimulate ? "Posisi perlu diverifikasi ulang. Kirim jawaban untuk meminta lokasi perangkat atau simulasikan lokasi sebelum mengirim." : "Posisi perlu diverifikasi ulang. Kirim jawaban untuk meminta lokasi perangkat."}</p>` : ""}
       <button class="primary" type="submit" data-focus="answer" ${busy || coolingDown ? "disabled" : ""}>Kirim jawaban</button>
     </form>` : `<p>Lakukan check-in di ${escapeText(point.name)} untuk membuka tantangan.</p>`}
-    ${!owner && (!challenge || !freshVisit) ? `<div class="solo-actions">${locationActions(busy, seeking, Boolean(challenge))}</div>` : ""}
+    ${!owner && (!challenge || !freshVisit) ? `<div class="solo-actions">${locationActions(busy, seeking, Boolean(challenge), allowSimulate)}</div>` : ""}
   </section>`;
 }
 

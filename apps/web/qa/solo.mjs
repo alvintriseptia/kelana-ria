@@ -28,6 +28,7 @@ let inActiveRound = false;
 const api = createSoloServer({
   databasePath: ":memory:",
   now,
+  allowSimulatedLocation: true,
   closedCheckpoints: () => closed,
   aiProvider() {
     providerTelemetry.aiAttempts += 1;
@@ -126,11 +127,11 @@ try {
 
   await page.goto(origin);
   await click("Lihat ringkasan");
-  await page.getByRole("button", { name: "Coba simulasi", exact: true })
-    .or(page.getByRole("link", { name: "Coba simulasi", exact: true })).click();
+  await page.getByRole("button", { name: "Main Solo", exact: true })
+    .or(page.getByRole("link", { name: "Main Solo", exact: true })).click();
   await page.getByRole("button", { name: "Check-in di titik awal", exact: true }).waitFor();
   const briefingText = await page.locator("main").innerText();
-  assert.match(briefingText, /Simulasi/i);
+  assert.match(briefingText, /Mode QA|Gratis/i);
   assert.match(briefingText, /Edisi siap pakai \(cadangan\)/);
   assert.match(briefingText, /Geoapify/);
   assert.match(briefingText, /OpenStreetMap/);
@@ -201,7 +202,7 @@ try {
   await context.route("**/api/solo", interceptAnswer);
   await click("Kirim jawaban");
   await page.getByRole("button", { name: "Coba lagi", exact: true }).waitFor();
-  assert.match(await page.locator("main").innerText(), /Simulasi/i);
+  assert.match(await page.locator("main").innerText(), /Mode QA/i);
   const recovered = await afterAction("Coba lagi");
   assert.equal(recovered.session.claimed.length, 1);
   await page.getByRole("button", { name: firstFour[1].name, exact: true }).waitFor();
@@ -244,11 +245,24 @@ try {
   await page.reload();
   await page.getByRole("button", { name: "Coba lagi", exact: true }).waitFor();
   const offlineScreen = await page.locator("#play").innerText();
-  assert.match(offlineScreen, /\bSimulasi\b/);
-  assert.match(offlineScreen, /Edisi siap pakai/);
+  assert.match(offlineScreen, /\bGratis\b/);
+  assert.match(offlineScreen, /Claim the City/);
   await context.setOffline(false);
   await resultHeading.waitFor();
   assert.deepEqual((await state()).events, won.events);
+
+  // Confirm that production mode (allowSimulatedLocation: false) hides simulated check-in controls.
+  const prodContext = await browser.newContext(phoneOptions(browser));
+  await prodContext.route("**/api/health", route => route.fulfill({
+    json: { ok: true, aiMode: "prepared-fallback", routeMode: "prepared-fallback", mapMode: "offline-vector", staticWeb: true, allowSimulatedLocation: false },
+  }));
+  const prodPage = await prodContext.newPage();
+  await prodPage.goto(origin + "/?play=solo-claim&board=compact");
+  await prodPage.getByRole("button", { name: "Check-in di titik awal", exact: true }).click();
+  await prodPage.getByRole("button", { name: "Check-in", exact: true }).waitFor();
+  assert.equal(await prodPage.getByRole("button", { name: "Simulasikan lokasi di sini", exact: true }).count(), 0);
+  assert.equal(await prodPage.locator("#solo-mode-badge").innerText(), "Gratis");
+  await prodContext.close();
 
   await click("Main lagi");
   const again = await start();

@@ -172,6 +172,7 @@ export function createSoloServer({
   mapProxy,
   staticDir,
   healthMeta,
+  allowSimulatedLocation = false,
   ...storeOptions
 }: {
   databasePath?: string;
@@ -181,6 +182,7 @@ export function createSoloServer({
   mapProxy?: MapProxyOptions;
   staticDir?: string;
   healthMeta?: { aiMode: string; routeMode: string };
+  allowSimulatedLocation?: boolean;
 } & SoloStoreOptions = {}) {
   const store = soloStore(databasePath, { now, ...storeOptions });
   const duo = duoStore(databasePath);
@@ -208,6 +210,7 @@ export function createSoloServer({
           routeMode: healthMeta?.routeMode ?? "prepared-fallback",
           mapMode,
           staticWeb: Boolean(handleStatic),
+          allowSimulatedLocation: Boolean(allowSimulatedLocation),
         });
         return;
       }
@@ -305,12 +308,15 @@ if (import.meta.main) {
   const providers = createProvidersFromEnv(process.env);
   const defaultWebDist = fileURLToPath(new URL("../../web/dist", import.meta.url));
   const staticDir = process.env.WEB_DIST_DIR || (process.env.SERVE_WEB === "1" ? defaultWebDist : undefined);
+  const allowSimulatedLocation =
+    process.env.ALLOW_SIMULATED_LOCATION === "1" || process.env.NODE_ENV === "development";
   const server = createSoloServer({
     databasePath: process.env.SOLO_DATABASE_PATH,
     secureCookie: process.env.SOLO_SECURE_COOKIE === "1",
     aiProvider: providers.aiProvider,
     routeProvider: providers.routeProvider,
     staticDir,
+    allowSimulatedLocation,
     healthMeta: { aiMode: providers.aiMode, routeMode: providers.routeMode },
     mapProxy: {
       geoapifyApiKey: process.env.GEOAPIFY_API_KEY,
@@ -321,7 +327,7 @@ if (import.meta.main) {
   });
   server.listen(port, host, () => {
     console.log(
-      `Kelana Ria server listening on http://${host}:${port} (ai=${providers.aiMode}, routes=${providers.routeMode}, web=${staticDir ? "enabled" : "api-only"})`,
+      `Kelana Ria server listening on http://${host}:${port} (ai=${providers.aiMode}, routes=${providers.routeMode}, web=${staticDir ? "enabled" : "api-only"}, qaSim=${allowSimulatedLocation})`,
     );
   });
 }

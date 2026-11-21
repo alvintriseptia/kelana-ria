@@ -87,7 +87,7 @@ export function schematicBoard(
           : `<span class="solo-marker" ${position} aria-hidden="true">${marker}</span>`;
       }).join("")}
     </div>
-    <figcaption>Skema papan simulasi. Gunakan daftar untuk melihat nama landmark, zona, dan transit terdekat.</figcaption>
+    <figcaption>Peta skematik papan permainan. Gunakan daftar untuk melihat nama landmark, zona, dan transit terdekat.</figcaption>
     <ol class="solo-map-key" aria-label="Keterangan penanda">
       <li><strong>A</strong> ${escapeText(start.name)} · Titik awal</li>
       ${checkpoints.map((point, index) => {

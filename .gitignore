@@ -6,3 +6,6 @@ dist/
 apps/web/.types/
 apps/web/qa-results/
 apps/api/.data/
+.env
+.env.*
+!.env.example

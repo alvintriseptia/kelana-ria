@@ -2,6 +2,7 @@ import type { GameBoard, LocationFix, MapConfig, SeekAction, SeekReply, SeekRoom
 import { getLocation } from "./device-location";
 import { fetchMapConfig } from "./map-config";
 import { boardDisplayName, inviteUrl, pendingEntry, player, roomCodePattern, roomTransport, type EntryAction, type Feedback } from "./multiplayer-room";
+import { defaultSimulatedLocation, isSimulatedLocationAllowed } from "./runtime-config";
 import { cluePointName, deliveredRadarCircles, drawSelection, newClueDraft, pendingQuestion, questionFamily, selectedQuestion } from "./seek-clues";
 import { active, entry, needsStart, pointAction, roomView, seekMode, seekPhase } from "./seek-view";
 import { action, remaining, wib } from "./solo-view";
@@ -92,14 +93,15 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   const map = { shown: false, failed: false, vectorMode: false, url: mapUrl };
   let mapConfig: MapConfig | undefined;
   let vectorMap: { destroy: () => void } | undefined;
+  let allowSimulate = defaultSimulatedLocation;
 
-  root.innerHTML = `<nav class="solo-nav" aria-label="Navigasi simulasi">
+  root.innerHTML = `<nav class="solo-nav" aria-label="Navigasi permainan">
     ${action("Kembali ke pilihan", "back", "solo-back")}
-    <span class="solo-label">Simulasi</span>
+    <span class="solo-label" id="seek-mode-badge">${allowSimulate ? "Mode QA" : "Gratis"}</span>
   </nav>
   <header class="solo-header">
     <h1 tabindex="-1" lang="en">Hide &amp; Seek</h1>
-    <p><strong id="seek-board-label">${boardDisplayName(requestedBoard)}</strong> · Berdua <span>Edisi siap pakai</span></p>
+    <p><strong id="seek-board-label">${boardDisplayName(requestedBoard)}</strong> · Berdua <span>Gratis</span></p>
   </header>
   <p id="seek-announcement" class="sr-only" role="status" aria-atomic="true"></p>
   <div id="seek-connection" class="solo-connection" hidden></div>
@@ -108,7 +110,15 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   const connection = root.querySelector<HTMLElement>("#seek-connection")!;
   const announcement = root.querySelector<HTMLElement>("#seek-announcement")!;
   const boardLabelEl = root.querySelector<HTMLElement>("#seek-board-label")!;
+  const modeBadge = root.querySelector<HTMLElement>("#seek-mode-badge")!;
   root.querySelector<HTMLElement>("h1")!.focus();
+
+  void isSimulatedLocationAllowed(signal).then((allowed) => {
+    if (signal.aborted || allowed === allowSimulate) return;
+    allowSimulate = allowed;
+    modeBadge.textContent = allowSimulate ? "Mode QA" : "Gratis";
+    if (!busy && !pending) paint();
+  });
 
   const now = () => room ? room.now + performance.now() - serverSampleAt : Date.now();
   const roomPath = (code: string) => `${apiPath}/${encodeURIComponent(code)}`;
@@ -239,7 +249,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
     if (room) {
       const current = now();
       neededStart = needsStart(room, current);
-      view.innerHTML = roomView(room, { now: current, busy: locked, locating, startOpen, point: selectedPoint(), feedback, map, clueDraft }, confirmingExit);
+      view.innerHTML = roomView(room, { now: current, busy: locked, locating, startOpen, allowSimulate, point: selectedPoint(), feedback, map, clueDraft }, confirmingExit);
       if (map.shown && map.vectorMode && !map.failed) void mountVectorMap(room);
     } else {
       view.innerHTML = loading && !disconnected ? '<p role="status">Memuat ruang…</p>' : entry(inviteCode, locked, feedback);
@@ -677,9 +687,9 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
       }
       case "open-board": view.querySelector<HTMLElement>("#seek-board-heading")?.focus(); break;
       case "gps": void locate(false); break;
-      case "simulate": void locate(true); break;
+      case "simulate": if (allowSimulate) void locate(true); break;
       case "gps-reference": void locate(false, true); break;
-      case "simulate-reference": void locate(true, true); break;
+      case "simulate-reference": if (allowSimulate) void locate(true, true); break;
       case "ask-clue": askClue(); break;
       case "answer-clue": answerClue(false); break;
       case "answer-photo": void sendPhoto(); break;

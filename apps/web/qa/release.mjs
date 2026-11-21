@@ -19,7 +19,7 @@ await mkdir(results, { recursive: true });
 
 let clockOffset = 0;
 const now = () => Date.now() + clockOffset;
-const api = createSoloServer({ databasePath: ":memory:", now });
+const api = createSoloServer({ databasePath: ":memory:", now, allowSimulatedLocation: true });
 api.listen(0, "127.0.0.1");
 await once(api, "listening");
 
@@ -63,10 +63,10 @@ try {
     await page.getByRole("button", { name: "Lihat ringkasan", exact: true }).click();
     const playLabel =
       format === "hide-and-seek"
-        ? "Coba simulasi Hide & Seek"
+        ? "Main Hide & Seek"
         : players === 2
-          ? "Coba simulasi berdua"
-          : "Coba simulasi";
+          ? "Main berdua"
+          : "Main Solo";
     await page.getByRole("button", { name: playLabel, exact: true }).click();
   }
 

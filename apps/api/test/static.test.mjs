@@ -29,6 +29,7 @@ test("GET /api/health reports operational modes without leaking secrets", async 
     routeMode: "prepared-fallback",
     mapMode: "geoapify-vector",
     staticWeb: false,
+    allowSimulatedLocation: false,
   });
 });
 
