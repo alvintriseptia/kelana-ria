@@ -110,7 +110,7 @@ export function createSoloServer({
     unlockPaidRoom: duo.createPaidRoom,
   });
   const handleDuo = duoHandler(duo, now, secureCookie);
-  const seek = seekStore(databasePath);
+  const seek = seekStore(databasePath, now);
   const handleSeek = seekHandler(seek, now, secureCookie);
   const handlePacks = packHandler(packs, now, secureCookie);
   const server = createServer({ requestTimeout: 15_000 }, async (request, response) => {

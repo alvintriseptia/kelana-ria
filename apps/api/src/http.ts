@@ -58,12 +58,12 @@ export function hasJsonBody(request: IncomingMessage) {
   return /^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "");
 }
 
-export async function requestBody(request: IncomingMessage) {
+export async function requestBody(request: IncomingMessage, limit = maxBodyBytes) {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request.iterator({ destroyOnReturn: false }) as AsyncIterable<Buffer>) {
     size += chunk.length;
-    if (size > maxBodyBytes) {
+    if (size > limit) {
       request.resume();
       return undefined;
     }

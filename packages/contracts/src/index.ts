@@ -322,11 +322,59 @@ export type SeekTurn = 1 | 2;
 export type SeekPhase = "lobby" | "head-start" | "seeking" | "regroup"
   | "finished" | "void" | "incomplete" | "canceled";
 
+export type SeekQuestionFamily = "radar" | "photo" | "warmer" | "matching" | "measuring" | "nearest";
+export type SeekCardKind = "time-bonus" | "question-delay" | "hand-swap";
+
+export type SeekQuestionInput = { radiusMeters?: number; landmarkId?: string };
+export type SeekClueChoice = { id: string; label: string };
+export type SeekClueMenuItem = {
+  family: SeekQuestionFamily;
+  responseMs: number;
+  drawCount: number;
+  keepCount: number;
+  options: (SeekQuestionInput & { label?: string; landmarkIds?: string[] })[];
+};
+
+export type SeekQuestion = SeekQuestionInput & {
+  id: string;
+  family: SeekQuestionFamily;
+  referenceId: string;
+  previousReferenceId?: string;
+  landmarkIds?: string[];
+  askedAt: number;
+  deadline: number;
+  drawCount: number;
+  keepCount: number;
+  status: "pending" | "answered" | "timeout" | "substituted" | "closed";
+  choices?: SeekClueChoice[];
+  walkingComparison?: { firstMeters: number; secondMeters: number };
+  answer?: string;
+  photoId?: string;
+};
+
+export type SeekCard = { id: string; kind: SeekCardKind };
+export type SeekClueView = {
+  landmarks: SoloPoint[];
+  branches: Record<string, string>;
+  distanceSource: string;
+  equalToleranceMeters: number;
+  referenceId?: string;
+  previousReferenceId?: string;
+  menu: SeekClueMenuItem[];
+  questions: SeekQuestion[];
+  delayUntil: number | null;
+  hand?: SeekCard[];
+  draw?: { cards: SeekCard[]; keepCount: number; deadline: number };
+};
+
 export type SeekTurnResult = {
   turn: SeekTurn;
   hider: DuoSeat;
   checkpointId: string;
   hidingMs: number;
+  bonusMs?: number;
+  adjustedMs?: number;
+  clues?: SeekQuestion[];
   reason: "found" | "timeout";
   at: number;
 };
@@ -355,6 +403,7 @@ export type SeekRoom = {
   seats: Record<DuoSeat, { joined: boolean; ready: boolean; regrouped: boolean }>;
   canInvestigate: boolean;
   ruledOut: string[];
+  clues?: SeekClueView;
   ownLock?: string;
   turns: SeekTurnResult[];
   outcome: {
@@ -370,6 +419,12 @@ export type SeekAction = { actionId: string } & (
   | { type: "ready"; ready: boolean; roleRevision: number }
   | { type: "start" }
   | { type: "lock" | "investigate"; turn: SeekTurn; checkpointId: string; fix: LocationFix }
+  | { type: "reference"; turn: SeekTurn; checkpointId: string; fix: LocationFix }
+  | ({ type: "ask"; turn: SeekTurn; family: SeekQuestionFamily; referenceId?: string; previousReferenceId?: string } & SeekQuestionInput)
+  | { type: "answer-question"; turn: SeekTurn; questionId: string; choiceId?: string; photo?: string }
+  | { type: "photo-unavailable"; turn: SeekTurn; questionId: string }
+  | { type: "choose-cards"; turn: SeekTurn; cardIds: string[]; discardIds?: string[] }
+  | { type: "play-card"; turn: SeekTurn; cardId: string; discardId?: string }
   | { type: "leave"; phase: "lobby" | "head-start" | "seeking" | "regroup"; turn: SeekTurn }
 );
 

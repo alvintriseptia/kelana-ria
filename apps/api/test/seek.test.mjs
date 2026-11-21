@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { setTimeout as pause } from "node:timers/promises";
+import sharp from "sharp";
 import { createSoloServer } from "../dist/index.js";
 
 const startTime = 1_800_000_000_000;
@@ -248,7 +251,7 @@ test("reconnect preserves a discovery committed one millisecond before expiry an
   assert.equal(regroup.phaseEndsAt, deadline - 1 + regroupMs);
   assert.equal(regroup.outcome, null);
   assert.deepEqual(regroup.turns, [{
-    turn: 1, hider: "host", checkpointId: firstTarget.id, hidingMs: searchMs - 1, reason: "found", at: deadline - 1,
+    turn: 1, hider: "host", checkpointId: firstTarget.id, hidingMs: searchMs - 1, bonusMs: 0, adjustedMs: searchMs - 1, reason: "found", at: deadline - 1,
   }]);
   assert.deepEqual((await resumedHost.room(code)).body.room.turns, regroup.turns);
   const firstRegroup = await resumedHost.act(code, "check-in", {
@@ -277,7 +280,7 @@ test("reconnect preserves a discovery committed one millisecond before expiry an
   assert.equal(finished.phase, "finished");
   assert.deepEqual(finished.turns, [
     ...regroup.turns,
-    { turn: 2, hider: "guest", checkpointId: secondTarget.id, hidingMs: searchMs, reason: "timeout", at: secondDeadline },
+    { turn: 2, hider: "guest", checkpointId: secondTarget.id, hidingMs: searchMs, bonusMs: 0, adjustedMs: searchMs, reason: "timeout", at: secondDeadline },
   ]);
   assert.deepEqual(finished.outcome, { winner: "guest", reason: "scored", at: secondDeadline });
   assert.deepEqual((await resumedGuest.room(code)).body.room.outcome, finished.outcome);
@@ -296,7 +299,7 @@ test("an investigation at the exact deadline loses and an exact-deadline regroup
   assert.equal(late.body.error, "room-phase-changed");
   assert.equal(late.body.investigation, undefined);
   assert.deepEqual(late.body.room.turns, [{
-    turn: 1, hider: "host", checkpointId: target.id, hidingMs: searchMs, reason: "timeout", at: deadline,
+    turn: 1, hider: "host", checkpointId: target.id, hidingMs: searchMs, bonusMs: 0, adjustedMs: searchMs, reason: "timeout", at: deadline,
   }]);
   time(deadline + regroupMs - 1);
   assert.equal((await checkIn(setup, host, "regroup")).body.room.seats.host.regrouped, true);
@@ -320,7 +323,7 @@ test("an offline reconnect commits expiry timestamps in order and never awards a
   const reconnected = (await guest.room(code)).body.room;
   assert.equal(reconnected.phase, "incomplete");
   assert.deepEqual(reconnected.turns, [{
-    turn: 1, hider: "guest", checkpointId: target.id, hidingMs: searchMs, reason: "timeout", at: deadline,
+    turn: 1, hider: "guest", checkpointId: target.id, hidingMs: searchMs, bonusMs: 0, adjustedMs: searchMs, reason: "timeout", at: deadline,
   }]);
   assert.deepEqual(reconnected.outcome, { reason: "regroup-timeout", winner: null, at: deadline + regroupMs });
   assert.deepEqual((await host.room(code)).body.room.outcome, reconnected.outcome);
@@ -406,4 +409,397 @@ test("two equal hiding times finish the match as a draw", async (context) => {
   assert.deepEqual(finished.turns.map(({ hidingMs }) => hidingMs), [searchMs, searchMs]);
   assert.deepEqual(finished.outcome, { winner: null, reason: "scored", at: secondDeadline });
   assert.deepEqual((await guest.room(code)).body.room.outcome, finished.outcome);
+});
+
+async function beginSeeking(setup, target = setup.edition.checkpoints[0]) {
+  await start(setup);
+  assert.equal((await visit(setup, setup.host, "lock", target)).body.error, undefined);
+  setup.time(release);
+  assert.equal((await checkIn(setup, setup.guest, "seeking")).body.error, undefined);
+}
+
+function ask({ code }, player, family, fields = {}) {
+  return player.act(code, "ask", { turn: 1, family, ...fields });
+}
+
+function answer({ code }, player, question, fields) {
+  return player.act(code, "answer-question", { turn: 1, questionId: question.id, ...fields });
+}
+
+test("verified reference, private correction, and duplicate radar replies share one immutable result and draw", async (context) => {
+  const setup = await scenario(context);
+  const { host, guest, code, edition, time, fix, url } = setup;
+  const [, , , , stadion] = edition.checkpoints;
+  await beginSeeking(setup);
+  const ready = (await guest.room(code)).body.room.clues;
+  assert.equal(ready?.referenceId, edition.start.id);
+  assert.deepEqual(ready.menu.find(({ family }) => family === "warmer").options, []);
+  assert.equal((await ask(setup, guest, "warmer")).body.error, "clue-unavailable");
+  assert.equal((await ask(setup, guest, "radar", { radiusMeters: 7 })).body.error, "invalid-clue-input");
+  const queried = await ask(setup, guest, "radar", { radiusMeters: 1000 });
+  assert.equal(queried.body.error, undefined);
+  const [radar] = queried.body.room.clues.questions;
+  assert.equal(radar.referenceId, edition.start.id);
+  assert.equal(radar.askedAt, release);
+  assert.equal(radar.deadline, release + 120_000);
+  assert.equal(radar.choices, undefined);
+  const hiderQuestion = (await host.room(code)).body.room.clues.questions[0];
+  assert.deepEqual(hiderQuestion.choices.map(({ id }) => id), ["yes", "no"]);
+  assert.equal(radar.answer, undefined);
+  assert.equal(queried.body.room.clues.hand, undefined);
+  assert.equal(queried.body.room.clues.draw, undefined);
+  assert.equal((await ask(setup, guest, "matching")).body.error, "clue-pending");
+
+  const forged = await visit(setup, guest, "reference", stadion, { fix: fix(edition.start) });
+  assert.equal(forged.body.error, "outside-radius");
+  const moved = await visit(setup, guest, "investigate", stadion);
+  assert.equal(moved.body.investigation, "miss");
+  assert.equal(moved.body.room.clues.referenceId, stadion.id);
+  assert.equal(moved.body.room.clues.previousReferenceId, edition.start.id);
+  assert.equal(moved.body.room.clues.questions[0].referenceId, edition.start.id);
+  assert.equal((await ask(setup, guest, "radar", {
+    radiusMeters: 1000, referenceId: edition.start.id,
+  })).body.error, "clue-reference-changed");
+
+  time(radar.deadline - 1);
+  const corrected = await answer(setup, host, radar, { choiceId: "no" });
+  assert.equal(corrected.body.error, "incorrect-clue-answer");
+  assert.equal(corrected.body.room.clues.questions[0].status, "pending");
+  assert.equal(corrected.body.room.clues.draw, undefined);
+  const stillPending = (await guest.room(code)).body;
+  assert.equal(stillPending.error, undefined);
+  assert.equal(stillPending.room.clues.questions[0].answer, undefined);
+  const accepted = await answer(setup, host, radar, { choiceId: "yes", actionId: "radar-answer" });
+  assert.equal(accepted.body.error, undefined);
+  assert.equal(accepted.body.room.clues.questions[0].answer, "Ya");
+  const { draw } = accepted.body.room.clues;
+  assert.equal(draw.cards.length, 2);
+  assert.equal(draw.keepCount, 1);
+  assert.equal(draw.deadline, radar.deadline - 1 + 30_000);
+  assert.deepEqual((await client(url, host.cookie).room(code)).body.room.clues.draw, draw);
+  assert.deepEqual((await answer(setup, host, radar, { choiceId: "no", actionId: "radar-answer" })).body.room.clues.draw, draw);
+  assert.equal((await answer(setup, host, radar, { choiceId: "yes" })).body.error, "question-closed");
+  await checkIn(setup, guest, "seeking");
+  assert.equal((await guest.room(code)).body.room.clues.referenceId, stadion.id);
+  assert.equal((await visit(setup, guest, "reference", edition.start)).body.room.clues.referenceId, edition.start.id);
+  const repeated = await ask(setup, guest, "radar", { radiusMeters: 1000 });
+  assert.equal(repeated.body.error, undefined);
+  assert.deepEqual(repeated.body.room.clues.questions, accepted.body.room.clues.questions);
+  assert.deepEqual((await host.room(code)).body.room.clues.draw, draw);
+
+  time(draw.deadline);
+  const automatic = (await host.room(code)).body.room.clues;
+  assert.equal(automatic.draw, undefined);
+  assert.deepEqual(automatic.hand, draw.cards.slice(0, 1));
+  assert.equal((await guest.room(code)).body.room.clues.hand, undefined);
+});
+
+test("timed-out clues fall back once in order, while clues capped by discovery or the search limit close", async (context) => {
+  const setup = await scenario(context);
+  const { host, guest, code, edition, time } = setup;
+  await beginSeeking(setup);
+  const first = (await ask(setup, guest, "matching")).body.room.clues?.questions[0];
+  assert.ok(first);
+  time(first.deadline);
+  const objectiveTimeout = await answer(setup, host, first, { choiceId: "same" });
+  assert.equal(objectiveTimeout.body.error, "question-closed");
+  assert.equal(objectiveTimeout.body.room.clues.questions[0].status, "timeout");
+  assert.equal(objectiveTimeout.body.room.clues.questions[0].answer, "Cabang sama");
+  assert.deepEqual(objectiveTimeout.body.room.clues.hand, []);
+  assert.equal(objectiveTimeout.body.room.clues.draw, undefined);
+  const photo = (await ask(setup, guest, "photo")).body.room.clues.questions[1];
+  assert.equal(photo.deadline, first.deadline + 240_000);
+  time(photo.deadline);
+  const afterPhotoExpiry = (await guest.room(code)).body.room.clues.questions[1];
+  assert.equal(afterPhotoExpiry.status, "substituted");
+  assert.equal(afterPhotoExpiry.answer, "Cabang sama");
+  assert.equal(afterPhotoExpiry.photoId, undefined);
+  assert.equal((await host.room(code)).body.room.clues.draw, undefined);
+  assert.deepEqual((await ask(setup, guest, "photo")).body.room.clues.questions[1], afterPhotoExpiry);
+
+  await visit(setup, guest, "reference", edition.checkpoints[4]);
+  const unavailable = (await ask(setup, guest, "photo")).body.room.clues.questions[2];
+  const fallback = await host.act(code, "photo-unavailable", { turn: 1, questionId: unavailable.id });
+  assert.equal(fallback.body.error, undefined);
+  assert.equal(fallback.body.room.clues.questions[2].status, "substituted");
+  assert.equal(fallback.body.room.clues.questions[2].answer, "Cabang berbeda");
+  assert.deepEqual(fallback.body.room.clues.hand, []);
+
+  time(deadline - 1);
+  const capped = (await ask(setup, guest, "radar", { radiusMeters: 1000 })).body.room.clues.questions[3];
+  assert.equal(capped.deadline, deadline);
+  time(deadline);
+  const late = await answer(setup, host, capped, { choiceId: "no" });
+  assert.equal(late.body.room.phase, "regroup");
+  assert.equal(late.body.room.clues.questions[3].status, "closed");
+  assert.equal(late.body.room.clues.questions[3].answer, undefined);
+  assert.equal(late.body.room.clues.hand, undefined);
+});
+
+test("all objective families are drawn from public board data and retain their own reference inputs", async (context) => {
+  const setup = await scenario(context);
+  const { host, guest, code, edition, time } = setup;
+  const [target, , mBloc, ayodya] = edition.checkpoints;
+  await beginSeeking(setup);
+  const initial = (await guest.room(code)).body.room.clues;
+  assert.ok(initial?.distanceSource.includes("perkiraan"));
+  assert.equal(initial.equalToleranceMeters, 100);
+  assert.ok(initial.branches[target.id]);
+  assert.ok(initial.menu.find(({ family }) => family === "measuring").options.some(({ landmarkId }) => landmarkId === mBloc.id));
+
+  const measuring = (await ask(setup, guest, "measuring", { landmarkId: mBloc.id })).body.room.clues.questions[0];
+  assert.equal(measuring.landmarkId, mBloc.id);
+  assert.equal(measuring.walkingComparison, undefined);
+  const comparison = (await host.room(code)).body.room.clues.questions[0].walkingComparison;
+  assert.ok(comparison.firstMeters > 0 && comparison.secondMeters > 0);
+  assert.ok(Math.abs(comparison.firstMeters - comparison.secondMeters) <= initial.equalToleranceMeters);
+  time(measuring.deadline);
+  assert.equal((await guest.room(code)).body.room.clues.questions[0].answer, "Kurang lebih sama");
+  assert.equal((await host.room(code)).body.room.clues.questions[0].walkingComparison, undefined);
+
+  await visit(setup, guest, "reference", mBloc);
+  await visit(setup, guest, "reference", mBloc);
+  const warmer = (await ask(setup, guest, "warmer")).body.room.clues.questions[1];
+  assert.equal(warmer.previousReferenceId, edition.start.id);
+  assert.equal(warmer.referenceId, mBloc.id);
+  await visit(setup, guest, "reference", ayodya);
+  assert.equal((await ask(setup, guest, "warmer", {
+    referenceId: ayodya.id, previousReferenceId: edition.start.id,
+  })).body.error, "clue-reference-changed");
+  const warmerComparison = (await host.room(code)).body.room.clues.questions[1].walkingComparison;
+  assert.ok(warmerComparison.firstMeters - warmerComparison.secondMeters > initial.equalToleranceMeters);
+  time(warmer.deadline);
+  assert.equal((await guest.room(code)).body.room.clues.questions[1].answer, "Lebih dekat");
+
+  const nearest = (await ask(setup, guest, "nearest", { radiusMeters: 1500 })).body.room.clues.questions[2];
+  assert.equal(nearest.referenceId, ayodya.id);
+  assert.ok(nearest.landmarkIds.includes("pasar-mayestik"));
+  assert.ok(nearest.landmarkIds.includes(edition.start.id));
+  const hiderQuestion = (await host.room(code)).body.room.clues.questions[2];
+  assert.ok(hiderQuestion.choices.some(({ id }) => id === "outside"));
+  time(nearest.deadline);
+  assert.equal((await host.room(code)).body.room.clues.questions[2].answer, edition.start.name);
+});
+
+test("accepted clue photos survive regroup and reconnect, and only members can retrieve sanitized bytes before match end", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "kelana-seek-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const databasePath = join(directory, "trial.sqlite");
+  const setup = await scenario(context, databasePath);
+  const { host, guest, code, edition, time, url, close, options } = setup;
+  await beginSeeking(setup);
+  const justAsked = await ask(setup, guest, "photo");
+  const question = justAsked.body.room.clues?.questions[0];
+  assert.ok(question);
+  const imagePath = `/api/seek/${code}/photos/${question.id}`;
+  const photo = (server, cookie, query = "") => fetch(server + imagePath + query, { headers: { cookie } });
+  assert.equal((await photo(url, guest.cookie)).status, 404);
+
+  const original = await sharp({ create: { width: 4, height: 3, channels: 3, background: "#345678" } })
+    .withExifMerge({ IFD3: { GPSLatitudeRef: "N", GPSLatitude: "51/1 30/1 20/1" } })
+    .jpeg().toBuffer();
+  const encoded = original.toString("base64");
+  assert.equal((await answer(setup, guest, question, { photo: encoded })).body.error, "hider-only");
+  assert.equal((await answer(setup, host, question, { photo: "invalid" })).body.error, "invalid-photo");
+  await visit(setup, guest, "reference", edition.checkpoints[4]);
+  time(question.deadline - 1);
+  const action = { photo: encoded, actionId: "public-photo" };
+  const accepted = await answer(setup, host, question, action);
+  assert.equal(accepted.body.error, undefined);
+  const { questions, hand, draw } = accepted.body.room.clues;
+  assert.equal(questions[0].status, "answered");
+  assert.equal(questions[0].referenceId, edition.start.id);
+  assert.equal(questions[0].photoId, question.id);
+  assert.equal(hand.length, 1);
+  assert.equal(draw, undefined);
+  assert.ok(!JSON.stringify(accepted.body).includes(encoded));
+  assert.deepEqual((await answer(setup, host, question, action)).body.room.clues.hand, hand);
+
+  const outsider = client(url);
+  await outsider.bootstrap();
+  assert.equal((await photo(url, "", `?cookie=${guest.cookie}`)).status, 401);
+  assert.equal((await photo(url, outsider.cookie)).status, 403);
+  for (const player of [host, guest]) {
+    const response = await photo(url, player.cookie);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/jpeg");
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const sanitized = await sharp(Buffer.from(await response.arrayBuffer())).metadata();
+    assert.equal(sanitized.exif, undefined);
+    assert.equal(sanitized.format, "jpeg");
+  }
+
+  const next = (await ask(setup, guest, "photo")).body.room.clues.questions[1];
+  await visit(setup, guest, "investigate", edition.checkpoints[0]);
+  assert.equal((await answer(setup, host, next, { photo: encoded })).body.error, "room-phase-changed");
+  const regroup = (await guest.room(code)).body.room;
+  assert.equal(regroup.clues.questions[1].status, "closed");
+  assert.equal(regroup.clues.questions[1].photoId, undefined);
+  assert.deepEqual(regroup.turns[0].clues, regroup.clues.questions);
+  assert.equal((await photo(url, guest.cookie)).status, 200);
+  await checkIn(setup, host, "regroup");
+  await checkIn(setup, guest, "regroup");
+  await close();
+  const restarted = await listen(context, options);
+  const reconnectedHost = client(restarted.url, host.cookie);
+  const reconnectedGuest = client(restarted.url, guest.cookie);
+  assert.equal((await reconnectedGuest.room(code)).body.room.clues, undefined);
+  assert.equal((await photo(restarted.url, guest.cookie)).status, 200);
+  await reconnectedHost.act(code, "leave", { phase: "head-start", turn: 2 });
+  assert.equal((await photo(restarted.url, guest.cookie)).status, 404);
+  const archived = (await reconnectedGuest.room(code)).body.room.turns[0].clues;
+  assert.equal(archived[0].photoId, undefined);
+  assert.equal(archived[0].status, "answered");
+  assert.equal(archived[1].status, "closed");
+
+  const database = new DatabaseSync(databasePath);
+  try {
+    assert.equal(database.prepare("SELECT count(*) AS count FROM seek_photos WHERE code = ?").get(code).count, 0);
+  } finally {
+    database.close();
+  }
+});
+
+test("a valid answer can resolve a new clue before a previous draw expires", async (context) => {
+  const setup = await scenario(context);
+  const { host, guest, time } = setup;
+  await beginSeeking(setup);
+  time(release + searchMs - 20_000);
+  const radar = (await ask(setup, guest, "radar", { radiusMeters: 1000 })).body.room.clues.questions[0];
+  const { draw } = (await answer(setup, host, radar, { choiceId: "yes" })).body.room.clues;
+  const matching = (await ask(setup, guest, "matching")).body.room.clues.questions[1];
+  assert.equal(matching.deadline, draw.deadline);
+  const incorrect = await answer(setup, host, matching, { choiceId: "different" });
+  assert.equal(incorrect.body.error, "incorrect-clue-answer");
+  assert.deepEqual(incorrect.body.room.clues.draw, draw);
+  const correct = await answer(setup, host, matching, { choiceId: "same" });
+  const { clues } = correct.body.room;
+  assert.equal(correct.body.error, undefined);
+  assert.equal(clues.questions[1].status, "answered");
+  assert.deepEqual(clues.hand, draw.cards.slice(0, 1));
+  assert.equal(clues.draw.cards.length, 3);
+  assert.ok(clues.draw.cards.every(({ id }) => !draw.cards.some((card) => card.id === id)));
+});
+
+function dealNext(databasePath, code, kinds) {
+  // Make the sequence deterministic while retaining each room's real, unique card IDs.
+  const database = new DatabaseSync(databasePath);
+  try {
+    const run = JSON.parse(database.prepare("SELECT snapshot FROM seek_rooms WHERE code = ?").get(code).snapshot);
+    const { pile } = run.clueState.deck;
+    assert.equal(new Set(pile.map(({ id }) => id)).size, 12);
+    for (const kind of ["time-bonus", "question-delay", "hand-swap"]) {
+      assert.equal(pile.filter((card) => card.kind === kind).length, 4);
+    }
+    const upcoming = kinds.map((kind) => pile.splice(pile.findIndex((card) => card.kind === kind), 1)[0]);
+    pile.push(...upcoming.toReversed());
+    database.prepare("UPDATE seek_rooms SET snapshot = ? WHERE code = ?").run(JSON.stringify(run), code);
+  } finally {
+    database.close();
+  }
+}
+
+test("delay and hand swap consume once and discovery scores bonuses from the retained and automatically kept cards", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "kelana-seek-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const databasePath = join(directory, "trial.sqlite");
+  const setup = await scenario(context, databasePath);
+  const { host, guest, code, edition, time } = setup;
+  await beginSeeking(setup);
+  dealNext(databasePath, code, [
+    "question-delay", "hand-swap",
+    "hand-swap", "question-delay", "time-bonus",
+    "time-bonus", "question-delay",
+    "time-bonus", "hand-swap",
+  ]);
+
+  const earn = async (family, fields, choiceId) => {
+    const asked = await ask(setup, guest, family, fields);
+    assert.equal(asked.body.error, undefined);
+    const pending = asked.body.room.clues.questions.at(-1);
+    return (await answer(setup, host, pending, { choiceId })).body.room.clues.draw;
+  };
+  const choose = (draw, count = draw.keepCount) => host.act(code, "choose-cards", {
+    turn: 1, cardIds: draw.cards.slice(0, count).map(({ id }) => id),
+  });
+  const radarDraw = await earn("radar", { radiusMeters: 1000 }, "yes");
+  const [delayCard] = (await choose(radarDraw)).body.room.clues.hand;
+  assert.equal(delayCard.kind, "question-delay");
+  const delayAction = { turn: 1, cardId: delayCard.id, actionId: "use-delay" };
+  const delayed = await host.act(code, "play-card", delayAction);
+  assert.equal(delayed.body.error, undefined);
+  assert.equal(delayed.body.room.phaseEndsAt, deadline);
+  assert.equal(delayed.body.room.clues.delayUntil, release + 120_000);
+  assert.equal((await host.act(code, "play-card", delayAction)).body.error, undefined);
+  assert.deepEqual((await host.room(code)).body.room.clues.hand, []);
+  assert.equal((await ask(setup, guest, "matching")).body.error, "question-delayed");
+  assert.equal((await ask(setup, guest, "radar", { radiusMeters: 1000 })).body.error, undefined);
+  assert.equal((await visit(setup, guest, "investigate", edition.checkpoints[1])).body.investigation, "miss");
+  await visit(setup, guest, "reference", edition.start);
+
+  time(release + 120_000);
+  const nearestDraw = await earn("nearest", { radiusMeters: 1000 }, edition.start.id);
+  const [swap, sacrifice] = (await choose(nearestDraw)).body.room.clues.hand;
+  assert.equal(swap.kind, "hand-swap");
+  assert.equal(sacrifice.kind, "question-delay");
+  assert.equal((await host.act(code, "play-card", { turn: 1, cardId: swap.id, discardId: swap.id })).body.error, "invalid-card-discard");
+  const swapAction = { turn: 1, cardId: swap.id, discardId: sacrifice.id, actionId: "use-swap" };
+  const swapped = await host.act(code, "play-card", swapAction);
+  assert.equal(swapped.body.error, undefined);
+  assert.deepEqual(swapped.body.room.clues.hand, []);
+  const swapDraw = swapped.body.room.clues.draw;
+  assert.equal(swapDraw.cards.length, 2);
+  assert.deepEqual((await host.act(code, "play-card", swapAction)).body.room.clues.draw, swapDraw);
+  const kept = await choose(swapDraw);
+  assert.equal(kept.body.room.clues.hand[0].kind, "time-bonus");
+
+  time(deadline - 60_000);
+  const unresolved = await earn("radar", { radiusMeters: 1500 }, "yes");
+  assert.equal(unresolved.cards[0].kind, "time-bonus");
+  const discovered = await visit(setup, guest, "investigate", edition.checkpoints[0]);
+  assert.equal(discovered.body.room.phase, "regroup");
+  assert.equal(discovered.body.room.turns[0].hidingMs, searchMs - 60_000);
+  assert.equal(discovered.body.room.turns[0].bonusMs, 240_000);
+  assert.equal(discovered.body.room.turns[0].adjustedMs, searchMs + 180_000);
+  assert.equal(discovered.body.room.outcome, null);
+
+  await checkIn(setup, host, "regroup");
+  await checkIn(setup, guest, "regroup");
+  await visit(setup, guest, "lock", edition.checkpoints[1], { turn: 2 });
+  const secondRelease = deadline - 60_000 + headStartMs;
+  time(secondRelease);
+  const reset = (await guest.room(code)).body.room.clues;
+  assert.deepEqual(reset.hand, []);
+  assert.deepEqual(reset.questions, []);
+  assert.equal(reset.draw, undefined);
+  time(secondRelease + searchMs);
+  const terminal = (await guest.room(code)).body.room;
+  assert.equal(terminal.turns[1].adjustedMs, searchMs);
+  assert.equal(terminal.outcome.winner, "host");
+});
+
+test("an expired match purges the photo even when both clients are offline", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "kelana-seek-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const databasePath = join(directory, "trial.sqlite");
+  const setup = await scenario(context, databasePath);
+  const { host, guest, code, time } = setup;
+  await beginSeeking(setup);
+  const asked = await ask(setup, guest, "photo");
+  const question = asked.body.room.clues.questions[0];
+  const image = await sharp({ create: { width: 2, height: 2, channels: 3, background: "#345678" } }).jpeg().toBuffer();
+  assert.equal((await answer(setup, host, question, { photo: image.toString("base64") })).body.error, undefined);
+
+  const database = new DatabaseSync(databasePath);
+  try {
+    const count = database.prepare("SELECT count(*) AS count FROM seek_photos WHERE code = ?");
+    assert.equal(count.get(code).count, 1);
+    time(deadline + regroupMs);
+    for (let attempt = 0; count.get(code).count && attempt < 20; attempt++) {
+      await pause(100);
+    }
+    assert.equal(count.get(code).count, 0);
+  } finally {
+    database.close();
+  }
 });

@@ -1,5 +1,6 @@
 import type { DuoSeat, SeekRoom, SeekTurnResult, SoloPoint } from "@kelana-ria/contracts";
 import { feedbackMarkup, inviteMarkup, player, roomEntry, seats, type Feedback } from "./multiplayer-room";
+import { clueHistory, cluePanels, type ClueDraft } from "./seek-clues";
 import { action, escapeText, schematicBoard, wib } from "./solo-view";
 
 export const seekMode = "hide-and-seek";
@@ -29,7 +30,7 @@ function objective(room?: SeekRoom) {
   const edition = room?.edition;
   return `<section class="solo-objective" aria-labelledby="seek-objective-heading">
     <h2 id="seek-objective-heading">Bergantian sembunyi dan mencari</h2>
-    <p>Setiap pemain bersembunyi sekali. Waktu sembunyi terlama sejak pencari dilepas menang. Waktu sembunyi yang sama berakhir seri.</p>
+    <p>Setiap pemain bersembunyi sekali. Skor tertinggi menang. Skor menggabungkan waktu sembunyi sejak pencari dilepas dan bonus kartu. Skor yang sama berakhir seri.</p>
     <p>Mulai di <strong>${escapeText(edition?.start.name ?? "CSW–ASEAN")}</strong>. Edisi simulasi siap pakai bisa dimainkan dari mana saja.</p>
     ${edition ? `<p><strong>${minutes(edition.headStartMs)} menit</strong> untuk sembunyi, <strong>${minutes(edition.searchMs)} menit</strong> untuk mencari setiap giliran, dan <strong>${minutes(edition.regroupMs)} menit</strong> untuk berkumpul kembali.</p>` : ""}
     <p class="solo-edition">${edition ? `Edisi ${escapeText(edition.id)} · ` : ""}Berjalan kaki, MRT, KRL, dan Transjakarta. Perjalanan sungguhan memakai data seluler dan ongkos biasa.</p>
@@ -48,6 +49,7 @@ type Controls = {
   point?: SoloPoint;
   feedback?: Feedback;
   map: { shown: boolean; failed: boolean; url: string };
+  clueDraft: ClueDraft;
 };
 
 function seatList(room: SeekRoom, regroup: boolean) {
@@ -78,17 +80,21 @@ const locationLabels = {
   "check-in": ["Check-in dengan lokasi perangkat", "Simulasikan lokasi di sini"],
   lock: ["Kunci dengan lokasi perangkat", "Simulasikan penguncian di sini"],
   investigate: ["Selidiki dengan lokasi perangkat", "Simulasikan penyelidikan di sini"],
+  reference: ["Check-in untuk petunjuk", "Simulasikan check-in untuk petunjuk"],
 };
 
-function locationActions({ busy, locating }: Controls, type: keyof typeof locationLabels) {
+function locationActions({ busy }: Controls, type: keyof typeof locationLabels) {
   const [device, simulated] = locationLabels[type];
-  return `${locating ? '<p role="status">Meminta lokasi perangkat…</p>' : ""}
-    ${action(device, "gps", "primary", busy)}${action(simulated, "simulate", "secondary", busy)}`;
+  const reference = type === "reference";
+  return `${action(device, reference ? "gps-reference" : "gps", reference ? "secondary" : "primary", busy)}
+    ${action(simulated, reference ? "simulate-reference" : "simulate", "secondary", busy)}`;
 }
+
+const locatingNotice = (controls: Controls) => controls.locating ? '<p role="status">Meminta lokasi perangkat…</p>' : "";
 
 function startActions(room: SeekRoom, controls: Controls) {
   if (!needsStart(room, controls.now)) return "";
-  return controls.startOpen ? locationActions(controls, "check-in") : action("Check-in di titik awal", "open-start", "primary", controls.busy);
+  return controls.startOpen ? locatingNotice(controls) + locationActions(controls, "check-in") : action("Check-in di titik awal", "open-start", "primary", controls.busy);
 }
 
 function lobby(room: SeekRoom, controls: Controls) {
@@ -127,18 +133,24 @@ function pointName(room: SeekRoom, id: string) {
 function pointPanel(room: SeekRoom, controls: Controls) {
   const { point, feedback } = controls;
   const type = pointAction(room);
-  const missed = room.phase === "seeking" && room.hider !== room.seat && point && room.ruledOut.includes(point.id);
   if (!point || !type) return "";
+  const missed = type === "investigate" && room.ruledOut.includes(point.id);
+  const start = point.id === room.edition.start.id;
+  const canReference = type === "investigate" && Boolean(room.clues);
   return `<section class="solo-ticket" aria-labelledby="seek-point-heading">
     <div class="solo-section-heading">
       <h2 id="seek-point-heading" tabindex="-1">${escapeText(point.name)}</h2>
       ${action("Tutup", "close-point", "solo-back")}
     </div>
-    <p>${missed ? "Sudah diperiksa. Pilih titik lain."
+    <p>${start ? "Verifikasi lokasi di titik awal untuk menjadikannya titik acuan lagi."
+      : missed ? "Titik ini sudah diselidiki. Kamu bisa check-in lagi untuk mengganti titik acuan petunjuk."
       : type === "lock" ? "Verifikasi lokasi di titik ini untuk menguncinya. Titik yang sudah terkunci tidak bisa diubah."
-        : "Verifikasi lokasi di titik ini untuk menyelidiki apakah temanmu bersembunyi di sini."}</p>
+        : "Verifikasi lokasi untuk menyelidiki titik ini atau menjadikannya titik acuan petunjuk."}</p>
     ${feedbackMarkup(feedback)}
-    ${missed ? "" : `<div class="solo-actions">${locationActions(controls, type)}</div>`}
+    <div class="solo-actions">${locatingNotice(controls)}
+      ${!missed && !start ? locationActions(controls, type) : ""}
+      ${canReference ? locationActions(controls, "reference") : ""}
+    </div>
   </section>`;
 }
 
@@ -150,7 +162,9 @@ function turnHistory(room: SeekRoom) {
       <time datetime="${new Date(turn.at).toISOString()}">${wib(turn.at)}</time>
       <div><strong>Giliran ${turn.turn} · ${player[turn.hider]}</strong><br>
         ${pointName(room, turn.checkpointId)} · ${turn.reason === "found" ? "Ditemukan" : "Waktu habis"}<br>
-        Waktu sembunyi <strong>${scoreTime(turn)}</strong></div>
+        Waktu sembunyi <strong>${scoreTime(turn.hidingMs)}</strong><br>
+        Bonus kartu <strong>+${scoreTime(turn.bonusMs ?? 0)}</strong><br>
+        Skor disesuaikan <strong>${scoreTime(adjustedTime(turn))}</strong></div>
     </li>`).join("")}</ol>
   </section>`;
 }
@@ -169,7 +183,7 @@ function instructions(room: SeekRoom, controls: Controls) {
       : `Tunggu di ${start}. Pelajari papan sambil menunggu waktu pencarian.`;
   } else {
     guide = hiding ? "Tetap di titik sembunyimu sampai ditemukan atau waktu pencarian habis."
-      : needsCheckIn ? `Check-in di ${start} untuk membuka penyelidikan.` : "Pilih titik di papan lalu selidiki dengan check-in.";
+      : needsCheckIn ? `Check-in di ${start} untuk membuka penyelidikan dan pertanyaan.` : "Pilih titik di papan untuk check-in atau menyelidiki.";
   }
   return `<div class="solo-main-column" id="seek-action">
     <section class="solo-ticket" aria-labelledby="seek-action-heading">
@@ -179,23 +193,27 @@ function instructions(room: SeekRoom, controls: Controls) {
       ${regroup ? seatList(room, true) : ""}
       ${!point ? feedbackMarkup(controls.feedback) : ""}
       ${needsCheckIn ? `<div class="solo-actions">${startActions(room, controls)}</div>` : ""}
+      ${!hiding && room.phase === "seeking" && !needsCheckIn ? `<div class="solo-actions">${action("Lihat daftar titik", "open-board")}</div>` : ""}
     </section>
     ${point}
     ${regroup ? turnHistory(room) : ""}
+    ${cluePanels(room, controls.clueDraft, controls.busy)}
   </div>`;
 }
 
-function scoreTime(turn: SeekTurnResult) {
-  const seconds = Math.floor(turn.hidingMs / 1000);
-  const milliseconds = turn.hidingMs % 1000;
+function scoreTime(duration: number) {
+  const seconds = Math.floor(duration / 1000);
+  const milliseconds = duration % 1000;
   return `${Math.floor(seconds / 60)} mnt ${seconds % 60}${milliseconds ? `,${String(milliseconds).padStart(3, "0").replace(/0+$/, "")}` : ""} dtk`;
 }
 
+const adjustedTime = (turn: SeekTurnResult) => turn.adjustedMs ?? turn.hidingMs + (turn.bonusMs ?? 0);
+
 function score(room: SeekRoom) {
-  return `<dl class="solo-score seek-score" aria-label="Waktu sembunyi">${seats.map(seat => {
+  return `<dl class="solo-score seek-score" aria-label="Skor waktu sembunyi disesuaikan">${seats.map(seat => {
     const turn = room.turns.find(result => result.hider === seat);
     return `<div><dt>${player[seat]}${seat === room.seat ? ' <span class="duo-you">· Kamu</span>' : ""}</dt>
-      <dd>${turn ? scoreTime(turn) : "—"}</dd></div>`;
+      <dd>${turn ? scoreTime(adjustedTime(turn)) : "—"}</dd></div>`;
   }).join("")}</dl>`;
 }
 
@@ -216,8 +234,12 @@ function progress(room: SeekRoom) {
 
 function board(room: SeekRoom, { point: selected, busy, map }: Controls) {
   const type = pointAction(room);
+  const canReference = type === "investigate" && Boolean(room.clues);
   const ruledOut = room.phase === "seeking" && room.hider !== room.seat ? new Set(room.ruledOut) : new Set<string>();
   const labelFor = (id: string) => ruledOut.has(id) ? "Sudah diperiksa" : undefined;
+  const startId = escapeText(room.edition.start.id);
+  const startName = escapeText(room.edition.start.name);
+  const startBranch = room.clues?.branches[room.edition.start.id];
   return `<section class="solo-board" aria-labelledby="seek-board-heading">
     <div class="solo-section-heading">
       <h2 id="seek-board-heading" tabindex="-1">${type === "lock" ? "Pilih titik sembunyi" : type === "investigate" ? "Selidiki titik" : "Titik di papan"}</h2>
@@ -227,14 +249,17 @@ function board(room: SeekRoom, { point: selected, busy, map }: Controls) {
       ? `<p class="solo-map-notice" role="status">Peta tidak tersedia. Lanjutkan lewat daftar titik.</p>${action("Muat ulang peta", "retry-map")}`
       : schematicBoard(room.edition, map.url, Boolean(type) && !busy, labelFor)}</div>
     <div class="solo-zone">
-      <h3>${escapeText(room.edition.start.name)} <small>Titik awal</small></h3>
+      <h3>${canReference ? `<button class="seek-start-point" type="button" data-action="point" data-point="${startId}"
+        data-focus="list-${startId}" aria-controls="seek-action" ${busy ? "disabled" : ""}>${startName}</button>` : startName} <small>Titik awal</small>
+        ${startBranch ? `<small class="seek-branch">${escapeText(startBranch)}</small>` : ""}</h3>
       <ul>${room.edition.checkpoints.map(point => {
         const id = escapeText(point.id);
         const name = escapeText(point.name);
+        const branch = room.clues?.branches[point.id];
         return `<li class="solo-point" data-checkpoint="${id}" ${id === selected?.id ? 'data-selected="true"' : ""}>
-          <div class="solo-point-detail">${type && !ruledOut.has(point.id)
+          <div class="solo-point-detail">${type && (canReference || !ruledOut.has(point.id))
             ? `<button type="button" data-action="point" data-point="${id}" data-focus="list-${id}" aria-controls="seek-action" ${busy ? "disabled" : ""}>${name}</button>`
-            : `<strong>${name}</strong>`}</div>
+            : `<strong>${name}</strong>`}${branch ? `<small class="seek-branch">${escapeText(branch)}</small>` : ""}</div>
           ${ruledOut.has(point.id) ? '<span class="solo-point-state">Sudah diperiksa</span>' : ""}
         </li>`;
       }).join("")}</ul>
@@ -247,7 +272,7 @@ function result(room: SeekRoom, controls: Controls) {
   const title = room.phase === "canceled" ? "Ruang dibatalkan" : room.phase === "void" ? "Pertandingan batal"
     : room.phase === "incomplete" ? "Pertandingan belum lengkap" : winner ? `Pemenang: ${player[winner]}` : "Seri";
   const reason = {
-    scored: winner ? `${player[winner]} bersembunyi paling lama dalam dua giliran.` : "Waktu sembunyi kedua pemain sama.",
+    scored: winner ? `${player[winner]} meraih skor waktu sembunyi tertinggi.` : "Kedua pemain meraih skor waktu sembunyi yang sama.",
     "missed-lock": "Waktu sembunyi habis sebelum titik sembunyi dikunci.",
     "regroup-timeout": "Batas berkumpul habis sebelum kedua pemain kembali ke titik awal.",
     forfeit: winner ? `${player[otherSeat(winner)]} keluar dari pertandingan. ${player[winner]} menang.` : "Seorang pemain keluar dari pertandingan.",
@@ -262,6 +287,7 @@ function result(room: SeekRoom, controls: Controls) {
       ${action("Main lagi", "replay", "primary", controls.busy)}
     </section>
     ${turnHistory(room)}
+    ${clueHistory(room, true)}
   </div>`;
 }
 

@@ -146,13 +146,63 @@ try {
   const released = await read(guest);
   secretFree(released);
   assert.equal(released.canInvestigate, false);
-  assert.equal((await atStart(guest)).room.canInvestigate, true);
+  const checkedIn = (await atStart(guest)).room;
+  assert.equal(checkedIn.canInvestigate, true);
+  assert.equal(checkedIn.clues.referenceId, started.edition.start.id);
+  await guest.page.getByRole("radio", { name: "Radar", exact: true }).check();
+  const radar = checkedIn.clues.menu.find(item => item.family === "radar");
+  const radius = Math.max(...radar.options.map(option => option.radiusMeters));
+  await guest.page.getByLabel("Radius", { exact: true }).selectOption(String(radius));
+  const asked = (await post(guest, "Kirim pertanyaan", "ask")).room.clues.questions.at(-1);
+  assert.equal(asked.referenceId, started.edition.start.id);
+  assert.equal(asked.status, "pending");
+  assert.equal(asked.choices, undefined);
   await click(guest, other.name);
+  const moved = await post(guest, "Simulasikan check-in untuk petunjuk", "reference");
+  assert.equal(moved.room.clues.referenceId, other.id);
+  assert.equal(moved.room.clues.questions.at(-1).referenceId, asked.referenceId);
   const missed = await post(guest, "Simulasikan penyelidikan di sini", "investigate");
   assert.equal(missed.investigation, "miss");
   assert.deepEqual(missed.room.ruledOut, [other.id]);
   assert.deepEqual((await read(host)).ruledOut, []);
   secretFree(missed.room);
+  assert.equal(missed.room.clues.hand, undefined);
+  assert.equal(missed.room.clues.draw, undefined);
+  await heading(host, "Pertanyaan masuk").waitFor();
+  await host.page.getByLabel("Jawaban", { exact: true }).selectOption("yes");
+  const answered = await post(host, "Kirim jawaban", "answer-question");
+  assert.equal(answered.room.clues.questions.at(-1).status, "answered");
+  assert.equal(answered.room.clues.draw.cards.length, 2);
+  assert.equal(answered.room.clues.draw.keepCount, 1);
+  await host.page.reload();
+  const choices = host.page.getByRole("group", { name: "Pilih kartu", exact: true });
+  await choices.getByRole("checkbox").first().check();
+  const kept = await post(host, "Simpan kartu", "choose-cards");
+  assert.equal(kept.room.clues.hand.length, 1);
+  assert.equal(kept.room.clues.draw, undefined);
+  await host.page.screenshot({ path: join(results, "seek-hider-cards.png"), fullPage: true });
+
+  await guest.page.getByRole("radio", { name: "Foto", exact: true }).check();
+  const photoRequest = (await post(guest, "Kirim pertanyaan", "ask")).room.clues.questions.at(-1);
+  assert.equal(photoRequest.family, "photo");
+  assert.equal(photoRequest.referenceId, other.id);
+  await host.page.getByLabel("Pilih foto", { exact: true }).setInputFiles({
+    name: "atap-uji.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAABAAAAAKCAIAAAAy3EnLAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAFUlEQVQYlWNwyIogCTGMasgakqEEAE4woUHUV2UvAAAAAElFTkSuQmCC", "base64"),
+  });
+  await host.page.getByAltText("Pratinjau foto petunjuk", { exact: true }).waitFor();
+  const delivered = await post(host, "Kirim foto", "answer-question");
+  const photo = delivered.room.clues.questions.at(-1);
+  assert.equal(photo.photoId, photoRequest.id);
+  const photoUrl = endpoint + "/photos/" + encodeURIComponent(photo.photoId);
+  const published = await guest.context.request.get(photoUrl);
+  assert.equal(published.status(), 200);
+  assert.equal(published.headers()["content-type"], "image/jpeg");
+  assert.equal(published.headers()["cache-control"], "no-store");
+  assert.equal((await fetch(photoUrl)).ok, false, "A browser outside the room cannot read the photo");
+  await guest.page.getByAltText("Foto petunjuk dari pemain yang bersembunyi", { exact: true }).waitFor();
+  await guest.page.screenshot({ path: join(results, "seek-seeker-photo.png"), fullPage: true });
 
   // Move close to the deadline without tying CI to a millisecond browser tap.
   advanceTo(released.phaseEndsAt - 20_000);
@@ -176,6 +226,9 @@ try {
   assert.equal(found.room.phase, "regroup");
   assert.equal(found.room.turns[0].checkpointId, first.id);
   assert.ok(found.room.turns[0].hidingMs < started.edition.searchMs);
+  const firstScore = found.room.turns[0];
+  assert.equal(firstScore.adjustedMs, firstScore.hidingMs + firstScore.bonusMs);
+  assert.equal(firstScore.bonusMs % 120_000, 0);
   advanceTo(released.phaseEndsAt + 1);
   const retried = await post(guest, "Coba lagi", "investigate");
   assert.equal(investigateIds.length, 2);
@@ -198,35 +251,57 @@ try {
   assert.deepEqual(nextHider.ruledOut, []);
   assert.equal(nextHider.ownLock, undefined);
   assert.equal(nextHider.canInvestigate, false);
+  assert.deepEqual(nextHider.clues?.hand ?? [], []);
+  assert.deepEqual(nextHider.clues?.questions ?? [], []);
 
   await click(guest, other.name);
   const secondLock = (await post(guest, "Simulasikan penguncian di sini", "lock")).room;
   assert.equal(secondLock.ownLock, other.id);
+  advanceTo(swapped.releaseAt);
+  await heading(host, "Pencarian").waitFor();
+  await atStart(host);
+  await host.page.getByRole("radio", { name: "Foto", exact: true }).check();
+  const secondPhoto = (await post(host, "Kirim pertanyaan", "ask")).room.clues.questions.at(-1);
+  const substitute = await post(guest, "Foto tidak tersedia", "photo-unavailable");
+  assert.equal(substitute.room.clues.questions.at(-1).id, secondPhoto.id);
+  assert.equal(substitute.room.clues.questions.at(-1).status, "substituted");
+  assert.deepEqual(substitute.room.clues.hand, []);
   advanceTo(swapped.releaseAt + started.edition.searchMs);
+  const expectedWinner = firstScore.adjustedMs > started.edition.searchMs ? "host" : "guest";
+  const winnerLabel = expectedWinner === "host" ? "Pemenang: Pemain 1" : "Pemenang: Pemain 2";
   for (const person of [host, guest]) {
     await person.page.reload();
-    await heading(person, "Pemenang: Pemain 2").waitFor();
+    await heading(person, winnerLabel).waitFor();
+    await heading(person, "Riwayat petunjuk").waitFor();
+    await person.page.getByText("Foto diganti dengan pencocokan cabang", { exact: true }).waitFor();
+    assert.equal(await heading(person, "Radar").count(), 1);
+    assert.equal(await person.page.getByAltText("Foto petunjuk dari pemain yang bersembunyi", { exact: true }).count(), 0);
   }
   const [home, away] = await Promise.all([read(host), read(guest)]);
   assert.equal(home.phase, "finished");
   assert.deepEqual(home.outcome, away.outcome);
-  assert.equal(home.outcome.winner, "guest");
+  assert.equal(home.outcome.winner, expectedWinner);
+  assert.equal((await guest.context.request.get(photoUrl)).ok(), false, "The photo is deleted at match end");
   assert.deepEqual(home.turns, away.turns);
   assert.deepEqual(home.turns.map(({ hider, reason, checkpointId }) => ({ hider, reason, checkpointId })), [
     { hider: "host", reason: "found", checkpointId: first.id },
     { hider: "guest", reason: "timeout", checkpointId: other.id },
   ]);
   assert.equal(home.turns[1].hidingMs, started.edition.searchMs);
+  assert.deepEqual(home.turns.map(turn => turn.clues.map(question => question.status)),
+    [["answered", "answered"], ["substituted"]]);
+  assert.equal(home.turns[0].clues[1].photoId, undefined);
   await Promise.all([
     host.page.screenshot({ path: join(results, "seek-host-result.png"), fullPage: true }),
     guest.page.screenshot({ path: join(results, "seek-guest-result.png"), fullPage: true }),
   ]);
   await writeFile(join(results, "seek-report.json"), JSON.stringify({
     browser: browser.version(), viewport: host.page.viewportSize(), simulated: true,
+    fixedRadarReference: true, privatePhotoDeleted: true, privateDrawRestored: true, bothTurnsCluesShown: true,
     identicalSeekerSnapshotAfterLock: true, sameIdFindRetry: true, rolesSwapped: true,
     outcome: home.outcome, turns: home.turns,
   }, null, 2) + "\n");
-  console.log("Hide & Seek passed role privacy, discovery retry, regroup, role swap and matching results.");
+  console.log("Hide & Seek passed role privacy, clues, private photos, draw recovery, role swap and matching adjusted results.");
 } finally {
   await browser?.close();
   await server?.close();
