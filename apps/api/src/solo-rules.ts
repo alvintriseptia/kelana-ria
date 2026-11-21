@@ -53,7 +53,7 @@ export function view({ state, fixture }: SoloRun, now: number, outcome: ActionOu
   };
 }
 
-function distanceBetween(point: SoloPoint, fix: LocationFix) {
+export function distanceBetween(point: Pick<SoloPoint, "latitude" | "longitude">, fix: Pick<LocationFix, "latitude" | "longitude">) {
   const radians = Math.PI / 180;
   const latitudeDifference = (fix.latitude - point.latitude) * radians;
   const longitudeDifference = (fix.longitude - point.longitude) * radians;

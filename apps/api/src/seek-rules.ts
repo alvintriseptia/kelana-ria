@@ -1,4 +1,9 @@
-import type { DuoSeat, SeekAction, SeekPhase, SeekReply, SeekRoom, SoloPoint } from "@kelana-ria/contracts";
+import type { DuoSeat, SeekAction, SeekClueView, SeekPhase, SeekQuestion, SeekReply, SeekRoom, SoloPoint } from "@kelana-ria/contracts";
+import {
+  compactClueBoard, expireSeekQuestion, newSeekClueState, recordSeekReference, seekClueMenu, seekObjectiveAnswer,
+  seekQuestionRequest, seekWalkingComparison, type ClueBoard, type SeekClueState,
+} from "./seek-clues.js";
+import { autoKeepSeekDraw, chooseSeekCards, discardHeldCards, drawSeekCards, seekCardEffectMs } from "./seek-deck.js";
 import { compactTrial } from "./solo-fixture.js";
 import { verifyLocation } from "./solo-rules.js";
 
@@ -31,9 +36,11 @@ export type SeekRun = Pick<SeekRoom,
   guest: Member | null;
   lock: { checkpointId: string; at: number } | null;
   seekerVerified: boolean;
+  clueBoard: ClueBoard;
+  clueState: SeekClueState;
 };
 
-export type SeekActionOutcome = Omit<SeekReply, "room"> & { releasedSeat?: true };
+export type SeekActionOutcome = Omit<SeekReply, "room"> & { releasedSeat?: true; acceptedPhotoId?: string };
 
 export function newSeekMember(credentialHash: string): Member {
   return { credentialHash, ready: false, startVerifiedUntil: null, regrouped: false };
@@ -54,10 +61,23 @@ export function newSeekRun(code: string, credentialHash: string): SeekRun {
     guest: null,
     lock: null,
     seekerVerified: false,
+    clueBoard: compactClueBoard(compactSeekTrial.edition.start, compactSeekTrial.edition.checkpoints),
+    clueState: newSeekClueState(),
     ruledOut: [],
     turns: [],
     outcome: null,
   };
+}
+
+export function hydrateSeek(run: SeekRun) {
+  if (run.clueBoard && run.clueState) return false;
+  const { start, checkpoints } = run.fixture.edition;
+  run.clueBoard ??= compactClueBoard(start, checkpoints);
+  if (!run.clueState) {
+    run.clueState = newSeekClueState();
+    if (run.seekerVerified) recordSeekReference(run.clueState, start.id);
+  }
+  return true;
 }
 
 export function seekMemberSeat(run: SeekRun, credentialHash: string): DuoSeat | undefined {
@@ -88,6 +108,7 @@ function beginTurn(run: SeekRun, at: number) {
   run.phaseEndsAt = run.releaseAt;
   run.lock = null;
   run.seekerVerified = false;
+  run.clueState = newSeekClueState();
   run.ruledOut = [];
   run.host.regrouped = false;
   if (run.guest) run.guest.regrouped = false;
@@ -103,16 +124,35 @@ function closeMatch(
   run.phase = phase;
   run.phaseEndsAt = null;
   run.outcome = { winner, reason, at };
+  run.clueState.delayUntil = null;
+  for (const question of run.clueState.questions) {
+    if (question.status === "pending") question.status = "closed";
+    delete question.photoId;
+  }
+  for (const turn of run.turns) {
+    for (const question of turn.clues ?? []) delete question.photoId;
+  }
+  delete run.clueState.deck.draw;
 }
 
 function completeTurn(run: SeekRun, reason: "found" | "timeout", at: number) {
   const hider = hiderFor(run);
   if (!hider || !run.lock || run.releaseAt === null) throw new Error("Seeking turn has no valid lock");
+  const { deck, questions } = run.clueState;
+  autoKeepSeekDraw(deck);
+  const pending = questions.find(({ status }) => status === "pending");
+  if (pending) pending.status = "closed";
+  run.clueState.delayUntil = null;
+  const hidingMs = at - run.releaseAt;
+  const bonusMs = deck.hand.filter(({ kind }) => kind === "time-bonus").length * seekCardEffectMs;
   const result = {
     turn: run.turn,
     hider,
     checkpointId: run.lock.checkpointId,
-    hidingMs: at - run.releaseAt,
+    hidingMs,
+    bonusMs,
+    adjustedMs: hidingMs + bonusMs,
+    ...(questions.length ? { clues: questions.map(({ choices, ...question }) => question) } : {}),
     reason,
     at,
   };
@@ -127,12 +167,30 @@ function completeTurn(run: SeekRun, reason: "found" | "timeout", at: number) {
   }
 
   const first = run.turns[0];
-  const winner = first.hidingMs === result.hidingMs ? null : first.hidingMs > result.hidingMs ? first.hider : result.hider;
+  const firstScore = first.adjustedMs ?? first.hidingMs;
+  const winner = firstScore === result.adjustedMs ? null : firstScore > result.adjustedMs ? first.hider : result.hider;
   closeMatch(run, "finished", "scored", at, winner);
 }
 
+function expireClues(run: SeekRun, now: number) {
+  if (run.phase !== "seeking" || !run.lock || run.phaseEndsAt === null) return false;
+  // The search deadline wins when it coincides with a response deadline.
+  const through = Math.min(now, run.phaseEndsAt - 1);
+  const { clueState, clueBoard } = run;
+  let changed = expireSeekQuestion(clueBoard, clueState, run.lock.checkpointId, through);
+  if (clueState.deck.draw && clueState.deck.draw.deadline <= through) {
+    autoKeepSeekDraw(clueState.deck);
+    changed = true;
+  }
+  if (clueState.delayUntil !== null && clueState.delayUntil <= through) {
+    clueState.delayUntil = null;
+    changed = true;
+  }
+  return changed;
+}
+
 export function expireSeek(run: SeekRun, now: number) {
-  let changed = false;
+  let changed = expireClues(run, now);
   while (run.phaseEndsAt !== null && now >= run.phaseEndsAt) {
     const at = run.phaseEndsAt;
     switch (run.phase) {
@@ -156,6 +214,29 @@ export function expireSeek(run: SeekRun, now: number) {
     changed = true;
   }
   return changed;
+}
+
+function viewClues(run: SeekRun, seat: DuoSeat): SeekClueView | undefined {
+  const { clueBoard, clueState, phase } = run;
+  const { branches, distanceSource, equalToleranceMeters, landmarks } = clueBoard;
+  const { questions, delayUntil, referenceId, previousReferenceId, deck } = clueState;
+  const hasArchivedHistory = run.outcome && run.turns.some(turn => turn.clues?.length);
+  if (phase !== "seeking" && phase !== "regroup" && questions.length === 0 && !hasArchivedHistory) return undefined;
+  const isHider = seat === hiderFor(run);
+  const seeking = phase === "seeking";
+  const target = seeking && isHider ? run.lock?.checkpointId : undefined;
+  return {
+    branches, distanceSource, equalToleranceMeters, landmarks, delayUntil,
+    questions: questions.map(({ choices, ...question }) => ({
+      ...question,
+      ...(target && question.status === "pending" ? {
+        choices, walkingComparison: seekWalkingComparison(clueBoard, question, target),
+      } : {}),
+    })),
+    menu: seeking && !isHider ? seekClueMenu(clueBoard, clueState) : [],
+    ...(seeking && !isHider ? { referenceId, previousReferenceId } : {}),
+    ...(seeking && isHider ? { hand: deck.hand, draw: deck.draw } : {}),
+  };
 }
 
 export function viewSeek(run: SeekRun, seat: DuoSeat, now: number, action: SeekActionOutcome = {}): SeekReply {
@@ -184,6 +265,7 @@ export function viewSeek(run: SeekRun, seat: DuoSeat, now: number, action: SeekA
       seats: { host: viewSeat(run.host), guest: viewSeat(run.guest) },
       canInvestigate: isSeeker && run.seekerVerified,
       ruledOut: isSeeker ? run.ruledOut : [],
+      clues: viewClues(run, seat),
       ...(ownLock === undefined ? {} : { ownLock }),
       turns, outcome,
     },
@@ -205,6 +287,7 @@ function checkIn(run: SeekRun, seat: DuoSeat, member: Member, action: Extract<Se
     member.startVerifiedUntil = Math.max(member.startVerifiedUntil ?? 0, fix.timestamp + run.fixture.checkIn.maxAgeMs);
   } else if (phase === "seeking") {
     run.seekerVerified = true;
+    recordSeekReference(run.clueState, run.fixture.edition.start.id);
   } else {
     member.regrouped = true;
     if (run.host.regrouped && run.guest?.regrouped) {
@@ -215,7 +298,75 @@ function checkIn(run: SeekRun, seat: DuoSeat, member: Member, action: Extract<Se
   return location;
 }
 
-export function applySeek(run: SeekRun, seat: DuoSeat, action: SeekAction, now: number): SeekActionOutcome {
+function openHiderQuestion(run: SeekRun, seat: DuoSeat, turn: SeekRoom["turn"], questionId: string):
+  { question: SeekQuestion } | { error: string } {
+  if (run.outcome) return { error: "round-finished" };
+  if (run.turn !== turn) return { error: "turn-changed" };
+  if (run.phase !== "seeking") return { error: "room-phase-changed" };
+  if (seat !== hiderFor(run)) return { error: "hider-only" };
+  const question = run.clueState.questions.find(({ id, status }) => id === questionId && status === "pending");
+  return question ? { question } : { error: "question-closed" };
+}
+
+export function validateSeekPhoto(run: SeekRun, seat: DuoSeat, action: Extract<SeekAction, { type: "answer-question" }>) {
+  const request = openHiderQuestion(run, seat, action.turn, action.questionId);
+  if ("error" in request) return request.error;
+  return request.question.family === "photo" && action.choiceId === undefined ? undefined : "invalid-clue-input";
+}
+
+function answerSeekQuestion(
+  run: SeekRun, seat: DuoSeat, action: Extract<SeekAction, { type: "answer-question" | "photo-unavailable" }>,
+  now: number, validPhoto: boolean,
+): SeekActionOutcome {
+  const request = openHiderQuestion(run, seat, action.turn, action.questionId);
+  if ("error" in request) return request;
+  const { question } = request;
+  const target = run.lock!.checkpointId;
+  if (action.type === "photo-unavailable") {
+    if (question.family !== "photo") return { error: "invalid-clue-input" };
+    question.answer = seekObjectiveAnswer(run.clueBoard, question, target).label;
+    question.status = "substituted";
+    return {};
+  }
+  if (question.family === "photo") {
+    if (!validPhoto) return { error: "invalid-photo" };
+    question.photoId = question.id;
+  } else {
+    if (action.photo !== undefined || !question.choices?.some(({ id }) => id === action.choiceId)) {
+      return { error: "invalid-clue-input" };
+    }
+    const expected = seekObjectiveAnswer(run.clueBoard, question, target);
+    if (action.choiceId !== expected.id) return { error: "incorrect-clue-answer" };
+    question.answer = expected.label;
+  }
+  question.status = "answered";
+  const { deck } = run.clueState;
+  autoKeepSeekDraw(deck);
+  drawSeekCards(deck, question.drawCount, question.keepCount, now, run.phaseEndsAt!);
+  return { acceptedPhotoId: question.photoId };
+}
+
+function playSeekCard(run: SeekRun, state: SeekClueState, action: Extract<SeekAction, { type: "play-card" }>, now: number) {
+  const { deck } = state;
+  if (state.questions.some(({ status }) => status === "pending")) return { error: "clue-pending" };
+  if (deck.draw) return { error: "draw-pending" };
+  const card = deck.hand.find(({ id }) => id === action.cardId);
+  if (!card || card.kind === "time-bonus") return { error: "card-not-playable" };
+  if (card.kind === "question-delay") {
+    if (action.discardId !== undefined) return { error: "invalid-card-discard" };
+    if (state.delayUntil !== null) return { error: "question-delayed" };
+    discardHeldCards(deck, [card.id]);
+    state.delayUntil = now + seekCardEffectMs;
+    return {};
+  }
+  const discard = deck.hand.find(({ id }) => id === action.discardId && id !== card.id);
+  if (!discard) return { error: "invalid-card-discard" };
+  discardHeldCards(deck, [card.id, discard.id]);
+  drawSeekCards(deck, 2, 1, now, run.phaseEndsAt!);
+  return {};
+}
+
+export function applySeek(run: SeekRun, seat: DuoSeat, action: SeekAction, now: number, validPhoto = false): SeekActionOutcome {
   const member = run[seat];
   if (!member) throw new Error("Seek seat is empty");
 
@@ -276,6 +427,27 @@ export function applySeek(run: SeekRun, seat: DuoSeat, action: SeekAction, now: 
 
   if (action.type === "check-in") return checkIn(run, seat, member, action, now);
 
+  if (action.type === "answer-question" || action.type === "photo-unavailable") {
+    return answerSeekQuestion(run, seat, action, now, validPhoto);
+  }
+  const { clueState } = run;
+  if (action.type === "ask") {
+    if (run.phase !== "seeking") return { error: "room-phase-changed" };
+    if (seat === hiderFor(run)) return { error: "seeker-only" };
+    if (!run.seekerVerified) return { error: "start-unverified" };
+    if ((action.referenceId !== undefined && action.referenceId !== clueState.referenceId) ||
+        (action.previousReferenceId !== undefined && action.previousReferenceId !== clueState.previousReferenceId)) {
+      return { error: "clue-reference-changed" };
+    }
+    return seekQuestionRequest(run.clueBoard, clueState, action.family, action, now, run.phaseEndsAt!);
+  }
+  if (action.type === "choose-cards" || action.type === "play-card") {
+    if (run.phase !== "seeking") return { error: "room-phase-changed" };
+    if (seat !== hiderFor(run)) return { error: "hider-only" };
+    if (action.type === "play-card") return playSeekCard(run, clueState, action, now);
+    return chooseSeekCards(clueState.deck, action.cardIds, action.discardIds) ? {} : { error: "invalid-card-choice" };
+  }
+
   const locking = action.type === "lock";
   if (run.phase !== (locking ? "head-start" : "seeking")) return { error: "room-phase-changed" };
   if (locking) {
@@ -286,7 +458,10 @@ export function applySeek(run: SeekRun, seat: DuoSeat, action: SeekAction, now: 
     if (!run.seekerVerified) return { error: "start-unverified" };
   }
 
-  const point = run.fixture.edition.checkpoints.find(({ id }) => id === action.checkpointId);
+  const { start, checkpoints } = run.fixture.edition;
+  const point = action.type === "reference" && action.checkpointId === start.id
+    ? start
+    : checkpoints.find(({ id }) => id === action.checkpointId);
   if (!point) return { error: "unknown-checkpoint" };
   const location = verifyLocation(point, action.fix, now, run.fixture.checkIn);
   if (location.error) return location;
@@ -294,6 +469,8 @@ export function applySeek(run: SeekRun, seat: DuoSeat, action: SeekAction, now: 
     run.lock = { checkpointId: point.id, at: now };
     return location;
   }
+  recordSeekReference(clueState, point.id);
+  if (action.type === "reference") return location;
   if (run.lock?.checkpointId === point.id) {
     completeTurn(run, "found", now);
     return { ...location, investigation: "found" };

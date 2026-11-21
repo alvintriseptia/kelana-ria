@@ -1,6 +1,7 @@
 import type { LocationFix, SeekAction, SeekReply, SeekRoom, SoloPoint } from "@kelana-ria/contracts";
 import { getLocation } from "./device-location";
 import { inviteUrl, pendingEntry, player, roomCodePattern, roomTransport, type EntryAction, type Feedback } from "./multiplayer-room";
+import { cluePointName, drawSelection, newClueDraft, pendingQuestion, questionFamily, selectedQuestion } from "./seek-clues";
 import { active, entry, needsStart, pointAction, roomView, seekMode, seekPhase } from "./seek-view";
 import { action, remaining, wib } from "./solo-view";
 import "./solo-play.css";
@@ -22,8 +23,8 @@ const errors: Record<string, string> = {
   "players-not-ready": "Kedua pemain harus siap sebelum permainan dimulai.",
   "start-unverified": "Check-in di titik awal untuk melanjutkan.",
   "round-finished": "Pertandingan sudah selesai. Hasil terakhir sudah dimuat.",
-  "hider-only": "Hanya pemain yang bersembunyi bisa mengunci titik.",
-  "seeker-only": "Hanya pencari yang bisa menyelidiki titik.",
+  "hider-only": "Hanya pemain yang bersembunyi bisa melakukan tindakan ini.",
+  "seeker-only": "Hanya pencari yang bisa melakukan tindakan ini.",
   "already-locked": "Titik sembunyi sudah terkunci.",
   "already-ruled-out": "Titik ini sudah diperiksa. Pilih titik lain.",
   "unknown-checkpoint": "Titik ini tidak tersedia di edisi ini.",
@@ -31,11 +32,38 @@ const errors: Record<string, string> = {
   "stale-fix": "Data lokasi sudah kedaluwarsa. Coba check-in lagi untuk meminta lokasi baru.",
   "inaccurate-fix": "Lokasi kurang akurat. Cari area terbuka lalu coba lagi.",
   "outside-radius": "Kamu berada di luar radius check-in. Dekati titiknya lalu coba lagi.",
+  "incorrect-clue-answer": "Jawaban ini belum cocok dengan data papan. Periksa titik acuan lalu pilih jawaban lagi.",
+  "invalid-photo": "Foto tidak bisa diterima. Pilih JPEG, PNG, atau WebP dengan ukuran maksimal 2 MB.",
+  "question-closed": "Pertanyaan sudah ditutup. Periksa riwayat petunjuk.",
+  "clue-pending": "Tunggu jawaban untuk pertanyaan yang sedang aktif.",
+  "clue-reference-changed": "Titik acuan berubah. Periksa titik acuan terbaru lalu kirim pertanyaan lagi.",
+  "draw-pending": "Selesaikan pilihan kartu sebelum melanjutkan.",
+  "question-delayed": "Jeda pertanyaan masih aktif. Kamu bisa tetap check-in dan menyelidiki.",
+  "clue-unavailable": "Jenis pertanyaan ini belum tersedia dari titik acuan saat ini.",
+  "invalid-clue-input": "Periksa radius atau landmark yang dipilih.",
+  "invalid-card-choice": "Periksa jumlah kartu yang disimpan dan dibuang.",
+  "card-not-playable": "Kartu ini belum bisa dimainkan. Periksa pertanyaan, pilihan kartu, atau jeda yang sedang aktif.",
+  "invalid-card-discard": "Pilih kartu lain dari tangan untuk dibuang.",
 };
 
 type RoomAction = SeekAction extends infer A ? A extends SeekAction ? Omit<A, "actionId"> : never : never;
 type RequestAction = (EntryAction | RoomAction) & { actionId: string };
 type LocationAction = (point: SoloPoint, fix: LocationFix) => RoomAction;
+
+const clueActions = new Set<RequestAction["type"]>(["ask", "answer-question", "photo-unavailable", "choose-cards", "play-card"]);
+const acceptedPhotoTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+function encodePhoto(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      if (typeof reader.result !== "string") return reject(new Error("Foto tidak bisa dibaca."));
+      resolve(reader.result.slice(reader.result.indexOf(",") + 1));
+    }, { once: true });
+    reader.addEventListener("error", () => reject(new Error("Foto tidak bisa dibaca.")), { once: true });
+    reader.readAsDataURL(file);
+  });
+}
 
 export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   const mount = new AbortController();
@@ -56,6 +84,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   let confirmingExit = false;
   let selectedId: string | undefined;
   let feedback: Feedback | undefined;
+  let clueDraft = newClueDraft();
   let neededStart = false;
   const map = { shown: false, failed: false, url: mapUrl };
 
@@ -78,7 +107,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   const now = () => room ? room.now + performance.now() - serverSampleAt : Date.now();
   const roomPath = (code: string) => `${apiPath}/${encodeURIComponent(code)}`;
   const focusSelector = (key: string) => `[data-focus="${CSS.escape(key)}"]`;
-  const selectedPoint = () => room?.edition.checkpoints.find(point => point.id === selectedId);
+  const selectedPoint = () => room && [room.edition.start, ...room.edition.checkpoints].find(point => point.id === selectedId);
 
   function setCode(code: string) {
     inviteCode = joinInput = code;
@@ -88,14 +117,15 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
     history.replaceState(history.state, "", url);
   }
 
-  function report(text: string, error = false) {
-    feedback = { text, error };
+  function report(text: string, error = false, clue = false) {
+    if (clue) clueDraft.feedback = { text, error };
+    else feedback = { text, error };
     announcement.textContent = text;
   }
 
-  function reportError(error: string, distanceMeters?: number) {
+  function reportError(error: string, distanceMeters?: number, clue = false) {
     const distance = distanceMeters === undefined ? "" : `Jarak ${Math.round(distanceMeters)} m. `;
-    report(distance + (errors[error] ?? "Permintaan belum berhasil. Coba lagi."), true);
+    report(distance + (errors[error] ?? "Permintaan belum berhasil. Coba lagi."), true, clue);
   }
 
   function updateClock() {
@@ -103,16 +133,24 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
     const current = now();
     const timer = view.querySelector("[data-timer]");
     const serverClock = view.querySelector("[data-server-clock]");
+    const clueWindow = view.querySelector<HTMLElement>("[data-clue-window]");
     const countdown = remaining((room.phaseEndsAt ?? current) - current);
     const localTime = wib(current);
     if (timer && timer.textContent !== countdown) timer.textContent = countdown;
     if (serverClock && serverClock.textContent !== localTime) serverClock.textContent = localTime;
+    if (clueWindow) {
+      const duration = remaining(Math.min(Number(clueWindow.dataset.clueWindow), (room.phaseEndsAt ?? current) - current));
+      if (clueWindow.textContent !== duration) clueWindow.textContent = duration;
+    }
   }
 
   function paint(focus?: string) {
     if (signal.aborted) return;
     const focused = document.activeElement as HTMLElement | null;
     const key = focused?.dataset.focus;
+    const focusedId = focused && view.contains(focused) ? focused.id : "";
+    const wasAnswering = focused?.closest('[aria-labelledby="seek-answer-heading"]');
+    const wasChoosingCards = focused?.closest('[aria-labelledby="seek-hand-heading"]');
     const selection = focused instanceof HTMLInputElement && key === "invite-input"
       ? [focused.selectionStart, focused.selectionEnd] : undefined;
     const locked = busy || Boolean(pending);
@@ -127,7 +165,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
     if (room) {
       const current = now();
       neededStart = needsStart(room, current);
-      view.innerHTML = roomView(room, { now: current, busy: locked, locating, startOpen, point: selectedPoint(), feedback, map }, confirmingExit);
+      view.innerHTML = roomView(room, { now: current, busy: locked, locating, startOpen, point: selectedPoint(), feedback, map, clueDraft }, confirmingExit);
     } else {
       view.innerHTML = loading && !disconnected ? '<p role="status">Memuat ruang…</p>' : entry(inviteCode, locked, feedback);
     }
@@ -136,9 +174,42 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
     updateClock();
     const target = (focus && root.querySelector<HTMLElement>(focus))
       || (key && root.querySelector<HTMLElement>(focusSelector(key)))
-      || (key?.startsWith("map-") && root.querySelector<HTMLElement>(focusSelector("map")));
+      || (focusedId && view.querySelector<HTMLElement>(`#${CSS.escape(focusedId)}`))
+      || (key?.startsWith("map-") && root.querySelector<HTMLElement>(focusSelector("map")))
+      || ((wasAnswering || wasChoosingCards) && view.querySelector<HTMLElement>("#seek-hand-heading"));
     if (target) target.focus({ preventScroll: !focus });
     if (target === join && selection && join) join.setSelectionRange(selection[0], selection[1]);
+  }
+
+  function releasePhoto() {
+    if (clueDraft.photo) URL.revokeObjectURL(clueDraft.photo.preview);
+    clueDraft.photo = undefined;
+    clueDraft.preparingPhoto = false;
+  }
+
+  function updateClueDraft(previous: SeekRoom | undefined, next: SeekRoom) {
+    const before = pendingQuestion(previous);
+    const after = pendingQuestion(next);
+    const nextDraw = next.clues?.draw;
+    if (before?.id !== after?.id) {
+      releasePhoto();
+      clueDraft.answer = "";
+      clueDraft.feedback = undefined;
+      const complete = before && next.clues?.questions.find(question => question.id === before.id);
+      announcement.textContent = after ? `${questionFamily[after.family].label}. ${next.hider === next.seat ? "Pertanyaan masuk." : "Menunggu jawaban."}`
+        : complete?.status === "timeout" ? "Jawaban otomatis tersedia."
+        : complete?.status === "substituted" ? "Foto diganti dengan pencocokan cabang."
+        : "Jawaban petunjuk tersedia.";
+    }
+    const previousDraw = previous?.clues?.draw;
+    if (previousDraw?.cards[0]?.id !== nextDraw?.cards[0]?.id) {
+      clueDraft.cards = new Set(nextDraw && nextDraw.cards.length === nextDraw.keepCount ? nextDraw.cards.map(card => card.id) : []);
+      clueDraft.cardDiscards.clear();
+      if (nextDraw) announcement.textContent = `Kartu baru. Pilih ${nextDraw.keepCount} untuk disimpan.`;
+    }
+    if (previous?.clues?.delayUntil !== next.clues?.delayUntil && next.clues?.delayUntil) {
+      announcement.textContent = "Jeda pertanyaan aktif. Check-in dan penyelidikan masih tersedia.";
+    }
   }
 
   function receive(next: SeekRoom | undefined) {
@@ -156,6 +227,9 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
       startOpen = false;
       if (!keepExitConfirmation) confirmingExit = false;
       feedback = undefined;
+      releasePhoto();
+      clueDraft = newClueDraft();
+      if (next.phase === "seeking") updateClueDraft(undefined, next);
       if (next.phase === "lobby") {
         focus = "#seek-room-heading";
       } else if (active(next)) {
@@ -175,7 +249,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
         announcement.textContent = next.seats.host.ready && next.seats.guest.ready
           ? "Kedua pemain siap." : next.seats.guest.joined ? "Status kesiapan pemain diperbarui." : "Menunggu teman bergabung.";
       }
-    }
+    } else if (next.phase === "seeking") updateClueDraft(previous, next);
     if (next.ownLock && previous?.ownLock !== next.ownLock) selectedId = undefined;
     return { changed: JSON.stringify(previous && { ...previous, now: 0 }) !== JSON.stringify({ ...next, now: 0 }), focus };
   }
@@ -210,6 +284,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
       focus = update.focus;
       if (reply.error === "room-required") {
         if (room) {
+          releasePhoto();
           room = undefined;
           reportError(reply.error);
           repaint = true;
@@ -253,9 +328,12 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
       focus = receive(reply.room).focus ?? focus;
       if (submitted.type === "create" || submitted.type === "join") entryRequests.remember();
       if (reply.error) {
-        reportError(reply.error, reply.distanceMeters);
+        reportError(reply.error, reply.distanceMeters, clueActions.has(submitted.type));
+        if (reply.error === "incorrect-clue-answer") focus = "#seek-answer";
+        if (reply.error === "invalid-photo") focus = "#seek-answer-heading";
         if (reply.error === "room-phase-changed" || reply.error === "turn-changed") confirmingExit = false;
         if (reply.error === "room-required" && room) {
+          releasePhoto();
           room = undefined;
           focus = "#seek-room-heading";
         }
@@ -264,14 +342,30 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
         startOpen = false;
       } else if (submitted.type === "lock" && room?.ownLock) {
         report("Titik sembunyi berhasil dikunci.");
+      } else if (submitted.type === "reference" && room?.clues?.referenceId === submitted.checkpointId) {
+        report(`Check-in di ${cluePointName(room, submitted.checkpointId)} berhasil. Titik ini menjadi acuan petunjuk.`);
       } else if (submitted.type === "investigate" && reply.investigation === "miss" && room?.phase === "seeking" && room.turn === submitted.turn) {
         report("Penyelidikan selesai. Pilih titik lain.");
+      } else if (clueActions.has(submitted.type) && room?.phase === "seeking") {
+        if (submitted.type === "ask") {
+          report("Pertanyaan dikirim.", false, true);
+        } else if (submitted.type === "answer-question") {
+          report(room.clues?.draw ? "Jawaban dikirim. Pilih kartu yang ingin disimpan." : "Jawaban dikirim.", false, true);
+        } else if (submitted.type === "photo-unavailable") {
+          report("Pertanyaan foto diganti dengan pencocokan cabang.", false, true);
+        } else if (submitted.type === "choose-cards") {
+          report("Pilihan kartu disimpan.", false, true);
+        } else if (submitted.type === "play-card") {
+          report("Kartu dimainkan.", false, true);
+        }
       } else if (submitted.type === "leave" && !reply.room) {
         room = undefined;
         setCode("");
         focus = "#seek-room-heading";
       }
-      if (!focus && ["check-in", "ready", "lock", "investigate"].includes(submitted.type)) focus = "#seek-point-heading, #seek-action-heading";
+      if (!focus && ["check-in", "ready", "lock", "investigate", "reference"].includes(submitted.type)) {
+        focus = selectedPoint() ? "#seek-point-heading" : "#seek-action-heading";
+      }
     } catch {
       if (!signal.aborted) disconnected = true;
     } finally {
@@ -290,26 +384,31 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
     } else if (room) {
       pending = { path: roomPath(room.code), action: { ...submitted, actionId } };
     } else return;
-    feedback = undefined;
+    if (clueActions.has(submitted.type)) clueDraft.feedback = undefined;
+    else feedback = undefined;
     void submitPending(false, focus);
   }
 
-  function locationTarget(state: SeekRoom): { point: SoloPoint; action: LocationAction } | undefined {
+  function locationTarget(state: SeekRoom, reference: boolean): { point: SoloPoint; action: LocationAction } | undefined {
     const { phase, turn } = state;
-    if (startOpen && needsStart(state, now()) && (phase === "lobby" || phase === "seeking" || phase === "regroup")) {
+    if (!reference && startOpen && needsStart(state, now()) && (phase === "lobby" || phase === "seeking" || phase === "regroup")) {
       return { point: state.edition.start, action: (_, fix) => ({ type: "check-in", phase, turn, fix }) };
     }
     const type = pointAction(state);
     const point = selectedPoint();
-    if (type && point && !state.ruledOut.includes(point.id)) {
+    if (!point || !type) return;
+    if (reference && type === "investigate" && state.clues) {
+      return { point, action: ({ id: checkpointId }, fix) => ({ type: "reference", turn, checkpointId, fix }) };
+    }
+    if (!reference && point.id !== state.edition.start.id && !state.ruledOut.includes(point.id)) {
       return { point, action: ({ id: checkpointId }, fix) => ({ type, turn, checkpointId, fix }) };
     }
   }
 
-  async function locate(simulated: boolean) {
+  async function locate(simulated: boolean, reference = false) {
     if (!room || busy || pending || signal.aborted) return;
     const { code, turn, phase } = room;
-    const target = locationTarget(room);
+    const target = locationTarget(room, reference);
     if (!target) return;
     cancelRead();
     busy = true;
@@ -336,7 +435,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
       }
       focus = receive(reply.room).focus;
       disconnected = false;
-      if (room.phase !== phase || room.turn !== turn || locationTarget(room)?.point.id !== target.point.id) return;
+      if (room.phase !== phase || room.turn !== turn || locationTarget(room, reference)?.point.id !== target.point.id) return;
       // Preserve the location sample's age when the device and server clocks differ.
       const age = device ? Date.now() - device.timestamp : 0;
       if (!Number.isFinite(age) || age < 0) {
@@ -349,9 +448,75 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
       if (!signal.aborted) report(error instanceof Error ? error.message : "Check-in gagal. Coba lagi.", true);
     } finally {
       busy = locating = false;
-      if (!fix) paint(focus ?? "#seek-point-heading, #seek-action-heading");
+      if (!fix) paint(focus ?? (selectedPoint() ? "#seek-point-heading" : "#seek-action-heading"));
     }
     if (fix) send(target.action(target.point, fix));
+  }
+
+  function choosePhoto(file: File | undefined, field: string) {
+    if (!file || pendingQuestion(room)?.family !== "photo") return;
+    releasePhoto();
+    clueDraft.feedback = undefined;
+    if (!file.size || file.size > 2 * 1024 * 1024 || (file.type && !acceptedPhotoTypes.has(file.type))) {
+      reportError("invalid-photo", undefined, true);
+    } else {
+      clueDraft.photo = { file, preview: URL.createObjectURL(file) };
+    }
+    paint(focusSelector(field));
+  }
+
+  async function sendPhoto() {
+    const question = pendingQuestion(room);
+    const chosen = clueDraft.photo;
+    if (!room || !chosen || !question || question.family !== "photo" || clueDraft.preparingPhoto || busy || pending) return;
+    const turn = room.turn;
+    clueDraft.preparingPhoto = true;
+    clueDraft.feedback = undefined;
+    paint();
+    try {
+      const photo = await encodePhoto(chosen.file);
+      if (signal.aborted || pendingQuestion(room)?.id !== question.id || clueDraft.photo !== chosen) return;
+      clueDraft.preparingPhoto = false;
+      send({ type: "answer-question", turn, questionId: question.id, photo }, "#seek-hand-heading");
+    } catch {
+      if (signal.aborted || clueDraft.photo !== chosen) return;
+      clueDraft.preparingPhoto = false;
+      reportError("invalid-photo", undefined, true);
+      paint(focusSelector("photo-file"));
+    }
+  }
+
+  function askClue() {
+    if (!room || room.phase !== "seeking") return;
+    const { option, existing } = selectedQuestion(room, clueDraft);
+    if (existing) {
+      report("Jawaban dibuka kembali.", false, true);
+      paint(`#seek-question-${CSS.escape(existing.id)}`);
+      return;
+    }
+    const referenceId = room.clues?.referenceId;
+    if (!option || !referenceId) return;
+    const { radiusMeters, landmarkId } = option;
+    const previousReferenceId = clueDraft.family === "warmer" ? room.clues?.previousReferenceId : undefined;
+    send({ type: "ask", turn: room.turn, family: clueDraft.family, referenceId, previousReferenceId, radiusMeters, landmarkId }, "#seek-clue-heading");
+  }
+
+  function answerClue(unavailablePhoto: boolean) {
+    const question = pendingQuestion(room);
+    if (!room || !question) return;
+    const turn = room.turn;
+    if (unavailablePhoto && question.family === "photo") {
+      send({ type: "photo-unavailable", turn, questionId: question.id }, "#seek-hand-heading");
+    } else if (!unavailablePhoto && question.choices?.some(choice => choice.id === clueDraft.answer)) {
+      send({ type: "answer-question", turn, questionId: question.id, choiceId: clueDraft.answer }, "#seek-hand-heading");
+    }
+  }
+
+  function keepCards() {
+    if (!room) return;
+    const { selected, discards, complete } = drawSelection(room, clueDraft);
+    if (complete) send({ type: "choose-cards", turn: room.turn, cardIds: selected.map(card => card.id),
+      discardIds: discards.length ? discards.map(card => card.id) : undefined }, "#seek-hand-heading");
   }
 
   async function copy() {
@@ -416,11 +581,27 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
         const point = selectedPoint();
         selectedId = undefined;
         feedback = undefined;
-        paint(point && !room?.ruledOut.includes(point.id) ? focusSelector(`list-${point.id}`) : "#seek-board-heading");
+        paint(point && (room?.clues || !room?.ruledOut.includes(point.id)) ? focusSelector(`list-${point.id}`) : "#seek-board-heading");
         break;
       }
+      case "open-board": view.querySelector<HTMLElement>("#seek-board-heading")?.focus(); break;
       case "gps": void locate(false); break;
       case "simulate": void locate(true); break;
+      case "gps-reference": void locate(false, true); break;
+      case "simulate-reference": void locate(true, true); break;
+      case "ask-clue": askClue(); break;
+      case "answer-clue": answerClue(false); break;
+      case "answer-photo": void sendPhoto(); break;
+      case "no-photo": answerClue(true); break;
+      case "keep-cards": keepCards(); break;
+      case "delay-clues":
+      case "swap-card":
+        if (room?.phase === "seeking" && button.dataset.card) {
+          const cardId = button.dataset.card;
+          const discardId = button.dataset.action === "swap-card" ? clueDraft.discard[cardId] : undefined;
+          send({ type: "play-card", turn: room.turn, cardId, discardId }, "#seek-hand-heading");
+        }
+        break;
       case "confirm-exit":
       case "cancel-exit":
         confirmingExit = button.dataset.action === "confirm-exit";
@@ -437,9 +618,42 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
     if (event.target instanceof HTMLInputElement && event.target.name === "code") joinInput = event.target.value;
   }, { signal });
   root.addEventListener("change", event => {
-    if (!(event.target instanceof HTMLInputElement) || event.target.name !== "first-hider") return;
-    const hider = event.target.value;
-    if (hider === "host" || hider === "guest") send({ type: "assign", hider }, focusSelector(`role-${hider}`));
+    const field = event.target;
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLSelectElement)) return;
+    if (field.name === "first-hider") {
+      const hider = field.value;
+      if (hider === "host" || hider === "guest") send({ type: "assign", hider }, focusSelector(`role-${hider}`));
+      return;
+    }
+    if (!room || room.phase !== "seeking") return;
+    if (field instanceof HTMLInputElement && field.name === "clue-photo") {
+      choosePhoto(field.files?.[0], field.dataset.focus ?? "photo-file");
+      return;
+    }
+    switch (field.name) {
+      case "clue-family":
+        if (!Object.hasOwn(questionFamily, field.value)) return;
+        clueDraft.family = field.value as keyof typeof questionFamily;
+        clueDraft.input = "";
+        break;
+      case "clue-input": clueDraft.input = field.value; break;
+      case "clue-answer": clueDraft.answer = field.value; break;
+      case "discard-card":
+        if (field.dataset.card) clueDraft.discard[field.dataset.card] = field.value;
+        break;
+      case "keep-card":
+      case "draw-discard": {
+        if (!(field instanceof HTMLInputElement)) return;
+        const selection = field.name === "keep-card" ? clueDraft.cards : clueDraft.cardDiscards;
+        if (field.checked) selection.add(field.value);
+        else selection.delete(field.value);
+        if (field.name === "keep-card") clueDraft.cardDiscards.clear();
+        break;
+      }
+      default: return;
+    }
+    clueDraft.feedback = undefined;
+    paint();
   }, { signal });
   root.addEventListener("submit", event => {
     if (!(event.target instanceof HTMLFormElement) || event.target.id !== "seek-join") return;
@@ -473,6 +687,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   if (pending) paint();
   else void refresh();
   return () => {
+    releasePhoto();
     mount.abort();
     window.clearInterval(clock);
     window.clearInterval(poll);

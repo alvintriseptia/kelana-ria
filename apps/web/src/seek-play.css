@@ -22,3 +22,83 @@
 #play .seek-locked { padding: 9px 11px; border-radius: 7px; background: var(--solo-sage); }
 #play .seek-locked span { display: block; }
 #play #seek-action .duo-seats { margin-top: 14px; }
+
+#play .seek-start-point {
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: .16em;
+}
+#play .seek-branch { display: block; color: var(--muted); font-size: .82rem; }
+#play .seek-question-menu, #play .seek-card-draw {
+  margin: 16px 0 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+#play .seek-question-menu {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+#play .seek-question-menu legend, #play .seek-card-draw legend {
+  margin-bottom: 8px;
+  font-size: .92rem;
+  font-weight: 800;
+}
+#play .seek-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: .9rem;
+}
+#play .seek-choice:has(:checked) { border-color: var(--solo-dark); background: var(--solo-sage); }
+#play .seek-choice:has(:focus-visible) { outline: 2px solid var(--solo-dark); outline-offset: 2px; }
+#play .seek-choice:has(:disabled) { opacity: .72; cursor: default; }
+#play .seek-choice input { margin: 4px 0 0; accent-color: var(--solo-dark); }
+#play .seek-choice span { min-width: 0; overflow-wrap: anywhere; }
+#play .seek-choice small { display: block; color: var(--muted); font-size: .77rem; }
+#play .seek-field { display: grid; gap: 5px; margin-top: 12px; font-weight: 750; min-width: 0; }
+#play .seek-field select, #play .seek-field input[type="file"] {
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: .93rem;
+}
+#play .seek-field input::file-selector-button {
+  margin-right: 8px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--solo-sage);
+  color: var(--ink);
+  font: inherit;
+}
+#play .seek-clue-state, #play .seek-clue-answer { padding: 9px 12px; border-radius: 7px; background: var(--solo-sage); }
+#play .seek-clue-state { margin-top: 12px; }
+#play .seek-clue-state p { margin-top: 4px; }
+#play .seek-hand-list, #play .seek-clue-history ol { margin: 10px 0 0; padding: 0; list-style: none; }
+#play .seek-hand-list li, #play .seek-clue-history li { padding-block: 12px; border-top: 1px solid var(--line); scroll-margin-top: 16px; }
+#play .seek-hand-list h3, #play .seek-clue-history h3, #play .seek-clue-history h4 { margin: 0; font-size: 1.02rem; }
+#play .seek-clue-turn > h3 { margin-top: 14px; }
+#play .seek-hand-list button { margin-top: 8px; }
+#play .seek-card-draw > .seek-choice { margin-top: 8px; }
+#play .seek-clue-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 8px; }
+#play .seek-clue-row span { color: var(--muted); font-size: .83rem; font-weight: 750; }
+#play .seek-clue-photo { display: block; width: 100%; max-height: 300px; object-fit: contain; margin-top: 10px; border-radius: 8px; }
+#play .seek-filename { overflow-wrap: anywhere; color: var(--muted); font-size: .85rem; }
