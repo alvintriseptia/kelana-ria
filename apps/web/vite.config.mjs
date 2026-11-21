@@ -80,7 +80,13 @@ self.addEventListener("fetch", (event) => {
   await writeFile(join(directory, "sw.js"), worker);
 }
 
+const apiProxy = {
+  "/api": process.env.KELANA_API_ORIGIN ?? "http://127.0.0.1:8787",
+};
+
 export default defineConfig({
+  server: { proxy: apiProxy },
+  preview: { proxy: apiProxy },
   build: { manifest: true, sourcemap: "hidden" },
   plugins: [{
     name: "kelana-shell-worker",

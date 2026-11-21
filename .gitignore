@@ -5,3 +5,4 @@ dist/
 
 apps/web/.types/
 apps/web/qa-results/
+apps/api/.data/

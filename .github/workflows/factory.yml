@@ -27,14 +27,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - run: npm test --workspace @kelana-ria/api
       - name: Install pinned Playwright Chromium and system libraries
         run: npx --no-install playwright install --with-deps --no-shell chromium
       - name: Check mobile browser and cold-load budgets
         run: npm run qa --workspace @kelana-ria/web
+      - name: Play through Compact solo Claim
+        run: npm run qa:solo --workspace @kelana-ria/web
       - name: Upload mobile QA evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: mobile-chooser-qa
+          name: mobile-web-qa
           path: apps/web/qa-results/
           retention-days: 14
