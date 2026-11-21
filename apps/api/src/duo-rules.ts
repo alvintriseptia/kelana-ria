@@ -1,5 +1,5 @@
-import type { DuoAction, DuoReply, DuoRoom, DuoSeat, DuoZone, SoloCheckpoint } from "@kelana-ria/contracts";
-import { compactTrial } from "./solo-fixture.js";
+import type { DuoAction, DuoReply, DuoRoom, DuoSeat, DuoZone, SoloCheckpoint, SoloEdition } from "@kelana-ria/contracts";
+import { compactTrial, type SoloFixture } from "./solo-fixture.js";
 import { verifyLocation } from "./solo-rules.js";
 import type { ActionOutcome } from "./solo-rules.js";
 
@@ -8,20 +8,32 @@ type Member = Pick<DuoRoom, "startVerifiedUntil" | "visits" | "cooldowns"> & {
   ready: boolean;
 };
 
-const compactDuoTrial = {
+export type DuoFixture = {
+  edition: Omit<SoloEdition, "targets">;
+  checkIn: SoloFixture["checkIn"];
+  cooldownMs: number;
+  tasks: SoloFixture["tasks"];
+};
+
+const compactDuoTrial: DuoFixture = {
   ...compactTrial,
   edition: {
     id: "compact-duo-trial-v1",
+    board: compactTrial.edition.board,
+    boardVersion: compactTrial.edition.boardVersion,
+    format: compactTrial.edition.format,
+    origin: compactTrial.edition.origin,
     durationMs: compactTrial.edition.durationMs,
     start: compactTrial.edition.start,
     checkpoints: compactTrial.edition.checkpoints,
   },
 };
 
-export type DuoRun = Pick<DuoRoom, "code" | "phase" | "startedAt" | "deadline" | "owners" | "outcome" | "events"> & {
-  fixture: typeof compactDuoTrial;
+export type DuoRun = Pick<DuoRoom, "code" | "phase" | "startedAt" | "deadline" | "owners" | "outcome" | "events" | "paidPack"> & {
+  fixture: DuoFixture;
   host: Member;
   guest: Member | null;
+  paidPassId?: string;
 };
 
 export type DuoActionOutcome = ActionOutcome & { releasedSeat?: true };
@@ -30,10 +42,15 @@ export function newMember(credentialHash: string): Member {
   return { credentialHash, ready: false, startVerifiedUntil: null, visits: {}, cooldowns: {} };
 }
 
-export function newDuoRun(code: string, credentialHash: string): DuoRun {
+export function newDuoRun(
+  code: string,
+  credentialHash: string,
+  fixture: DuoFixture = compactDuoTrial,
+  paid?: { passId: string; paidPack: NonNullable<DuoRoom["paidPack"]> },
+): DuoRun {
   return {
     code,
-    fixture: compactDuoTrial,
+    fixture,
     phase: "lobby",
     startedAt: null,
     deadline: null,
@@ -42,10 +59,12 @@ export function newDuoRun(code: string, credentialHash: string): DuoRun {
     events: [],
     host: newMember(credentialHash),
     guest: null,
+    ...(paid ? { paidPassId: paid.passId, paidPack: paid.paidPack } : {}),
   };
 }
 
 export function memberSeat(run: DuoRun, credentialHash: string): DuoSeat | undefined {
+  if (!credentialHash) return undefined;
   if (run.host.credentialHash === credentialHash) return "host";
   if (run.guest?.credentialHash === credentialHash) return "guest";
   return undefined;
@@ -101,7 +120,9 @@ export function decideWinner(zones: DuoZone[], landmarks: DuoRoom["landmarks"]) 
 
 function finish(run: DuoRun, at: number, reason: "time" | "all-claimed" | "forfeit", forfeitingSeat?: DuoSeat) {
   const { zones, landmarks } = score(run.fixture.edition.checkpoints, run.owners);
-  const winner = forfeitingSeat ? (forfeitingSeat === "host" ? "guest" : "host") : decideWinner(zones, landmarks);
+  const winner = forfeitingSeat
+    ? (run.guest ? (forfeitingSeat === "host" ? "guest" : "host") : null)
+    : decideWinner(zones, landmarks);
   run.phase = "finished";
   run.outcome = { winner, reason };
   run.events.push(forfeitingSeat ? { type: "finished", at, seat: forfeitingSeat } : { type: "finished", at });
@@ -116,7 +137,7 @@ export function expireDuo(run: DuoRun, now: number) {
 export function viewDuo(run: DuoRun, seat: DuoSeat, now: number, result: ActionOutcome = {}): DuoReply {
   const member = memberAt(run, seat);
   const { edition } = run.fixture;
-  const { code, phase, startedAt, deadline, owners, events, outcome } = run;
+  const { code, phase, startedAt, deadline, owners, events, outcome, paidPack } = run;
   const { error, distanceMeters, challengeCheckpointId } = result;
   const canOpen = challengeCheckpointId && !openDuoChallenge(run, seat, challengeCheckpointId).error;
   return {
@@ -124,12 +145,13 @@ export function viewDuo(run: DuoRun, seat: DuoSeat, now: number, result: ActionO
       code, phase, startedAt, deadline, owners, events, outcome, seat, edition, now,
       ...score(edition.checkpoints, owners),
       seats: {
-        host: { joined: true, ready: phase === "lobby" ? readyInLobby(run.host, now) : run.host.ready },
+        host: { joined: run.host.credentialHash !== "", ready: phase === "lobby" ? readyInLobby(run.host, now) : run.host.ready },
         guest: { joined: run.guest !== null, ready: phase === "lobby" ? readyInLobby(run.guest, now) : (run.guest?.ready ?? false) },
       },
       startVerifiedUntil: member.startVerifiedUntil,
       visits: member.visits,
       cooldowns: member.cooldowns,
+      ...(paidPack ? { paidPack } : {}),
     },
     error,
     distanceMeters,
@@ -159,7 +181,10 @@ export function applyDuo(run: DuoRun, seat: DuoSeat, action: DuoAction, now: num
     if (seat !== "host") return { error: "host-only" };
     if (run.startedAt !== null) return {};
     if (run.phase !== "lobby") return { error: "round-finished" };
-    if (!readyInLobby(run.host, now) || !readyInLobby(run.guest, now)) return { error: "players-not-ready" };
+    const soloPaid = run.paidPack?.players === 1;
+    if (!readyInLobby(run.host, now) || (!soloPaid && !readyInLobby(run.guest, now))) {
+      return { error: "players-not-ready" };
+    }
     run.startedAt = now;
     run.deadline = now + edition.durationMs;
     run.phase = "active";

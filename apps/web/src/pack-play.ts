@@ -1,6 +1,8 @@
 import type {
   PackAction,
   PackDraftPayload,
+  PackEarningsEntry,
+  PackOrderStatus,
   PackOrderSummary,
   PackRole,
   PackTaskInput,
@@ -100,19 +102,41 @@ const statusLabels: Record<PackVersionStatus, string> = {
   paused: "Penjualan dijeda",
 };
 
+const orderStatusLabels: Record<PackOrderStatus, string> = {
+  pending: "Menunggu pelunasan · Test payment",
+  settled: "Lunas · Test payment",
+  expired: "Kedaluwarsa (tanpa akses)",
+};
+
 const errorLabels: Record<string, string> = {
   "forbidden-role": "Peran ini tidak memiliki izin untuk tindakan tersebut.",
   "forbidden-pack-owner": "Hanya penulis pemilik paket yang dapat mengubah draf ini.",
+  "forbidden-order": "Pesanan ini tidak dimiliki oleh sesi perangkat ini.",
   "review-pending": "Versi saat ini sedang ditinjau oleh peninjau editorial.",
   "sales-paused": "Penjualan versi ini sedang dijeda karena kendala titik pemeriksaan.",
   "version-not-published": "Hanya versi yang telah disetujui dan terbit yang dapat dipesan.",
   "verification-notes-required": "Lengkapi catatan verifikasi lokasi untuk setiap tantangan.",
   "insufficient-zones": "Paket harus mencakup minimal 2 zona berbeda di papan Compact.",
   "requires-all-landmarks": "Paket harus menyediakan landmark alternatif di luar target minimal.",
+  "order-not-settled": "Pembayaran belum lunas. Akses ruang belum dibuka.",
+  "order-expired": "Pesanan sudah kedaluwarsa dan tidak membuka akses ruang.",
+  "payment-mismatch": "Nominal atau mata uang pembayaran tidak cocok dengan pesanan.",
+  "payment-provider-unavailable":
+    "Layanan pembayaran sandbox sedang tidak tersedia. Pesanan tetap tertunda tanpa akses.",
+  "invalid-signature": "Tanda tangan notifikasi pembayaran tidak valid.",
+  "pass-already-bound": "Pass sesi ini sudah terikat ke ruang lain.",
 };
 
 function formatIdr(amount: number) {
   return `Rp${amount.toLocaleString("id-ID")}`;
+}
+
+function paidRoomHref(roomCode: string, passId: string) {
+  const url = new URL("/", location.origin);
+  url.searchParams.set("play", "duo-claim");
+  url.searchParams.set("room", roomCode);
+  url.searchParams.set("pass", passId);
+  return `${url.pathname}${url.search}`;
 }
 
 export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
@@ -156,19 +180,78 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
   const feedbackEl = root.querySelector<HTMLElement>("#pack-feedback")!;
   const announcement = root.querySelector<HTMLElement>("#pack-announcement")!;
 
-  function renderOrders(orders: PackOrderSummary[], heading: string) {
+  function renderOrders(
+    orders: PackOrderSummary[],
+    heading: string,
+    allowCheckoutActions: boolean,
+  ) {
     return `<section class="pack-card" aria-label="${escapeText(heading)}">
       <h2>${escapeText(heading)}</h2>
       ${
         orders.length === 0
           ? "<p>Belum ada pesanan tercatat.</p>"
           : `<ul class="pack-list">${orders
-              .map(
-                (ord) => `<li>
-                <strong>${escapeText(ord.orderId)}</strong> · ${escapeText(ord.title)} (v${ord.version}) ·
-                <span>Test payment · Sandbox</span>
-                <div>Harga kotor ${formatIdr(ord.grossAmountIdr)} · Potongan ${formatIdr(ord.platformFeeIdr)} · Bagian kreator <strong>${formatIdr(ord.creatorShareIdr)}</strong></div>
+              .map((ord) => {
+                const badgeClass =
+                  ord.status === "settled"
+                    ? "pack-badge-published"
+                    : ord.status === "expired"
+                      ? "pack-badge-paused"
+                      : "";
+                const modeLabel =
+                  ord.paymentMode === "midtrans-sandbox"
+                    ? "Midtrans Sandbox · Test payment"
+                    : "Recorded Sandbox · Test payment";
+                return `<li data-order-id="${escapeText(ord.orderId)}" data-order-status="${escapeText(ord.status)}">
+                <div>
+                  <span class="pack-badge ${badgeClass}">${escapeText(orderStatusLabels[ord.status])}</span>
+                  <strong>${escapeText(ord.orderId)}</strong> · ${escapeText(ord.title)} (v${ord.version}) · ${ord.players} pemain
+                </div>
+                <div>${escapeText(modeLabel)} · Harga kotor ${formatIdr(ord.grossAmountIdr)} · Potongan ${formatIdr(ord.platformFeeIdr)} · Bagian kreator <strong>${formatIdr(ord.creatorShareIdr)}</strong></div>
+                ${
+                  ord.checkoutReturnedAt && ord.status === "pending"
+                    ? `<div class="pack-note">Kembali dari checkout sebelum pelunasan diverifikasi. Ruang belum dibuka sampai status lunas terkonfirmasi.</div>`
+                    : ""
+                }
+                ${
+                  allowCheckoutActions && ord.status === "pending"
+                    ? `<div class="pack-actions">
+                        ${action(`Kembali dari checkout (${ord.orderId})`, `checkout-return:${ord.orderId}`, "secondary", busy)}
+                        ${action(`Verifikasi pelunasan (${ord.orderId})`, `verify-settlement:${ord.orderId}`, "primary", busy)}
+                      </div>`
+                    : ""
+                }
+                ${
+                  ord.status === "settled" && ord.roomCode && ord.passId
+                    ? `<div class="pack-note">
+                        Pass sesi: <code>${escapeText(ord.passId)}</code> · Ruang: <strong>${escapeText(ord.roomCode)}</strong> · Entri pendapatan: <code>${escapeText(ord.earningsEntryId ?? "-")}</code>
+                        ${
+                          allowCheckoutActions
+                            ? `<div class="pack-actions"><a class="primary" href="${escapeText(paidRoomHref(ord.roomCode, ord.passId))}">Buka ruang berbayar (${escapeText(ord.roomCode)})</a></div>`
+                            : ""
+                        }
+                      </div>`
+                    : ""
+                }
                 ${ord.supportNote ? `<div class="pack-note">${escapeText(ord.supportNote)}</div>` : ""}
+              </li>`;
+              })
+              .join("")}</ul>`
+      }
+    </section>`;
+  }
+
+  function renderEarnings(earnings: PackEarningsEntry[], heading: string) {
+    return `<section class="pack-card" aria-label="${escapeText(heading)}">
+      <h2>${escapeText(heading)}</h2>
+      ${
+        earnings.length === 0
+          ? "<p>Belum ada entri pendapatan lunas.</p>"
+          : `<ul class="pack-list">${earnings
+              .map(
+                (entry) => `<li data-earnings-id="${escapeText(entry.earningsEntryId)}">
+                <strong>${escapeText(entry.earningsEntryId)}</strong> · Pesanan <code>${escapeText(entry.orderId)}</code> · ${escapeText(entry.title)} (v${entry.version}) · <span>Test payment · Sandbox</span>
+                <div>Kotor ${formatIdr(entry.grossAmountIdr)} · Potongan ${formatIdr(entry.platformFeeIdr)} · Bagian kreator <strong>${formatIdr(entry.creatorShareIdr)}</strong></div>
               </li>`,
               )
               .join("")}</ul>`
@@ -272,7 +355,8 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
           <h2 id="writer-versions-heading">Riwayat versi penulis</h2>
           ${renderVersionList(versions, false)}
         </section>
-        ${renderOrders(state.orders, "Pendapatan kreator & rekonsiliasi pesanan")}
+        ${renderEarnings(state.earnings ?? [], "Entri pendapatan kreator (Test payment)")}
+        ${renderOrders(state.orders, "Pesanan paket kreator", false)}
       </div>
     </div>`;
   }
@@ -300,7 +384,10 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
         }
         ${renderVersionList(versions, true)}
       </section>
-      ${renderOrders(state.orders, "Pesanan aktif & dukungan pemain")}
+      <div class="pack-shell">
+        ${renderEarnings(state.earnings ?? [], "Rekonsiliasi pendapatan kreator (Test payment)")}
+        ${renderOrders(state.orders, "Pesanan aktif & dukungan pemain", false)}
+      </div>
     </div>`;
   }
 
@@ -341,7 +428,7 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
                 .join("")
         }
       </section>
-      ${renderOrders(state.orders, "Pesanan saya & dukungan ruang")}
+      ${renderOrders(state.orders, "Pesanan saya & dukungan ruang", true)}
     </div>`;
   }
 
@@ -443,6 +530,24 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
         return;
       }
 
+      if (act.startsWith("checkout-return:")) {
+        const orderId = act.slice("checkout-return:".length);
+        void sendPackAction(
+          { type: "checkout-return", orderId },
+          `Kembali dari checkout (${orderId}). Pembayaran belum lunas sehingga ruang belum dibuka.`,
+        );
+        return;
+      }
+
+      if (act.startsWith("verify-settlement:")) {
+        const orderId = act.slice("verify-settlement:".length);
+        void sendPackAction(
+          { type: "verify-settlement", orderId, transactionStatus: "settlement" },
+          `Pelunasan uji coba (${orderId}) terverifikasi. Satu ruang dan satu entri pendapatan dibuka.`,
+        );
+        return;
+      }
+
       const match = act.match(/^(submit|changes|publish|pause|order|closure)-(.+)-(\d+)$/);
       if (!match) return;
       const [, kind, packId, versionText] = match;
@@ -485,7 +590,7 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
       } else if (kind === "order") {
         void sendPackAction(
           { type: "create-order", packId: packId!, version, players: 2 },
-          `Pesanan uji coba (Test payment) untuk v${version} berhasil dicatat.`,
+          `Pesanan uji coba (Test payment) untuk v${version} dibuat dalam status menunggu pelunasan.`,
         );
       } else if (kind === "closure") {
         void sendPackAction(

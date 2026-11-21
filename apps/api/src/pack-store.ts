@@ -1,9 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type {
+  DuoRoom,
   PackAction,
   PackClosureReport,
   PackDraftPayload,
+  PackEarningsEntry,
   PackOrderSummary,
   PackPublicCheckpoint,
   PackPublicListing,
@@ -12,6 +14,15 @@ import type {
   PackVersionDetail,
   PackWorkspaceReply,
 } from "@kelana-ria/contracts";
+import type { DuoFixture } from "./duo-rules.js";
+import {
+  createMidtransAdapterFromEnv,
+  parseMidtransIdrAmount,
+  type MidtransAdapter,
+  type MidtransNotificationPayload,
+  type RecordedMidtransAdapter,
+  type RedactedMidtransLifecycleEvent,
+} from "./midtrans-adapter.js";
 import {
   COMPACT_BOARD_VERSION,
   compactCatalog,
@@ -31,12 +42,48 @@ type StoredOrder = PackOrderSummary & {
   buyerHash: string;
 };
 
+type StoredPass = {
+  passId: string;
+  orderId: string;
+  roomCode: string;
+  packId: string;
+  version: number;
+  players: 1 | 2;
+  createdAt: number;
+};
+
 type PackResponse = {
   status: number;
   body: PackWorkspaceReply;
 };
 
+export type MidtransWebhookResponse = {
+  status: number;
+  body: {
+    ok?: boolean;
+    duplicate?: boolean;
+    order?: PackOrderSummary;
+    passId?: string | null;
+    roomCode?: string | null;
+    earningsEntryId?: string | null;
+    error?: string;
+  };
+};
+
+export type PackStoreOptions = {
+  catalog?: CompactBoardCatalog;
+  routes?: WalkingRouteSnapshot | null;
+  closedCheckpoints?: Iterable<string> | (() => Iterable<string>);
+  midtrans?: MidtransAdapter;
+  unlockPaidRoom?: (
+    fixture: DuoFixture,
+    passId: string,
+    paidPack: NonNullable<DuoRoom["paidPack"]>,
+  ) => string;
+};
+
 const PLATFORM_FEE_RATE = 0.15;
+const ORDER_TTL_MS = 15 * 60_000;
 
 function digest(credential: string) {
   return createHash("sha256").update(credential).digest("hex");
@@ -44,6 +91,10 @@ function digest(credential: string) {
 
 function isNonEmptyString(value: unknown, minLength = 1): value is string {
   return typeof value === "string" && value.trim().length >= minLength;
+}
+
+function isRecordedAdapter(adapter: MidtransAdapter): adapter is RecordedMidtransAdapter {
+  return adapter.mode === "recorded-sandbox" && typeof (adapter as Partial<RecordedMidtransAdapter>).setOrderState === "function";
 }
 
 function validateTasksSyntax(
@@ -195,11 +246,9 @@ export function packStore(
     catalog = compactCatalog,
     routes = compactWalkingSnapshot,
     closedCheckpoints = [],
-  }: {
-    catalog?: CompactBoardCatalog;
-    routes?: WalkingRouteSnapshot | null;
-    closedCheckpoints?: Iterable<string> | (() => Iterable<string>);
-  } = {},
+    midtrans = createMidtransAdapterFromEnv(),
+    unlockPaidRoom,
+  }: PackStoreOptions = {},
 ) {
   const database = new DatabaseSync(databasePath, { timeout: 5000 });
   database.exec(`
@@ -225,6 +274,24 @@ export function packStore(
       pack_id TEXT NOT NULL,
       version INTEGER NOT NULL,
       buyer_hash TEXT NOT NULL,
+      snapshot TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS pack_passes (
+      pass_id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL UNIQUE,
+      room_code TEXT NOT NULL,
+      snapshot TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS pack_earnings (
+      earnings_entry_id TEXT PRIMARY KEY,
+      order_id TEXT NOT NULL UNIQUE,
+      pack_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      snapshot TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE IF NOT EXISTS pack_payment_events (
+      event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id TEXT NOT NULL,
       snapshot TEXT NOT NULL
     ) STRICT;
     CREATE TABLE IF NOT EXISTS pack_actions (
@@ -260,8 +327,29 @@ export function packStore(
   const getAllOrders = database.prepare(
     "SELECT snapshot FROM pack_orders ORDER BY order_id ASC",
   );
+  const getOrderRow = database.prepare(
+    "SELECT snapshot FROM pack_orders WHERE order_id = ?",
+  );
   const putOrder = database.prepare(
     "INSERT INTO pack_orders (order_id, pack_id, version, buyer_hash, snapshot) VALUES (?, ?, ?, ?, ?) ON CONFLICT(order_id) DO UPDATE SET snapshot = excluded.snapshot",
+  );
+  const getPassRow = database.prepare(
+    "SELECT snapshot FROM pack_passes WHERE pass_id = ?",
+  );
+  const putPass = database.prepare(
+    "INSERT INTO pack_passes (pass_id, order_id, room_code, snapshot) VALUES (?, ?, ?, ?)",
+  );
+  const getAllEarnings = database.prepare(
+    "SELECT snapshot FROM pack_earnings ORDER BY earnings_entry_id ASC",
+  );
+  const putEarnings = database.prepare(
+    "INSERT INTO pack_earnings (earnings_entry_id, order_id, pack_id, version, snapshot) VALUES (?, ?, ?, ?, ?)",
+  );
+  const addPaymentEvent = database.prepare(
+    "INSERT INTO pack_payment_events (order_id, snapshot) VALUES (?, ?)",
+  );
+  const getPaymentEvents = database.prepare(
+    "SELECT snapshot FROM pack_payment_events WHERE order_id = ? ORDER BY event_id ASC",
   );
   const getAction = database.prepare(
     "SELECT receipt FROM pack_actions WHERE credential_hash = ? AND action_id = ?",
@@ -328,6 +416,84 @@ export function packStore(
     return (getAllOrders.all() as { snapshot: string }[]).map((row) =>
       JSON.parse(row.snapshot) as StoredOrder,
     );
+  }
+
+  function loadOrder(orderId: string): StoredOrder | undefined {
+    const row = getOrderRow.get(orderId) as { snapshot?: string } | undefined;
+    return typeof row?.snapshot === "string"
+      ? (JSON.parse(row.snapshot) as StoredOrder)
+      : undefined;
+  }
+
+  function saveOrder(order: StoredOrder) {
+    putOrder.run(
+      order.orderId,
+      order.packId,
+      order.version,
+      order.buyerHash,
+      JSON.stringify(order),
+    );
+  }
+
+  function loadPass(passId: string): StoredPass | undefined {
+    const row = getPassRow.get(passId) as { snapshot?: string } | undefined;
+    return typeof row?.snapshot === "string"
+      ? (JSON.parse(row.snapshot) as StoredPass)
+      : undefined;
+  }
+
+  function loadEarnings(): PackEarningsEntry[] {
+    return (getAllEarnings.all() as { snapshot: string }[]).map((row) =>
+      JSON.parse(row.snapshot) as PackEarningsEntry,
+    );
+  }
+
+  function recordLifecycle(event: RedactedMidtransLifecycleEvent) {
+    addPaymentEvent.run(event.orderId, JSON.stringify(event));
+  }
+
+  function expirePendingOrders(now: number) {
+    for (const order of loadOrders()) {
+      if (order.status === "pending" && now >= order.expiresAt) {
+        order.status = "expired";
+        saveOrder(order);
+      }
+    }
+  }
+
+  function buildPaidDuoFixture(version: StoredVersion, players: 1 | 2): DuoFixture {
+    const checkpoints = [];
+    const tasks: DuoFixture["tasks"] = {};
+    for (const task of version.tasks) {
+      const point = catalog.checkpoints[task.checkpointId];
+      if (!point) continue;
+      checkpoints.push({ ...point });
+      tasks[task.checkpointId] = {
+        siteId: task.checkpointId,
+        reviewed: true,
+        challenge: {
+          checkpointId: task.checkpointId,
+          prompt: task.question,
+          choices: task.choices.map((c) => ({ ...c })),
+        },
+        correctChoiceId: task.correctChoiceId,
+      };
+    }
+    return {
+      edition: {
+        id: `${version.packId}-v${version.version}`,
+        board: "compact",
+        boardVersion: version.boardVersion,
+        format: "claim-the-city",
+        origin: "prepared",
+        durationMs: version.durationMinutes * 60_000,
+        start: catalog.start,
+        checkpoints,
+      },
+      checkIn: { ...catalog.checkIn },
+      cooldownMs: catalog.cooldownMs,
+      tasks,
+    };
   }
 
   function toPublicVersion(v: StoredVersion): PackVersionDetail {
@@ -409,6 +575,7 @@ export function packStore(
     const allVersions = loadAllVersions();
     const listings = buildListings(allVersions);
     const allOrders = loadOrders();
+    const allEarnings = loadEarnings();
 
     if (role === "public") {
       // Public players see only approved published listings and their own orders (including orders on paused versions).
@@ -431,6 +598,7 @@ export function packStore(
       const writerOrders = allOrders
         .filter((o) => ownPackIds.has(o.packId))
         .map(toPublicOrder);
+      const writerEarnings = allEarnings.filter((e) => ownPackIds.has(e.packId));
       const closures = loadClosures().filter((c) => ownPackIds.has(c.packId));
       return {
         role: "writer",
@@ -438,19 +606,236 @@ export function packStore(
         versions: ownVersions,
         closures,
         orders: writerOrders,
+        earnings: writerEarnings,
         error,
       };
     }
 
-    // Reviewer sees all versions, closure reports, and orders for support and earnings reconciliation.
+    // Reviewer sees all versions, closure reports, orders, and reconciled creator earnings entries.
     return {
       role: "reviewer",
       listings,
       versions: allVersions.map(toPublicVersion),
       closures: loadClosures(),
       orders: allOrders.map(toPublicOrder),
+      earnings: allEarnings,
       error,
     };
+  }
+
+  async function verifyAndSettleOrder(
+    orderId: string,
+    now: number,
+    options: {
+      expectedOwnerHash?: string;
+      allowAnyOwner?: boolean;
+      recordedTransition?: {
+        transactionStatus?: "pending" | "settlement" | "expire" | "cancel" | "deny";
+        grossAmount?: string;
+        currency?: string;
+        statusCode?: string;
+      };
+    } = {},
+  ): Promise<{
+    status: number;
+    error?: string;
+    duplicate?: boolean;
+    order?: StoredOrder;
+  }> {
+    // 1. Pre-check order state inside a short read/write transaction.
+    const initial = transact(() => {
+      const order = loadOrder(orderId);
+      if (!order) return { status: 404, error: "order-not-found" as const };
+      if (
+        !options.allowAnyOwner &&
+        options.expectedOwnerHash &&
+        order.buyerHash !== options.expectedOwnerHash
+      ) {
+        return { status: 403, error: "forbidden-order" as const };
+      }
+      if (order.status === "settled") {
+        return { status: 200, duplicate: true, order };
+      }
+      if (order.status === "expired" || now >= order.expiresAt) {
+        if (order.status !== "expired") {
+          order.status = "expired";
+          saveOrder(order);
+        }
+        return { status: 409, error: "order-expired" as const, order };
+      }
+      return { status: 0, order };
+    });
+
+    if (initial.status !== 0) {
+      return initial;
+    }
+
+    const pendingOrder = initial.order!;
+
+    // In recorded-sandbox mode (no live Midtrans server key), allow test/UI status transitions before status lookup.
+    if (
+      options.recordedTransition?.transactionStatus &&
+      isRecordedAdapter(midtrans)
+    ) {
+      const parsedGross =
+        options.recordedTransition.grossAmount !== undefined
+          ? parseMidtransIdrAmount(options.recordedTransition.grossAmount)
+          : undefined;
+      midtrans.setOrderState(orderId, {
+        transactionStatus: options.recordedTransition.transactionStatus,
+        ...(parsedGross !== undefined ? { grossAmountIdr: parsedGross } : {}),
+        ...(options.recordedTransition.currency
+          ? { currency: options.recordedTransition.currency }
+          : {}),
+        ...(options.recordedTransition.statusCode
+          ? { statusCode: options.recordedTransition.statusCode }
+          : {}),
+      });
+    }
+
+    // 2. Authoritative status lookup outside SQLite write lock so provider I/O never blocks SQLite.
+    let lookup;
+    try {
+      lookup = await midtrans.fetchTransactionStatus(orderId);
+    } catch {
+      // Provider outage: retain pending order state without granting access (§8.1).
+      return {
+        status: 503,
+        error: "payment-provider-unavailable",
+        order: pendingOrder,
+      };
+    }
+
+    transact(() => {
+      recordLifecycle(
+        midtrans.redactLifecycleEvent({
+          stage: "status-lookup",
+          orderId: pendingOrder.orderId,
+          statusCode: lookup.statusCode,
+          transactionStatus: lookup.transactionStatus,
+          grossAmountIdr: lookup.grossAmountIdr,
+          currency: lookup.currency,
+          paymentType: lookup.paymentType,
+          at: now,
+        }),
+      );
+    });
+
+    if (
+      lookup.orderId !== pendingOrder.orderId ||
+      lookup.grossAmountIdr !== pendingOrder.grossAmountIdr ||
+      lookup.currency !== "IDR"
+    ) {
+      return { status: 409, error: "payment-mismatch", order: pendingOrder };
+    }
+
+    if (
+      lookup.transactionStatus === "expire" ||
+      lookup.transactionStatus === "cancel" ||
+      lookup.transactionStatus === "deny"
+    ) {
+      const expiredOrder = transact(() => {
+        const latest = loadOrder(orderId);
+        if (!latest) return undefined;
+        if (latest.status === "settled") return latest;
+        latest.status = "expired";
+        saveOrder(latest);
+        return latest;
+      });
+      if (expiredOrder?.status === "settled") {
+        return { status: 200, duplicate: true, order: expiredOrder };
+      }
+      return { status: 409, error: "order-expired", order: expiredOrder };
+    }
+
+    const isSettled =
+      lookup.transactionStatus === "settlement" ||
+      (lookup.transactionStatus === "capture" &&
+        (lookup.fraudStatus === undefined || lookup.fraudStatus === "accept"));
+
+    if (!isSettled) {
+      return { status: 409, error: "order-not-settled", order: pendingOrder };
+    }
+
+    // 3. Allocate or retrieve the single paid room outside packStore's SQLite lock (idempotent by passId).
+    const versionRecord = transact(() =>
+      loadVersion(pendingOrder.packId, pendingOrder.version),
+    );
+    if (!versionRecord) {
+      return { status: 404, error: "version-not-found" };
+    }
+
+    const passId = `pass-${pendingOrder.orderId}`;
+    const earningsEntryId = `earn-${pendingOrder.orderId}`;
+    const paidPack: NonNullable<DuoRoom["paidPack"]> = {
+      packId: pendingOrder.packId,
+      version: pendingOrder.version,
+      title: pendingOrder.title,
+      byline: pendingOrder.byline,
+      orderId: pendingOrder.orderId,
+      players: pendingOrder.players,
+      sandbox: true,
+    };
+    const fixture = buildPaidDuoFixture(versionRecord, pendingOrder.players);
+    const roomCode = unlockPaidRoom
+      ? unlockPaidRoom(fixture, passId, paidPack)
+      : randomBytes(4).toString("hex").toUpperCase();
+
+    // 4. Atomically finalize settlement, pass, and single creator earnings entry (A29, A30).
+    return transact(() => {
+      const latest = loadOrder(orderId);
+      if (!latest) return { status: 404, error: "order-not-found" };
+      if (latest.status === "settled") {
+        return { status: 200, duplicate: true, order: latest };
+      }
+      if (latest.status === "expired") {
+        return { status: 409, error: "order-expired", order: latest };
+      }
+
+      const passRecord: StoredPass = {
+        passId,
+        orderId: latest.orderId,
+        roomCode,
+        packId: latest.packId,
+        version: latest.version,
+        players: latest.players,
+        createdAt: now,
+      };
+      putPass.run(passId, latest.orderId, roomCode, JSON.stringify(passRecord));
+
+      const earningsEntry: PackEarningsEntry = {
+        earningsEntryId,
+        orderId: latest.orderId,
+        packId: latest.packId,
+        version: latest.version,
+        title: latest.title,
+        byline: latest.byline,
+        currency: "IDR",
+        grossAmountIdr: latest.grossAmountIdr,
+        platformFeeIdr: latest.platformFeeIdr,
+        creatorShareIdr: latest.creatorShareIdr,
+        settledAt: now,
+        paymentMode: lookup.mode,
+        sandbox: true,
+      };
+      putEarnings.run(
+        earningsEntryId,
+        latest.orderId,
+        latest.packId,
+        latest.version,
+        JSON.stringify(earningsEntry),
+      );
+
+      latest.status = "settled";
+      latest.settledAt = now;
+      latest.passId = passId;
+      latest.roomCode = roomCode;
+      latest.earningsEntryId = earningsEntryId;
+      latest.paymentMode = lookup.mode;
+      saveOrder(latest);
+
+      return { status: 200, duplicate: false, order: latest };
+    });
   }
 
   return {
@@ -458,11 +843,19 @@ export function packStore(
       database.close();
     },
 
+    redactedLifecycle(orderId: string): RedactedMidtransLifecycleEvent[] {
+      return (getPaymentEvents.all(orderId) as { snapshot: string }[]).map((row) =>
+        JSON.parse(row.snapshot) as RedactedMidtransLifecycleEvent,
+      );
+    },
+
     bootstrap(
       credential: string | undefined,
       requestedRole: PackRole = "public",
+      now = Date.now(),
     ): { token?: string; role: PackRole; body: PackWorkspaceReply } {
       return transact(() => {
+        expirePendingOrders(now);
         if (credential) {
           const key = digest(credential);
           const row = getActor.get(key) as { role?: PackRole } | undefined;
@@ -484,32 +877,288 @@ export function packStore(
       });
     },
 
-    act(credential: string, action: PackAction, now: number): PackResponse {
+    async handleMidtransNotification(
+      payload: MidtransNotificationPayload,
+      now: number,
+    ): Promise<MidtransWebhookResponse> {
+      if (!midtrans.verifySignature(payload)) {
+        return { status: 403, body: { error: "invalid-signature" } };
+      }
+
+      const parsedGross = parseMidtransIdrAmount(payload.gross_amount);
+      const currency = payload.currency ?? "IDR";
+      if (parsedGross === undefined || currency !== "IDR") {
+        return { status: 409, body: { error: "payment-mismatch" } };
+      }
+
+      const orderCheck = transact(
+        (): { ok: true; order: StoredOrder } | { ok: false; status: number; error: string } => {
+          const order = loadOrder(payload.order_id);
+          if (!order) return { ok: false, error: "order-not-found", status: 404 };
+          if (order.grossAmountIdr !== parsedGross) {
+            return { ok: false, error: "payment-mismatch", status: 409 };
+          }
+          recordLifecycle(
+            midtrans.redactLifecycleEvent({
+              stage: "notification",
+              orderId: order.orderId,
+              statusCode: payload.status_code,
+              transactionStatus: payload.transaction_status,
+              grossAmountIdr: parsedGross,
+              currency,
+              paymentType: payload.payment_type,
+              signatureVerified: true,
+              at: now,
+            }),
+          );
+          return { ok: true, order };
+        },
+      );
+
+      if (!orderCheck.ok) {
+        return { status: orderCheck.status, body: { error: orderCheck.error } };
+      }
+
+      const settled = await verifyAndSettleOrder(payload.order_id, now, {
+        allowAnyOwner: true,
+      });
+
+      if (settled.error) {
+        return {
+          status: settled.status,
+          body: {
+            error: settled.error,
+            order: settled.order ? toPublicOrder(settled.order) : undefined,
+          },
+        };
+      }
+
+      return {
+        status: 200,
+        body: {
+          ok: true,
+          duplicate: settled.duplicate ?? false,
+          order: settled.order ? toPublicOrder(settled.order) : undefined,
+          passId: settled.order?.passId ?? null,
+          roomCode: settled.order?.roomCode ?? null,
+          earningsEntryId: settled.order?.earningsEntryId ?? null,
+        },
+      };
+    },
+
+    async act(credential: string, action: PackAction, now: number): Promise<PackResponse> {
+      const authCheck = transact(
+        ():
+          | { kind: "response"; response: PackResponse }
+          | { kind: "ready"; key: string; role: PackRole } => {
+          expirePendingOrders(now);
+          const key = digest(credential);
+          const actor = getActor.get(key) as { role?: PackRole } | undefined;
+          if (!actor?.role) {
+            return {
+              kind: "response",
+              response: {
+                status: 401,
+                body: { role: "public", listings: [], orders: [], error: "session-required" },
+              },
+            };
+          }
+          const prior = getAction.get(key, action.actionId) as
+            | { receipt?: string }
+            | undefined;
+          if (typeof prior?.receipt === "string") {
+            const cached = JSON.parse(prior.receipt) as {
+              status: number;
+              error?: string;
+            };
+            return {
+              kind: "response",
+              response: {
+                status: cached.status,
+                body: buildWorkspace(key, actor.role, cached.error),
+              },
+            };
+          }
+          return { kind: "ready", key, role: actor.role };
+        },
+      );
+
+      if (authCheck.kind === "response") return authCheck.response;
+
+      const { key, role } = authCheck;
+
+      // Async payment provider flows run outside the SQLite write lock.
+      if (action.type === "create-order") {
+        const preflight = transact(
+          ():
+            | { ok: true; target: StoredVersion; orderId: string }
+            | { ok: false; status: number; error: string } => {
+            const target = loadVersion(action.packId, action.version);
+            if (!target) return { ok: false, error: "version-not-found", status: 404 };
+            if (target.status === "paused") return { ok: false, error: "sales-paused", status: 409 };
+            const activeListing = buildListings(loadAllVersions()).find(
+              (item) => item.packId === action.packId && item.version === action.version,
+            );
+            if (target.status !== "published" || !activeListing) {
+              return { ok: false, error: "version-not-published", status: 409 };
+            }
+            if (!target.supportedPlayers.includes(action.players)) {
+              return { ok: false, error: "unsupported-players", status: 400 };
+            }
+            const orderId = `ord-sandbox-${loadOrders().length + 1}`;
+            return { ok: true, target, orderId };
+          },
+        );
+
+        if (!preflight.ok) {
+          return transact(() => {
+            addAction.run(
+              key,
+              action.actionId,
+              JSON.stringify({ status: preflight.status, error: preflight.error }),
+            );
+            return {
+              status: preflight.status,
+              body: buildWorkspace(key, role, preflight.error),
+            };
+          });
+        }
+
+        const { target, orderId } = preflight;
+        let snap;
+        try {
+          snap = await midtrans.createSnapTransaction({
+            orderId,
+            grossAmountIdr: target.priceIdr,
+            packId: target.packId,
+            version: target.version,
+            title: target.title,
+          });
+        } catch {
+          // Provider outage: do not grant access or create a broken order (§8.1).
+          return {
+            status: 503,
+            body: transact(() =>
+              buildWorkspace(key, role, "payment-provider-unavailable"),
+            ),
+          };
+        }
+
+        return transact(() => {
+          const latest = loadVersion(action.packId, action.version);
+          if (!latest || latest.status === "paused") {
+            const err = latest ? "sales-paused" : "version-not-found";
+            const status = latest ? 409 : 404;
+            addAction.run(key, action.actionId, JSON.stringify({ status, error: err }));
+            return { status, body: buildWorkspace(key, role, err) };
+          }
+
+          const grossAmountIdr = latest.priceIdr;
+          const platformFeeIdr = Math.round(grossAmountIdr * PLATFORM_FEE_RATE);
+          const creatorShareIdr = grossAmountIdr - platformFeeIdr;
+          const order: StoredOrder = {
+            orderId,
+            packId: latest.packId,
+            version: latest.version,
+            title: latest.title,
+            byline: latest.byline,
+            players: action.players,
+            currency: "IDR",
+            grossAmountIdr,
+            platformFeeIdr,
+            creatorShareIdr,
+            status: "pending",
+            createdAt: now,
+            expiresAt: now + ORDER_TTL_MS,
+            checkoutReturnedAt: null,
+            settledAt: null,
+            passId: null,
+            roomCode: null,
+            earningsEntryId: null,
+            paymentMode: snap.mode,
+            snapRedirectUrl: snap.redirectUrl,
+            sandbox: true,
+            buyerHash: key,
+          };
+          saveOrder(order);
+          recordLifecycle(
+            midtrans.redactLifecycleEvent({
+              stage: "create-snap",
+              orderId: order.orderId,
+              statusCode: "201",
+              transactionStatus: "pending",
+              grossAmountIdr: order.grossAmountIdr,
+              currency: order.currency,
+              at: now,
+            }),
+          );
+          addAction.run(key, action.actionId, JSON.stringify({ status: 200 }));
+          return {
+            status: 200,
+            body: buildWorkspace(key, role),
+          };
+        });
+      }
+
+      if (action.type === "verify-settlement") {
+        if (action.signatureKey) {
+          const orderForSig = transact(() => loadOrder(action.orderId));
+          if (!orderForSig) {
+            return transact(() => {
+              addAction.run(key, action.actionId, JSON.stringify({ status: 404, error: "order-not-found" }));
+              return { status: 404, body: buildWorkspace(key, role, "order-not-found") };
+            });
+          }
+          const valid = midtrans.verifySignature({
+            order_id: action.orderId,
+            status_code: action.statusCode ?? "200",
+            gross_amount: action.grossAmount ?? `${orderForSig.grossAmountIdr}.00`,
+            signature_key: action.signatureKey,
+          });
+          if (!valid) {
+            return transact(() => {
+              addAction.run(key, action.actionId, JSON.stringify({ status: 403, error: "invalid-signature" }));
+              return { status: 403, body: buildWorkspace(key, role, "invalid-signature") };
+            });
+          }
+        }
+
+        const result = await verifyAndSettleOrder(action.orderId, now, {
+          expectedOwnerHash: key,
+          allowAnyOwner: role === "reviewer",
+          recordedTransition: action.transactionStatus
+            ? {
+                transactionStatus: action.transactionStatus,
+                grossAmount: action.grossAmount,
+                currency: action.currency,
+                statusCode: action.statusCode,
+              }
+            : undefined,
+        });
+
+        // Do not lock out retries on transient 503 provider outage.
+        if (result.status === 503) {
+          return {
+            status: 503,
+            body: transact(() => buildWorkspace(key, role, result.error)),
+          };
+        }
+
+        return transact(() => {
+          addAction.run(
+            key,
+            action.actionId,
+            JSON.stringify({ status: result.status, error: result.error }),
+          );
+          return {
+            status: result.status,
+            body: buildWorkspace(key, role, result.error),
+          };
+        });
+      }
+
+      // Synchronous transactional pack actions.
       return transact(() => {
-        const key = digest(credential);
-        const actor = getActor.get(key) as { role?: PackRole } | undefined;
-        if (!actor?.role) {
-          return {
-            status: 401,
-            body: { role: "public", listings: [], orders: [], error: "session-required" },
-          };
-        }
-        const { role } = actor;
-
-        const prior = getAction.get(key, action.actionId) as
-          | { receipt?: string }
-          | undefined;
-        if (typeof prior?.receipt === "string") {
-          const cached = JSON.parse(prior.receipt) as {
-            status: number;
-            error?: string;
-          };
-          return {
-            status: cached.status,
-            body: buildWorkspace(key, role, cached.error),
-          };
-        }
-
         function finish(status: number, error?: string): PackResponse {
           addAction.run(
             key,
@@ -520,6 +1169,51 @@ export function packStore(
             status,
             body: buildWorkspace(key, role, error),
           };
+        }
+
+        if (action.type === "checkout-return") {
+          const order = loadOrder(action.orderId);
+          if (!order) return finish(404, "order-not-found");
+          if (order.buyerHash !== key && role !== "reviewer") {
+            return finish(403, "forbidden-order");
+          }
+          if (order.status === "expired" || (order.status === "pending" && now >= order.expiresAt)) {
+            order.status = "expired";
+            saveOrder(order);
+            recordLifecycle(
+              midtrans.redactLifecycleEvent({
+                stage: "checkout-return",
+                orderId: order.orderId,
+                transactionStatus: "expire",
+                grossAmountIdr: order.grossAmountIdr,
+                currency: order.currency,
+                at: now,
+              }),
+            );
+            return finish(409, "order-expired");
+          }
+          order.checkoutReturnedAt = now;
+          saveOrder(order);
+          recordLifecycle(
+            midtrans.redactLifecycleEvent({
+              stage: "checkout-return",
+              orderId: order.orderId,
+              transactionStatus: order.status,
+              grossAmountIdr: order.grossAmountIdr,
+              currency: order.currency,
+              at: now,
+            }),
+          );
+          return finish(200);
+        }
+
+        if (action.type === "redeem-pass") {
+          const pass = loadPass(action.passId);
+          if (!pass) return finish(404, "pass-not-found");
+          if (pass.roomCode !== action.roomCode.trim().toUpperCase()) {
+            return finish(409, "pass-already-bound");
+          }
+          return finish(200);
         }
 
         if (action.type === "save-draft") {
@@ -707,67 +1401,16 @@ export function packStore(
           target.updatedAt = now;
           saveVersion(target);
 
-          // Annotate existing orders on this version for support while preserving order & earnings history (A31).
+          // Annotate existing orders on this version for support while preserving order, pass & earnings history (A31).
           for (const order of loadOrders()) {
             if (
               order.packId === target.packId &&
               order.version === target.version
             ) {
               order.supportNote = `Penjualan v${target.version} dijeda (${target.pausedReason}). Pesanan yang sudah lunas tetap aktif untuk dukungan pemain dan rekonsiliasi pendapatan kreator.`;
-              putOrder.run(
-                order.orderId,
-                order.packId,
-                order.version,
-                order.buyerHash,
-                JSON.stringify(order),
-              );
+              saveOrder(order);
             }
           }
-          return finish(200);
-        }
-
-        if (action.type === "create-order") {
-          const target = loadVersion(action.packId, action.version);
-          if (!target) return finish(404, "version-not-found");
-          if (target.status === "paused") {
-            return finish(409, "sales-paused");
-          }
-          const activeListing = buildListings(loadAllVersions()).find(
-            (item) =>
-              item.packId === action.packId && item.version === action.version,
-          );
-          if (target.status !== "published" || !activeListing) {
-            return finish(409, "version-not-published");
-          }
-          if (!target.supportedPlayers.includes(action.players)) {
-            return finish(400, "unsupported-players");
-          }
-          const allOrders = loadOrders();
-          const grossAmountIdr = target.priceIdr;
-          const platformFeeIdr = Math.round(grossAmountIdr * PLATFORM_FEE_RATE);
-          const creatorShareIdr = grossAmountIdr - platformFeeIdr;
-          const order: StoredOrder = {
-            orderId: `ord-sandbox-${allOrders.length + 1}`,
-            packId: target.packId,
-            version: target.version,
-            title: target.title,
-            byline: target.byline,
-            players: action.players,
-            grossAmountIdr,
-            platformFeeIdr,
-            creatorShareIdr,
-            status: "settled",
-            settledAt: now,
-            sandbox: true,
-            buyerHash: key,
-          };
-          putOrder.run(
-            order.orderId,
-            order.packId,
-            order.version,
-            order.buyerHash,
-            JSON.stringify(order),
-          );
           return finish(200);
         }
 

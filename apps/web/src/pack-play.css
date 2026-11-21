@@ -14,6 +14,7 @@
 .pack-badge-paused, .pack-badge-changes-requested { background: #fff4d1; border-color: #b89938; }
 .pack-list { margin: 0; padding-left: 18px; display: grid; gap: 8px; font-size: .9rem; }
 .pack-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.pack-actions a.primary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 18px; border-radius: 999px; background: var(--ink); color: #fff; text-decoration: none; font-weight: 700; }
 .pack-note { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: #edf2df; font-size: .9rem; }
 .pack-error { background: #fbe9e2; border-color: #9b4713; color: #5c2204; font-weight: 600; }
 @media (max-width: 700px) {

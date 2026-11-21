@@ -8,10 +8,13 @@ const cookieName = "kelana_duo";
 
 function parseLobbyAction(value: unknown): LobbyAction | undefined {
   if (!isObject(value) || !isId(value.actionId)) return undefined;
-  const { type, actionId, code } = value;
+  const { type, actionId, code, passId } = value;
   if (type === "create") return { type, actionId };
   if (type === "join" && typeof code === "string" && /^[0-9a-f]{8}$/i.test(code)) {
-    return { type, actionId, code: code.toUpperCase() };
+    if (passId !== undefined && !isId(passId)) return undefined;
+    return passId
+      ? { type, actionId, code: code.toUpperCase(), passId }
+      : { type, actionId, code: code.toUpperCase() };
   }
   return undefined;
 }
