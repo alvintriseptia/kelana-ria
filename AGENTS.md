@@ -2,6 +2,10 @@
 
 A started Codex session owns one GitHub issue at a time. The PRD in [docs](docs/Exploration_Game_MVP_PRD.md) defines the game. Each acceptance scenario has an [owning issue](docs/acceptance.md). Keep trial rules, simulated runs and field observations labeled.
 
+## Factory rules for planning and game design
+- **Put plans into GitHub delivery issues.** Do not write standalone unlinked design/plan specs into the repository. Convert approved plans into ordered GitHub issues using [`.github/ISSUE_TEMPLATE/work.yml`](.github/ISSUE_TEMPLATE/work.yml) (`## Outcome`, strict `## Dependencies` containing only `None` or `#N, #M`, `## Requirements`, `## Verification`) with `ready` and `priority:1` or `priority:2` labels so `factory/agent.py pickup` can claim them automatically.
+- **Keep game rules data-driven, never hardcoded.** Game engines must stay generic and free of hardcoded city names, stations, timers, question catalogs, decks, powerups, or curses. Official POC games must be authored as validated `RulebookPack` + `GeoSnapshot` data using the exact same schema and pre-publish validator that community marketplace creators use.
+
 ## Start a session
 
 Use Python 3.11+, Git and an authenticated GitHub CLI with repository read/write and Actions read access. Keep a clean checkout at the latest main as your control directory. From there, run:
