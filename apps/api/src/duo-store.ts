@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import type { DuoAction, DuoReply, DuoRoom } from "@kelana-ria/contracts";
-import { applyDuo, expireDuo, memberSeat, newDuoRun, newMember, openDuoChallenge, viewDuo } from "./duo-rules.js";
+import { applyDuo, duoFixtureForBoard, expireDuo, memberSeat, newDuoRun, newMember, openDuoChallenge, viewDuo } from "./duo-rules.js";
 import type { DuoActionOutcome, DuoFixture, DuoRun } from "./duo-rules.js";
 import type { LobbyAction } from "./http.js";
 
@@ -104,7 +104,7 @@ export function duoStore(databasePath: string) {
   function lobbyAction(key: string, action: LobbyAction): LobbyReceipt {
     if (action.type === "create") {
       const code = nextRoomCode();
-      addRoom.run(code, JSON.stringify(newDuoRun(code, key)));
+      addRoom.run(code, JSON.stringify(newDuoRun(code, key, duoFixtureForBoard(action.board))));
       return { code };
     }
 

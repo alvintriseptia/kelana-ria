@@ -1,8 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { TLSSocket } from "node:tls";
-import type { LocationFix } from "@kelana-ria/contracts";
+import type { GameBoard, LocationFix } from "@kelana-ria/contracts";
 
 const maxBodyBytes = 16 * 1024;
+
+export function isGameBoard(value: unknown): value is GameBoard {
+  return value === "compact" || value === "jakarta-wide";
+}
 
 export function credential(request: IncomingMessage, cookieName: string) {
   const match = request.headers.cookie?.match(new RegExp(`(?:^|;\\s*)${cookieName}=([A-Za-z0-9_-]{43})(?:;|$)`));
@@ -32,14 +36,17 @@ export function isId(value: unknown): value is string {
 }
 
 export type LobbyAction = { actionId: string } & (
-  | { type: "create" }
+  | { type: "create"; board?: GameBoard }
   | { type: "join"; code: string; passId?: string }
 );
 
 export function parseLobbyAction(value: unknown, allowPass = false): LobbyAction | undefined {
   if (!isObject(value) || !isId(value.actionId)) return undefined;
-  const { type, actionId, code, passId } = value;
-  if (type === "create") return { type, actionId };
+  const { type, actionId, code, passId, board } = value;
+  if (type === "create") {
+    if (board !== undefined && !isGameBoard(board)) return undefined;
+    return board ? { type, actionId, board } : { type, actionId };
+  }
   if (type === "join" && typeof code === "string" && /^[0-9a-f]{8}$/i.test(code)) {
     if (passId !== undefined && (!allowPass || !isId(passId))) return undefined;
     return passId

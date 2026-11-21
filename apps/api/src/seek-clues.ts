@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { SeekClueChoice, SeekClueMenuItem, SeekClueView, SeekQuestion, SeekQuestionFamily, SeekQuestionInput, SoloPoint } from "@kelana-ria/contracts";
+import type { GameBoard, SeekClueChoice, SeekClueMenuItem, SeekClueView, SeekQuestion, SeekQuestionFamily, SeekQuestionInput, SoloPoint } from "@kelana-ria/contracts";
 import { compactCatalog, compactWalkingSnapshot } from "./solo-fixture.js";
 import { distanceBetween } from "./solo-rules.js";
 import { newSeekDeck, type SeekDeck } from "./seek-deck.js";
+import { wideBranches, wideCheckpoints, wideWalkingSnapshot } from "./wide-fixture.js";
 
 const minute = 60_000;
-const radii = [500, 1000, 1500, 2500, 4000];
+const compactRadii = [500, 1000, 1500, 2500, 4000];
+const wideRadii = [1000, 2500, 5000, 8000, 12000];
 const equalToleranceMeters = 100;
 const equalWalking = { id: "equal", label: "Kurang lebih sama" };
 const yes = { id: "yes", label: "Ya" };
@@ -32,6 +34,7 @@ export type ClueBoard = Pick<SeekClueView, "branches" | "distanceSource" | "equa
   hidingIds: string[];
   nearestIds: string[];
   walkingMeters: Record<string, Record<string, number>>;
+  radii?: number[];
 };
 
 export type SeekClueState = {
@@ -44,6 +47,25 @@ export type SeekClueState = {
 
 export function newSeekClueState(): SeekClueState {
   return { questions: [], delayUntil: null, deck: newSeekDeck() };
+}
+
+function allPairsShortest(landmarks: SoloPoint[], legs: { fromId: string; toId: string; distanceMeters: number }[], points: Record<string, SoloPoint>) {
+  const walkingMeters: ClueBoard["walkingMeters"] = Object.fromEntries(landmarks.map(({ id }) => [id, { [id]: 0 }]));
+  for (const { fromId, toId, distanceMeters } of legs) {
+    if (!points[fromId] || !points[toId]) continue;
+    const meters = Math.min(walkingMeters[fromId][toId] ?? Infinity, distanceMeters);
+    walkingMeters[fromId][toId] = meters;
+    walkingMeters[toId][fromId] = meters;
+  }
+  for (const { id: via } of landmarks) {
+    for (const { id: from } of landmarks) {
+      for (const { id: to } of landmarks) {
+        const distance = (walkingMeters[from][via] ?? Infinity) + (walkingMeters[via][to] ?? Infinity);
+        if (distance < (walkingMeters[from][to] ?? Infinity)) walkingMeters[from][to] = distance;
+      }
+    }
+  }
+  return walkingMeters;
 }
 
 export function compactClueBoard(start: SoloPoint, hidingPoints: SoloPoint[]): ClueBoard {
@@ -70,7 +92,6 @@ export function compactClueBoard(start: SoloPoint, hidingPoints: SoloPoint[]): C
     "stasiun-palmerah": "KRL Rangkasbitung",
   };
 
-  const walkingMeters: ClueBoard["walkingMeters"] = Object.fromEntries(landmarks.map(({ id }) => [id, { [id]: 0 }]));
   // The prepared Compact snapshot has a disconnected walking graph. These two modeled
   // connectors complete the trial table. Transit legs are excluded from walking clues.
   const walkingLegs = [
@@ -78,24 +99,56 @@ export function compactClueBoard(start: SoloPoint, hidingPoints: SoloPoint[]): C
     { fromId: start.id, toId: "plaza-senayan", distanceMeters: 1850 },
     { fromId: "plaza-senayan", toId: "stasiun-palmerah", distanceMeters: 2600 },
   ];
-  for (const { fromId, toId, distanceMeters } of walkingLegs) {
-    if (!points[fromId] || !points[toId]) continue;
-    const meters = Math.min(walkingMeters[fromId][toId] ?? Infinity, distanceMeters);
-    walkingMeters[fromId][toId] = meters;
-    walkingMeters[toId][fromId] = meters;
-  }
-  for (const { id: via } of landmarks) {
-    for (const { id: from } of landmarks) {
-      for (const { id: to } of landmarks) {
-        const distance = (walkingMeters[from][via] ?? Infinity) + (walkingMeters[via][to] ?? Infinity);
-        if (distance < (walkingMeters[from][to] ?? Infinity)) walkingMeters[from][to] = distance;
-      }
-    }
-  }
+  const walkingMeters = allPairsShortest(landmarks, walkingLegs, points);
   return {
     branches, equalToleranceMeters, landmarks, points, hidingIds, nearestIds, walkingMeters,
+    radii: compactRadii,
     distanceSource: "Snapshot perjalanan Compact · perkiraan jalur pejalan kaki untuk simulasi",
   };
+}
+
+export function wideClueBoard(start: SoloPoint, hidingPoints: SoloPoint[]): ClueBoard {
+  const hidingIds = hidingPoints.map(({ id }) => id);
+  const widePoolIds = [
+    "dukuh-atas", "bundaran-hi", "stasiun-tanah-abang", "stasiun-manggarai",
+    "taman-ismail-marzuki", "monas-gambir", "taman-fatahillah", "stasiun-jakarta-kota", "plaza-senayan",
+  ];
+  const extras = widePoolIds
+    .filter((id) => !hidingIds.includes(id))
+    .map((id) => wideCheckpoints[id])
+    .filter(Boolean);
+  const landmarks = [start, ...hidingPoints, ...extras]
+    .map(({ id, name, latitude, longitude, x, y }) => ({ id, name, latitude, longitude, x, y }));
+  const points = Object.fromEntries(landmarks.map((point) => [point.id, point]));
+  const nearestIds = landmarks.filter(({ id }) => !hidingIds.includes(id)).map(({ id }) => id);
+  const branches: Record<string, string> = Object.fromEntries(
+    landmarks.map(({ id }) => [id, wideBranches[id] ?? "MRT Utara–Selatan"]),
+  );
+
+  // Use stored walking legs plus modeled street-walking connectors across Jakarta-wide for simulation clues.
+  const walkingLegs = [
+    ...wideWalkingSnapshot.legs.filter(({ mode }) => mode === "walk"),
+    { fromId: start.id, toId: "plaza-senayan", distanceMeters: 1850 },
+    { fromId: "plaza-senayan", toId: "dukuh-atas", distanceMeters: 3900 },
+    { fromId: "dukuh-atas", toId: "stasiun-tanah-abang", distanceMeters: 2400 },
+    { fromId: "dukuh-atas", toId: "stasiun-manggarai", distanceMeters: 3500 },
+    { fromId: "bundaran-hi", toId: "monas-gambir", distanceMeters: 2450 },
+    { fromId: "stasiun-manggarai", toId: "taman-ismail-marzuki", distanceMeters: 2700 },
+    { fromId: "taman-ismail-marzuki", toId: "monas-gambir", distanceMeters: 2550 },
+    { fromId: "monas-gambir", toId: "stasiun-jakarta-kota", distanceMeters: 4900 },
+  ];
+  const walkingMeters = allPairsShortest(landmarks, walkingLegs, points);
+  return {
+    branches, equalToleranceMeters, landmarks, points, hidingIds, nearestIds, walkingMeters,
+    radii: wideRadii,
+    distanceSource: "Snapshot perjalanan Jakarta-wide · perkiraan jalur pejalan kaki untuk simulasi",
+  };
+}
+
+export function clueBoardFor(board: GameBoard, start: SoloPoint, hidingPoints: SoloPoint[]): ClueBoard {
+  return board === "jakarta-wide"
+    ? wideClueBoard(start, hidingPoints)
+    : compactClueBoard(start, hidingPoints);
 }
 
 export function recordSeekReference(state: SeekClueState, id: string) {
@@ -130,19 +183,20 @@ function nearestChoice(board: ClueBoard, centerId: string, radius: number, landm
 
 export function seekClueMenu(board: ClueBoard, state: SeekClueState): SeekClueMenuItem[] {
   const { referenceId, previousReferenceId } = state;
+  const boardRadii = board.radii ?? compactRadii;
   const allBranches = referenceId && [referenceId, ...board.hidingIds].every((id) => board.branches[id]);
   const walkingHistory = referenceId && previousReferenceId &&
     hasWalkingDistances(board, [referenceId, previousReferenceId], board.hidingIds);
   const walkFrom = referenceId ? [referenceId, ...board.hidingIds] : [];
   const options: Record<SeekQuestionFamily, SeekClueMenuItem["options"]> = {
-    radar: referenceId ? radii.map((radiusMeters) => ({ radiusMeters })) : [],
+    radar: referenceId ? boardRadii.map((radiusMeters) => ({ radiusMeters })) : [],
     photo: allBranches ? [{}] : [],
     warmer: walkingHistory ? [{}] : [],
     matching: allBranches ? [{}] : [],
     measuring: referenceId ? board.landmarks
       .filter(({ id }) => hasWalkingDistances(board, walkFrom, [id]))
       .map(({ id, name }) => ({ landmarkId: id, label: name })) : [],
-    nearest: referenceId ? radii
+    nearest: referenceId ? boardRadii
       .map((radiusMeters) => ({ radiusMeters, landmarkIds: inRadius(board, referenceId, radiusMeters, board.nearestIds) }))
       .filter(({ radiusMeters, landmarkIds }) => landmarkIds.length > 0 &&
         inRadius(board, referenceId, radiusMeters, board.hidingIds).length > 0) : [],

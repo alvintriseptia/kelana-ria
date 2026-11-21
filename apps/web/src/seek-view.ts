@@ -106,7 +106,7 @@ function lobby(room: SeekRoom, controls: Controls) {
     ${objective(room)}
     <section class="solo-ticket" aria-labelledby="seek-room-heading">
       <h2 id="seek-room-heading" tabindex="-1">Ruang tunggu</h2>
-      ${inviteMarkup(room.code, room.seat === "host", seekMode)}
+      ${inviteMarkup(room.code, room.seat === "host", seekMode, room.edition.board)}
       ${seatList(room, false)}
       ${roleAssignment(room, busy)}
     </section>

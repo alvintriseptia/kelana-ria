@@ -1,6 +1,6 @@
-import type { LocationFix, SeekAction, SeekReply, SeekRoom, SoloPoint } from "@kelana-ria/contracts";
+import type { GameBoard, LocationFix, SeekAction, SeekReply, SeekRoom, SoloPoint } from "@kelana-ria/contracts";
 import { getLocation } from "./device-location";
-import { inviteUrl, pendingEntry, player, roomCodePattern, roomTransport, type EntryAction, type Feedback } from "./multiplayer-room";
+import { boardDisplayName, inviteUrl, pendingEntry, player, roomCodePattern, roomTransport, type EntryAction, type Feedback } from "./multiplayer-room";
 import { cluePointName, drawSelection, newClueDraft, pendingQuestion, questionFamily, selectedQuestion } from "./seek-clues";
 import { active, entry, needsStart, pointAction, roomView, seekMode, seekPhase } from "./seek-view";
 import { action, remaining, wib } from "./solo-view";
@@ -69,7 +69,9 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   const mount = new AbortController();
   const { signal } = mount;
   const { credential, request } = roomTransport<SeekReply, RequestAction>(apiPath, "kelana-seek-bootstrap");
-  let inviteCode = (new URLSearchParams(location.search).get("room") ?? "").trim().toUpperCase();
+  const initialParams = new URLSearchParams(location.search);
+  const requestedBoard: GameBoard = initialParams.get("board") === "jakarta-wide" ? "jakarta-wide" : "compact";
+  let inviteCode = (initialParams.get("room") ?? "").trim().toUpperCase();
   const restored = entryRequests.read(inviteCode);
   let joinInput = restored?.type === "join" ? restored.code : inviteCode;
   let pending: { path: string; action: RequestAction } | undefined = restored ? { path: apiPath, action: restored } : undefined;
@@ -94,7 +96,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   </nav>
   <header class="solo-header">
     <h1 tabindex="-1" lang="en">Hide &amp; Seek</h1>
-    <p>Jakarta (Compact) · Berdua <span>Edisi siap pakai</span></p>
+    <p><strong id="seek-board-label">${boardDisplayName(requestedBoard)}</strong> · Berdua <span>Edisi siap pakai</span></p>
   </header>
   <p id="seek-announcement" class="sr-only" role="status" aria-atomic="true"></p>
   <div id="seek-connection" class="solo-connection" hidden></div>
@@ -102,6 +104,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   const view = root.querySelector<HTMLElement>("#seek-view")!;
   const connection = root.querySelector<HTMLElement>("#seek-connection")!;
   const announcement = root.querySelector<HTMLElement>("#seek-announcement")!;
+  const boardLabelEl = root.querySelector<HTMLElement>("#seek-board-label")!;
   root.querySelector<HTMLElement>("h1")!.focus();
 
   const now = () => room ? room.now + performance.now() - serverSampleAt : Date.now();
@@ -146,6 +149,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
 
   function paint(focus?: string) {
     if (signal.aborted) return;
+    boardLabelEl.textContent = boardDisplayName(room?.edition.board ?? requestedBoard);
     const focused = document.activeElement as HTMLElement | null;
     const key = focused?.dataset.focus;
     const focusedId = focused && view.contains(focused) ? focused.id : "";
@@ -522,7 +526,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   async function copy() {
     if (!room) return;
     try {
-      await navigator.clipboard.writeText(inviteUrl(seekMode, room.code).href);
+      await navigator.clipboard.writeText(inviteUrl(seekMode, room.code, room.edition.board).href);
       if (!signal.aborted) report("Tautan undangan disalin.");
     } catch {
       if (!signal.aborted) report("Buka menu tautan undangan untuk menyalinnya.", true);
@@ -542,7 +546,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
       case "back": returnToSetup(); break;
       case "retry": reconnect(); break;
       case "create":
-      case "replay": send({ type: "create" }); break;
+      case "replay": send({ type: "create", board: room?.edition.board ?? requestedBoard }); break;
       case "new-room":
         if (busy || pending) return;
         cancelRead();

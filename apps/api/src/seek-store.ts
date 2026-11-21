@@ -111,7 +111,7 @@ export function seekStore(databasePath: string, clock = Date.now) {
       do {
         code = randomBytes(4).toString("hex").toUpperCase();
       } while (getRoom.get(code));
-      addRoom.run(code, JSON.stringify(newSeekRun(code, key)));
+      addRoom.run(code, JSON.stringify(newSeekRun(code, key, action.board)));
       return { code };
     }
 

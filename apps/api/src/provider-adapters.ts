@@ -1,3 +1,4 @@
+import type { GameBoard } from "@kelana-ria/contracts";
 import {
   compactCatalog,
   compactWalkingSnapshot,
@@ -29,10 +30,10 @@ export type RedactedAiEvidenceEvent = {
   mode: ProviderEvidenceMode;
   provider: "Cloudflare Workers AI";
   model: string;
-  board: "compact";
+  board: GameBoard;
   boardVersion: string;
   format: "claim-the-city";
-  players: 1;
+  players: 1 | 2;
   endpoint: string;
   attempt: 1 | 2;
   requestedAt: string;
@@ -50,7 +51,7 @@ export type RedactedRouteEvidenceEvent = {
   kind: "walking-route";
   mode: ProviderEvidenceMode;
   provider: "Geoapify Routing API";
-  board: "compact";
+  board: GameBoard;
   boardVersion: string;
   fromId: string;
   toId: string;

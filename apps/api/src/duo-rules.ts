@@ -1,7 +1,8 @@
-import type { DuoAction, DuoReply, DuoRoom, DuoSeat, DuoZone, SoloCheckpoint, SoloEdition } from "@kelana-ria/contracts";
+import type { DuoAction, DuoReply, DuoRoom, DuoSeat, DuoZone, GameBoard, SoloCheckpoint, SoloEdition } from "@kelana-ria/contracts";
 import { compactTrial, type SoloFixture } from "./solo-fixture.js";
 import { verifyLocation } from "./solo-rules.js";
 import type { ActionOutcome } from "./solo-rules.js";
+import { wideTrial } from "./wide-fixture.js";
 
 type Member = Pick<DuoRoom, "startVerifiedUntil" | "visits" | "cooldowns"> & {
   credentialHash: string;
@@ -15,19 +16,41 @@ export type DuoFixture = {
   tasks: SoloFixture["tasks"];
 };
 
-const compactDuoTrial: DuoFixture = {
+export const compactDuoTrial: DuoFixture = {
   ...compactTrial,
   edition: {
     id: "compact-duo-trial-v1",
     board: compactTrial.edition.board,
     boardVersion: compactTrial.edition.boardVersion,
     format: compactTrial.edition.format,
+    players: 2,
     origin: compactTrial.edition.origin,
     durationMs: compactTrial.edition.durationMs,
     start: compactTrial.edition.start,
     checkpoints: compactTrial.edition.checkpoints,
+    routes: compactTrial.edition.routes,
   },
 };
+
+export const wideDuoTrial: DuoFixture = {
+  ...wideTrial,
+  edition: {
+    id: "wide-duo-trial-v1",
+    board: wideTrial.edition.board,
+    boardVersion: wideTrial.edition.boardVersion,
+    format: wideTrial.edition.format,
+    players: 2,
+    origin: wideTrial.edition.origin,
+    durationMs: wideTrial.edition.durationMs,
+    start: wideTrial.edition.start,
+    checkpoints: wideTrial.edition.checkpoints,
+    routes: wideTrial.edition.routes,
+  },
+};
+
+export function duoFixtureForBoard(board: GameBoard = "compact"): DuoFixture {
+  return board === "jakarta-wide" ? wideDuoTrial : compactDuoTrial;
+}
 
 export type DuoRun = Pick<DuoRoom, "code" | "phase" | "startedAt" | "deadline" | "owners" | "outcome" | "events" | "paidPack"> & {
   fixture: DuoFixture;

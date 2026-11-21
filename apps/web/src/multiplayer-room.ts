@@ -1,18 +1,23 @@
-import type { DuoSeat } from "@kelana-ria/contracts";
+import type { DuoSeat, GameBoard } from "@kelana-ria/contracts";
 import { action, escapeText } from "./solo-view";
 
 export const player: Record<DuoSeat, string> = { host: "Pemain 1", guest: "Pemain 2" };
 export const seats = ["host", "guest"] as const;
 export const roomCodePattern = /^[0-9A-F]{8}$/;
 
-export type EntryAction = { type: "create" } | { type: "join"; code: string; passId?: string };
+export type EntryAction = { type: "create"; board?: GameBoard } | { type: "join"; code: string; passId?: string };
 export type EntryRequest = EntryAction & { actionId: string };
 export type Feedback = { text: string; error?: boolean };
 
-export function inviteUrl(mode: string, code: string) {
+export function boardDisplayName(board?: GameBoard) {
+  return board === "jakarta-wide" ? "Jakarta (Wide)" : "Jakarta (Compact)";
+}
+
+export function inviteUrl(mode: string, code: string, board?: GameBoard) {
   const url = new URL("/", location.origin);
   url.searchParams.set("play", mode);
   url.searchParams.set("room", code);
+  if (board === "jakarta-wide") url.searchParams.set("board", board);
   return url;
 }
 
@@ -24,7 +29,10 @@ export function pendingEntry(key: string, allowPass = false) {
         const request = saved?.request;
         if (saved?.roomCode !== roomCode || typeof request?.actionId !== "string" || !/^[0-9a-f-]{36}$/.test(request.actionId)) return;
         const { actionId, type } = request;
-        if (type === "create") return { actionId, type };
+        if (type === "create") {
+          const board = request.board === "jakarta-wide" || request.board === "compact" ? request.board : undefined;
+          return board ? { actionId, type, board } : { actionId, type };
+        }
         if (type === "join" && typeof request.code === "string" && roomCodePattern.test(request.code)) {
           return allowPass && typeof request.passId === "string" && request.passId
             ? { actionId, type, code: request.code, passId: request.passId }
@@ -89,10 +97,10 @@ export function feedbackMarkup(feedback: Feedback | undefined) {
   return feedback ? `<p class="solo-feedback ${feedback.error ? "solo-feedback-error" : ""}">${escapeText(feedback.text)}</p>` : "";
 }
 
-export function inviteMarkup(code: string, host: boolean, mode: string) {
+export function inviteMarkup(code: string, host: boolean, mode: string, board?: GameBoard) {
   return `<div class="duo-invite">
     <p>Kode undangan <strong class="duo-code">${escapeText(code)}</strong></p>
-    ${host ? `<a href="${escapeText(inviteUrl(mode, code).href)}" data-focus="invite-link">Tautan undangan</a>
+    ${host ? `<a href="${escapeText(inviteUrl(mode, code, board).href)}" data-focus="invite-link">Tautan undangan</a>
       ${action("Salin tautan", "copy")}` : ""}
   </div>`;
 }

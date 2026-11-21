@@ -78,10 +78,10 @@ try {
   await host.page.waitForFunction(() => !new URLSearchParams(location.search).has("play"));
   await heading(host, "Pilih permainan").waitFor();
   assert.equal(await host.page.locator('input[value="claim-the-city"]').isChecked(), true);
-  const explicitWide = "/?play=hide-and-seek&players=2&format=hide-and-seek&board=jakarta-wide";
-  await host.page.goto(origin + explicitWide);
+  const explicitUnsupportedBoard = "/?play=hide-and-seek&players=2&format=hide-and-seek&board=bandung";
+  await host.page.goto(origin + explicitUnsupportedBoard);
   await host.page.waitForFunction(() => !new URLSearchParams(location.search).has("play"));
-  assert.equal(await host.page.locator('select[name="board"]').inputValue(), "jakarta-wide");
+  await heading(host, "Pilih permainan").waitFor();
   await host.page.goto(origin);
   await host.page.getByText("Berdua", { exact: true }).click();
   await host.page.locator('label').filter({ has: host.page.locator('input[value="hide-and-seek"]') }).click();

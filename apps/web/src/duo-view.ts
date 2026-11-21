@@ -45,7 +45,7 @@ export function lobby(
       </section>
       <section class="solo-ticket" aria-labelledby="duo-room-heading">
         <h2 id="duo-room-heading" tabindex="-1">Ruang tunggu</h2>
-        ${inviteMarkup(state.code, state.seat === "host" && state.paidPack?.players !== 1, "duo-claim")}
+        ${inviteMarkup(state.code, state.seat === "host" && state.paidPack?.players !== 1, "duo-claim", state.edition.board)}
         <ul class="duo-seats" aria-label="Kursi pemain">${activeSeats.map}(seat => seatMarkup(state, seat)).join("")}</ul>
       </section>
       <section class="solo-ticket" id="duo-action" aria-labelledby="duo-action-heading">

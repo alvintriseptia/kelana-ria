@@ -24,9 +24,12 @@ const errors: Record<string, string> = {
   "stale-session": "Sesi sudah berubah. Permainan terbaru sudah dimuat.",
 };
 
-async function requestSession(signal: AbortSignal, action?: SoloAction, checkpointId?: string): Promise<SoloReply> {
-  const endpoint = checkpointId
-    ? `${apiPath}/challenge?${new URLSearchParams({ checkpointId })}` : apiPath;
+async function requestSession(signal: AbortSignal, board: "compact" | "jakarta-wide", action?: SoloAction, checkpointId?: string): Promise<SoloReply> {
+  const query = new URLSearchParams();
+  if (checkpointId) query.set("checkpointId", checkpointId);
+  if (board === "jakarta-wide") query.set("board", board);
+  const suffix = query.size ? `?${query}` : "";
+  const endpoint = checkpointId ? `${apiPath}/challenge${suffix}` : `${apiPath}${suffix}`;
   const response = await fetch(endpoint, {
     method: action ? "POST" : "GET",
     headers: action ? { "Content-Type": "application/json" } : undefined,
@@ -43,6 +46,10 @@ async function requestSession(signal: AbortSignal, action?: SoloAction, checkpoi
 export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   const mount = new AbortController();
   const { signal } = mount;
+  const selectedBoard = new URLSearchParams(location.search).get("board") === "jakarta-wide"
+    ? "jakarta-wide"
+    : "compact";
+  const boardName = selectedBoard === "jakarta-wide" ? "Jakarta (Wide)" : "Jakarta (Compact)";
   let session: SoloSession | undefined;
   let serverSampleAt = 0;
   let nextDeadlineSync = 0;
@@ -69,7 +76,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   </nav>
   <header class="solo-header">
     <h1 id="solo-title" tabindex="-1" lang="en">Claim the City</h1>
-    <p>Jakarta (Compact) · Solo <span id="solo-origin-badge">Edisi siap pakai</span></p>
+    <p>${boardName} · Solo <span id="solo-origin-badge">Edisi siap pakai</span></p>
   </header>
   <p class="sr-only" role="status" id="solo-announcement"></p>
   <div id="solo-connection" class="solo-connection" hidden></div>
@@ -297,14 +304,14 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
 
   async function reloadChallenge() {
     if (!selectedId || session?.phase !== "active" || challenge || !Object.hasOwn(session.visits, selectedId)) return;
-    const reply = await requestSession(signal, undefined, selectedId);
+    const reply = await requestSession(signal, selectedBoard, undefined, selectedId);
     if (!signal.aborted) receive(reply);
   }
 
   async function submitPending() {
     const request = pending;
     if (!request) return;
-    const reply = await requestSession(signal, request);
+    const reply = await requestSession(signal, selectedBoard, request);
     if (signal.aborted) return;
     pending = undefined;
     disconnected = false;
@@ -336,7 +343,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
     busy = true;
     paint();
     try {
-      const read = () => requestSession(signal);
+      const read = () => requestSession(signal, selectedBoard);
       const reply = !session && navigator.locks
         ? await navigator.locks.request("kelana-solo-bootstrap", { signal }, read)
         : await read();
@@ -390,7 +397,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
         }
       }
       if (signal.aborted || selectedId !== point.id) return;
-      const reply = await requestSession(signal);
+      const reply = await requestSession(signal, selectedBoard);
       if (signal.aborted) return;
       receive(reply);
       disconnected = false;
