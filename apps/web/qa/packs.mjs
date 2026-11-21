@@ -234,7 +234,7 @@ try {
   assert.deepEqual(buyerAfterPause.listings, []);
   assert.equal(buyerAfterPause.orders.length, 1);
   assert.match(buyerAfterPause.orders[0].supportNote, /Penjualan v2 dijeda/);
-  await buyer.page.locator("#pack-view").getByText(/ord-sandbox-1/).waitFor();
+  await buyer.page.locator("#pack-view").getByText("ord-sandbox-1", { exact: true }).waitFor();
 
   const blockedOrderRes = await buyer.context.request.post(origin + "/api/packs?role=public", {
     data: {
@@ -254,7 +254,7 @@ try {
   assert.equal(writerAfterPause.orders[0].creatorShareIdr, 21_250);
   assert.equal(writerAfterPause.earnings.length, 1);
   assert.equal(writerAfterPause.earnings[0].earningsEntryId, "earn-ord-sandbox-1");
-  await writer.page.locator("#pack-view").getByText(/earn-ord-sandbox-1/).waitFor();
+  await writer.page.locator('[data-earnings-id="earn-ord-sandbox-1"]').waitFor();
 
   const lifecycleRes = await reviewer.context.request.get(
     origin + "/api/packs/lifecycle?orderId=ord-sandbox-1",
