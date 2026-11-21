@@ -28,6 +28,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test --workspace @kelana-ria/api
+      - name: Rehearse redacted provider capture and outage fallback
+        run: npm run capture:integration --workspace @kelana-ria/api
       - name: Install pinned Playwright Chromium and system libraries
         run: npx --no-install playwright install --with-deps --no-shell chromium
       - name: Check mobile browser and cold-load budgets
@@ -40,6 +42,8 @@ jobs:
         run: npm run qa:seek --workspace @kelana-ria/web
       - name: Review and publish a versioned creator pack
         run: npm run qa:packs --workspace @kelana-ria/web
+      - name: Verify Jakarta-wide and all six release configurations
+        run: npm run qa:release --workspace @kelana-ria/web
       - name: Upload mobile QA evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

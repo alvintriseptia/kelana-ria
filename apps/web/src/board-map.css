@@ -1,0 +1,59 @@
+.board-map-shell {
+  margin: 0.75rem 0 1rem;
+  border: 1px solid #d5d7cc;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #f5f5ec;
+}
+
+.board-map-canvas {
+  width: 100%;
+  height: 290px;
+  position: relative;
+}
+
+.board-map-pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 999px;
+  border: 2px solid #12362a;
+  background: #ffffff;
+  color: #12362a;
+  font: 700 0.75rem/1.1 "DM Sans Variable", system-ui, sans-serif;
+  box-shadow: 0 2px 6px rgba(18, 54, 42, 0.22);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.board-map-pin-start {
+  background: #f3c442;
+  color: #12362a;
+  border-radius: 6px;
+}
+
+.board-map-pin-claimed {
+  background: #12362a;
+  color: #f7f6ed;
+}
+
+.board-map-pin-selected {
+  outline: 3px solid #d97706;
+  outline-offset: 1px;
+}
+
+.board-map-attribution {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: #3f4b44;
+  background: #eef0e4;
+  border-top: 1px solid #d5d7cc;
+}
+
+.board-map-attribution a {
+  color: #12362a;
+  text-decoration: underline;
+}

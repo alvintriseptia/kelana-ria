@@ -438,3 +438,24 @@ export type SeekReply = {
   distanceMeters?: number;
   investigation?: "miss" | "found";
 };
+
+export type MapConfig = {
+  mode: "geoapify-vector" | "offline-vector";
+  styleUrl: string | null;
+  attribution: string;
+  mapLibreLicenseUrl: string;
+  tileCreditCost: number;
+  routingCreditCost: number;
+  freeDailyCredits: number;
+};
+
+export type MapUsageSummary = {
+  mode: "geoapify-vector" | "offline-vector";
+  tileRequests: number;
+  tileFailures: number;
+  estimatedTileCredits: number;
+  routingRequests: number;
+  estimatedRoutingCredits: number;
+  totalEstimatedCredits: number;
+  freeDailyCredits: number;
+};
