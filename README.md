@@ -34,3 +34,16 @@ npm run qa --workspace @kelana-ria/web
 ```
 
 The checks exercise the chooser, keyboard flow, Chromium installability and offline launch. They also measure three cold loads at 390 × 844 with a 4× CPU slowdown and throttled mobile network. Screenshots, traces and the run report are written to `apps/web/qa-results/` and uploaded with PR checks. Use the [agent guide](AGENTS.md) to claim the next issue.
+
+## Play the Compact solo fixture
+
+After building, start the API in one terminal and the web server in another.
+
+```sh
+npm start --workspace @kelana-ria/api
+npm run dev
+```
+
+Choose Solo, Claim the City and Jakarta (Compact), then open **Lihat ringkasan** and **Coba simulasi**. Use **Simulasikan lokasi di sini** to test check-ins without traveling. The board, challenges and location samples are fixtures. The local server stores countdowns, scores and results in `apps/api/.data/solo.sqlite`. Set `SOLO_DATABASE_PATH` to choose another database. The PWA caches the chooser shell. The outing requires a server connection for check-ins, claims and recovery.
+
+Run `npm test --workspace @kelana-ria/api` for server rules and `npm run qa:solo --workspace @kelana-ria/web` for the mobile win, loss and recovery paths. The browser test starts a fixture API with an isolated database and controlled clock. It writes screenshots and a result report alongside the chooser QA evidence.

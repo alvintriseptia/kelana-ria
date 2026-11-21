@@ -17,6 +17,7 @@
     <button class="guide-button" type="button" id="guide-open"><span class="book" aria-hidden="true"></span><span data-copy="nav.guide">Panduan</span></button>
   </div></header>
   <main>
+    <div id="setup">
     <h1>Pilih permainan</h1>
     <p class="intro">Jelajahi Jakarta dengan berjalan kaki dan naik transportasi umum.</p>
     <div class="layout">
@@ -59,6 +60,8 @@
         <noscript>Aktifkan JavaScript untuk mengubah pilihan permainan.</noscript>
       </form>
     </div>
+    </div>
+    <div id="play" hidden></div>
   </main>
   <dialog id="guide" aria-labelledby="guide-heading">
     <div class="dialog-body">
@@ -80,8 +83,9 @@
         <dt>Titik awal</dt><dd>CSW–ASEAN</dd>
         <dt>Durasi uji coba</dt><dd id="summary-time"></dd>
       </dl>
-      <p>Berjalan kaki atau gunakan MRT, KRL, dan Transjakarta. Siapkan data seluler dan ongkos perjalanan.</p>
-      <p class="preview-note">Pratinjau pengaturan. Sesi permainan belum tersedia.</p>
+      <p id="summary-travel">Berjalan kaki atau gunakan MRT, KRL, dan Transjakarta. Siapkan data seluler dan ongkos perjalanan.</p>
+      <p class="preview-note" id="summary-note">Pratinjau pengaturan. Sesi permainan belum tersedia.</p>
+      <button id="summary-play" class="primary" type="button" hidden>Coba simulasi</button>
       <form method="dialog"><button class="secondary">Kembali ke pilihan</button></form>
     </div>
   </dialog>
