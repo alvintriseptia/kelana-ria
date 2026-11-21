@@ -182,6 +182,24 @@ try {
   assert.equal(kept.room.clues.draw, undefined);
   await host.page.screenshot({ path: join(results, "seek-hider-cards.png"), fullPage: true });
 
+  // Wait for the seeker to receive the answered radar clue, then verify the MapLibre radar overlay without leaking private targets.
+  await guest.page.getByText("Dijawab", { exact: true }).waitFor();
+  await click(guest, "Lihat peta");
+  await click(guest, "Buka peta vektor (MapLibre)");
+  await guest.page.locator('.board-map-shell, .solo-map-notice:has-text("Peta tidak tersedia")').first().waitFor({ timeout: 10_000 });
+  if (await guest.page.locator(".board-map-shell").count() > 0) {
+    const mapText = await guest.page.locator("#seek-map").innerText();
+    assert.match(mapText, /Geoapify/i);
+    assert.match(mapText, /OpenStreetMap/i);
+    assert.match(mapText, new RegExp(`Radar ${radius} m`));
+    assert.match(mapText, /Di dalam \(Ya\)/);
+    assert.doesNotMatch(mapText, /Terkunci/);
+    const licenseHref = await guest.page.locator('.board-map-attribution a[href*="maplibre-gl.txt"]').getAttribute("href");
+    assert.equal(licenseHref, "/licenses/maplibre-gl.txt");
+    await guest.page.screenshot({ path: join(results, "seek-seeker-radar-map.png"), fullPage: true });
+  }
+  await click(guest, "Tutup peta");
+
   await guest.page.getByRole("radio", { name: "Foto", exact: true }).check();
   const photoRequest = (await post(guest, "Kirim pertanyaan", "ask")).room.clues.questions.at(-1);
   assert.equal(photoRequest.family, "photo");

@@ -238,6 +238,20 @@ try {
   assert.equal(reloaded.seat, firstSeat);
   assert.deepEqual(reloaded.owners, flipped.owners);
   assert.deepEqual(reloaded.events, flipped.events);
+  // Open the lazy MapLibre vector map on the active Duo board and confirm non-color ownership + attribution.
+  await click(winner, "Lihat peta");
+  await click(winner, "Buka peta vektor (MapLibre)");
+  await winner.page.locator('.board-map-shell, .solo-map-notice:has-text("Peta tidak tersedia")').first().waitFor({ timeout: 10_000 });
+  if (await winner.page.locator(".board-map-shell").count() > 0) {
+    const mapText = await winner.page.locator("#duo-map").innerText();
+    assert.match(mapText, /Geoapify/i);
+    assert.match(mapText, /OpenStreetMap/i);
+    assert.match(mapText, /Diklaim Pemain [12]/);
+    const licenseHref = await winner.page.locator('.board-map-attribution a[href*="maplibre-gl.txt"]').getAttribute("href");
+    assert.equal(licenseHref, "/licenses/maplibre-gl.txt");
+  }
+  await click(winner, "Tutup peta");
+
   await Promise.all([
     host.page.screenshot({ path: join(results, "duo-host-board.png"), fullPage: true }),
     guest.page.screenshot({ path: join(results, "duo-guest-board.png"), fullPage: true }),

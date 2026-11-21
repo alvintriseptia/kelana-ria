@@ -1,7 +1,10 @@
 import * as maplibregl from "maplibre-gl";
+import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { MapConfig, SoloPoint } from "@kelana-ria/contracts";
 import "./board-map.css";
+
+maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
 export type BoardMapRadarCircle = {
   id: string;
@@ -20,10 +23,12 @@ export type BoardMapOptions = {
   container: HTMLElement;
   config: MapConfig;
   start: SoloPoint;
+  startSelectable?: boolean;
   checkpoints: BoardMapPoint[];
   selectedId?: string;
   radarCircles?: BoardMapRadarCircle[];
   onSelect?: (checkpointId: string) => void;
+  onSelectStart?: () => void;
   onError?: (reason: string) => void;
 };
 
@@ -120,7 +125,18 @@ function offlineVectorStyle(
 }
 
 export function mountBoardMap(options: BoardMapOptions): { destroy: () => void } {
-  const { container, config, start, checkpoints, selectedId, radarCircles = [], onSelect, onError } = options;
+  const {
+    container,
+    config,
+    start,
+    startSelectable = false,
+    checkpoints,
+    selectedId,
+    radarCircles = [],
+    onSelect,
+    onSelectStart,
+    onError,
+  } = options;
 
   container.innerHTML = `<div class="board-map-shell">
     <div class="board-map-canvas" role="region" aria-label="Peta interaktif papan permainan"></div>
@@ -133,8 +149,28 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
     </p>
   </div>`;
 
+  const shell = container.querySelector<HTMLElement>(".board-map-shell")!;
+  const attribution = shell.querySelector<HTMLElement>(".board-map-attribution")!;
+  if (radarCircles.length > 0) {
+    const radarList = document.createElement("ul");
+    radarList.className = "board-map-radars";
+    radarList.setAttribute("aria-label", "Lingkaran radar terkirim");
+    for (const circle of radarCircles) {
+      const item = document.createElement("li");
+      item.dataset.radarInside = String(circle.inside);
+      const badge = document.createElement("span");
+      badge.className = `board-map-radar-badge ${circle.inside ? "board-map-radar-in" : "board-map-radar-out"}`;
+      badge.textContent = circle.inside ? "Di dalam (Ya)" : "Di luar (Tidak)";
+      const desc = document.createElement("span");
+      desc.textContent = `Radar ${circle.radiusMeters} m · acuan ${circle.center.name}`;
+      item.append(badge, desc);
+      radarList.append(item);
+    }
+    shell.insertBefore(radarList, attribution);
+  }
+
   const canvasHost = container.querySelector<HTMLElement>(".board-map-canvas")!;
-  const allPoints: SoloPoint[] = [start, ...checkpoints];
+  const allPoints: SoloPoint[] = [start, ...checkpoints, ...radarCircles.map((circle) => circle.center)];
   const bounds = new maplibregl.LngLatBounds();
   for (const p of allPoints) bounds.extend([p.longitude, p.latitude]);
 
@@ -203,9 +239,20 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
     });
 
     // Add accessible start marker (distinct square badge + "A" label).
-    const startEl = document.createElement("span");
-    startEl.className = "board-map-pin board-map-pin-start";
+    const startEl = document.createElement(startSelectable ? "button" : "span");
+    if (startEl instanceof HTMLButtonElement) {
+      startEl.type = "button";
+      startEl.addEventListener("click", () => (onSelectStart ? onSelectStart() : onSelect?.(start.id)));
+    }
+    startEl.className = [
+      "board-map-pin",
+      "board-map-pin-start",
+      start.id === selectedId ? "board-map-pin-selected" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
     startEl.textContent = `A · ${start.name}`;
+    startEl.setAttribute("aria-label", `${start.name} (Titik awal)`);
     markers.push(new maplibregl.Marker({ element: startEl }).setLngLat([start.longitude, start.latitude]).addTo(map));
 
     // Add accessible checkpoint markers with text/shape ownership indicators (never color-only).
@@ -222,7 +269,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
       ]
         .filter(Boolean)
         .join(" ");
-      el.textContent = point.label ? `${index + 1} · ${point.label}` : `${index + 1} · ${point.name}`;
+      el.textContent = point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`;
       el.setAttribute(
         "aria-label",
         point.label ? `${point.name} (${point.label})` : point.name,

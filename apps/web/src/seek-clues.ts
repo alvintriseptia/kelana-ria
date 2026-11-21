@@ -41,6 +41,25 @@ export function cluePointName(room: SeekRoom, id: string) {
   return [room.edition.start, ...room.edition.checkpoints, ...(room.clues?.landmarks ?? [])].find(point => point.id === id)?.name ?? id;
 }
 
+export function deliveredRadarCircles(room: SeekRoom) {
+  const points = [room.edition.start, ...room.edition.checkpoints, ...(room.clues?.landmarks ?? [])];
+  const circles = [];
+  for (const question of room.clues?.questions ?? []) {
+    if (question.family !== "radar") continue;
+    if (question.status !== "answered" && question.status !== "timeout") continue;
+    if (typeof question.radiusMeters !== "number" || !question.answer) continue;
+    const center = points.find(point => point.id === question.referenceId);
+    if (!center) continue;
+    circles.push({
+      id: question.id,
+      center,
+      radiusMeters: question.radiusMeters,
+      inside: question.answer === "Ya",
+    });
+  }
+  return circles;
+}
+
 function inputValue(input: SeekQuestionInput) {
   if (input.radiusMeters !== undefined && input.landmarkId !== undefined) return `${input.radiusMeters}:${input.landmarkId}`;
   return input.radiusMeters?.toString() ?? input.landmarkId ?? "";

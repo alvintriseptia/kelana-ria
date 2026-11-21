@@ -1,7 +1,8 @@
-import type { GameBoard, LocationFix, SeekAction, SeekReply, SeekRoom, SoloPoint } from "@kelana-ria/contracts";
+import type { GameBoard, LocationFix, MapConfig, SeekAction, SeekReply, SeekRoom, SoloPoint } from "@kelana-ria/contracts";
 import { getLocation } from "./device-location";
+import { fetchMapConfig } from "./map-config";
 import { boardDisplayName, inviteUrl, pendingEntry, player, roomCodePattern, roomTransport, type EntryAction, type Feedback } from "./multiplayer-room";
-import { cluePointName, drawSelection, newClueDraft, pendingQuestion, questionFamily, selectedQuestion } from "./seek-clues";
+import { cluePointName, deliveredRadarCircles, drawSelection, newClueDraft, pendingQuestion, questionFamily, selectedQuestion } from "./seek-clues";
 import { active, entry, needsStart, pointAction, roomView, seekMode, seekPhase } from "./seek-view";
 import { action, remaining, wib } from "./solo-view";
 import "./solo-play.css";
@@ -88,7 +89,9 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   let feedback: Feedback | undefined;
   let clueDraft = newClueDraft();
   let neededStart = false;
-  const map = { shown: false, failed: false, url: mapUrl };
+  const map = { shown: false, failed: false, vectorMode: false, url: mapUrl };
+  let mapConfig: MapConfig | undefined;
+  let vectorMap: { destroy: () => void } | undefined;
 
   root.innerHTML = `<nav class="solo-nav" aria-label="Navigasi simulasi">
     ${action("Kembali ke pilihan", "back", "solo-back")}
@@ -147,8 +150,75 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
     }
   }
 
+  async function resolveMapConfig() {
+    if (mapConfig) return mapConfig;
+    mapConfig = await fetchMapConfig(signal);
+    return mapConfig;
+  }
+
+  async function mountVectorMap(state: SeekRoom) {
+    const host = root.querySelector<HTMLElement>("#seek-vector-map");
+    if (!host || signal.aborted) return;
+    try {
+      const config = await resolveMapConfig();
+      const { mountBoardMap } = await import("./board-map");
+      if (signal.aborted || !map.shown || !map.vectorMode || !root.contains(host)) return;
+      const type = pointAction(state);
+      const canReference = type === "investigate" && Boolean(state.clues);
+      const ruledOut = state.phase === "seeking" && state.hider !== state.seat
+        ? new Set(state.ruledOut) : new Set<string>();
+      const radarCircles = deliveredRadarCircles(state);
+      const locked = busy || Boolean(pending);
+      vectorMap?.destroy();
+      vectorMap = mountBoardMap({
+        container: host,
+        config,
+        start: state.edition.start,
+        startSelectable: canReference && !locked,
+        checkpoints: state.edition.checkpoints.map(point => {
+          const isRuledOut = ruledOut.has(point.id);
+          const isOwnLock = state.hider === state.seat && state.ownLock === point.id;
+          return {
+            ...point,
+            claimed: isRuledOut || isOwnLock,
+            label: isOwnLock ? "Terkunci" : isRuledOut ? "Sudah diperiksa" : undefined,
+            selectable: Boolean(type) && !locked && (canReference || !isRuledOut),
+          };
+        }),
+        selectedId,
+        radarCircles,
+        onSelectStart() {
+          if (!room || busy || pending || !pointAction(room)) return;
+          selectedId = room.edition.start.id;
+          feedback = undefined;
+          paint("#seek-point-heading");
+        },
+        onSelect(checkpointId) {
+          if (!room || busy || pending || !pointAction(room)) return;
+          selectedId = checkpointId;
+          feedback = undefined;
+          paint("#seek-point-heading");
+        },
+        onError() {
+          if (signal.aborted) return;
+          map.failed = true;
+          map.vectorMode = false;
+          paint();
+        },
+      });
+    } catch {
+      if (!signal.aborted) {
+        map.failed = true;
+        map.vectorMode = false;
+        paint();
+      }
+    }
+  }
+
   function paint(focus?: string) {
     if (signal.aborted) return;
+    vectorMap?.destroy();
+    vectorMap = undefined;
     boardLabelEl.textContent = boardDisplayName(room?.edition.board ?? requestedBoard);
     const focused = document.activeElement as HTMLElement | null;
     const key = focused?.dataset.focus;
@@ -170,6 +240,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
       const current = now();
       neededStart = needsStart(room, current);
       view.innerHTML = roomView(room, { now: current, busy: locked, locating, startOpen, point: selectedPoint(), feedback, map, clueDraft }, confirmingExit);
+      if (map.shown && map.vectorMode && !map.failed) void mountVectorMap(room);
     } else {
       view.innerHTML = loading && !disconnected ? '<p role="status">Memuat ruang…</p>' : entry(inviteCode, locked, feedback);
     }
@@ -557,6 +628,22 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
       case "copy": void copy(); break;
       case "map":
         map.shown = !map.shown;
+        if (!map.shown) {
+          vectorMap?.destroy();
+          vectorMap = undefined;
+        } else if (!map.vectorMode) {
+          void resolveMapConfig().then(config => {
+            if (!signal.aborted && map.shown && !map.vectorMode && config.mode === "geoapify-vector") {
+              map.vectorMode = true;
+              paint();
+            }
+          });
+        }
+        paint();
+        break;
+      case "vector-map":
+        map.vectorMode = true;
+        map.failed = false;
         paint();
         break;
       case "retry-map":
@@ -691,6 +778,7 @@ export function mountSeekPlay(root: HTMLElement, returnToSetup: () => void) {
   if (pending) paint();
   else void refresh();
   return () => {
+    vectorMap?.destroy();
     releasePhoto();
     mount.abort();
     window.clearInterval(clock);
