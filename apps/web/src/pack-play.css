@@ -1,0 +1,22 @@
+.pack-shell { display: grid; gap: 20px; }
+.pack-nav { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; }
+.pack-roles { display: flex; flex-wrap: wrap; gap: 8px; }
+.pack-roles button[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+.pack-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+.pack-card { padding: 18px 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); display: grid; gap: 12px; }
+.pack-card h2 { font-size: 1.85rem; }
+.pack-card h3 { font-size: 1.12rem; }
+.pack-field { display: grid; gap: 4px; }
+.pack-field label { font-size: .82rem; font-weight: 700; color: var(--muted); }
+.pack-field input, .pack-field textarea { width: 100%; min-height: 42px; padding: 8px 12px; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 10px; }
+.pack-badge { display: inline-flex; align-items: center; width: fit-content; padding: 3px 10px; border-radius: 999px; font-size: .78rem; font-weight: 700; border: 1px solid var(--ink); background: var(--paper); }
+.pack-badge-published { background: var(--ink); color: #fff; }
+.pack-badge-paused, .pack-badge-changes-requested { background: #fff4d1; border-color: #b89938; }
+.pack-list { margin: 0; padding-left: 18px; display: grid; gap: 8px; font-size: .9rem; }
+.pack-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.pack-note { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: #edf2df; font-size: .9rem; }
+.pack-error { background: #fbe9e2; border-color: #9b4713; color: #5c2204; font-weight: 600; }
+@media (max-width: 700px) {
+  .pack-grid { grid-template-columns: 1fr; }
+  .pack-card { padding: 14px 16px; }
+}

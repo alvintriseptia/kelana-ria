@@ -15,6 +15,7 @@ const feedback = document.getElementById("feedback")!;
 const setup = document.getElementById("setup")!;
 const play = document.getElementById("play")!;
 const playButton = document.querySelector<HTMLButtonElement>("#summary-play")!;
+const packsButton = document.querySelector<HTMLButtonElement>("#summary-packs")!;
 let unmountPlay: (() => void) | undefined;
 let navigation = 0;
 let routeEvents = new AbortController();
@@ -56,6 +57,7 @@ function update(writeUrl = false) {
   document.getElementById("summary-board")!.textContent = board.selectedOptions[0]!.textContent;
   const playable = !wide && !seeking;
   playButton.hidden = !playable;
+  packsButton.hidden = !playable;
   playButton.textContent = game.players === 2 ? "Coba simulasi berdua" : "Coba simulasi";
   document.getElementById("summary-travel")!.hidden = playable;
   document.getElementById("summary-note")!.textContent = playable
@@ -101,7 +103,7 @@ async function showRoute() {
   unmountPlay = undefined;
   restoreSelection();
   const mode = new URLSearchParams(location.search).get("play");
-  const playing = mode === "solo-claim" || mode === "duo-claim";
+  const playing = mode === "solo-claim" || mode === "duo-claim" || mode === "creator-packs";
   setup.hidden = playing;
   play.hidden = !playing;
   if (!playing) {
@@ -111,13 +113,17 @@ async function showRoute() {
     return;
   }
   if (summary.open) summary.close();
-  document.title = "Claim the City · Kelana Ria";
-  const heading = `<h1 lang="en">Claim the City</h1><p class="intro">Jakarta (Compact) · ${mode === "duo-claim" ? "Berdua" : "Solo"} · Edisi siap pakai · Simulasi</p>`;
+  document.title = mode === "creator-packs" ? "Paket Kreator · Kelana Ria" : "Claim the City · Kelana Ria";
+  const heading = mode === "creator-packs"
+    ? '<h1>Paket Kreator Jakarta</h1><p class="intro">Jakarta (Compact) · Claim the City · Tinjauan &amp; Katalog</p>'
+    : `<h1 lang="en">Claim the City</h1><p class="intro">Jakarta (Compact) · ${mode === "duo-claim" ? "Berdua" : "Solo"} · Edisi siap pakai · Simulasi</p>`;
   play.innerHTML = `${heading}<p role="status">Membuka simulasi…</p>`;
   try {
-    const mount = mode === "duo-claim"
-      ? (await import("./duo-play")).mountDuoPlay
-      : (await import("./solo-play")).mountSoloPlay;
+    const mount = mode === "creator-packs"
+      ? (await import("./pack-play")).mountPackPlay
+      : mode === "duo-claim"
+        ? (await import("./duo-play")).mountDuoPlay
+        : (await import("./solo-play")).mountSoloPlay;
     if (currentNavigation === navigation) unmountPlay = mount(play, returnToSetup);
   } catch {
     if (currentNavigation !== navigation) return;
@@ -146,6 +152,12 @@ document.getElementById("guide-open")!.addEventListener("click", () => guide.sho
 playButton.addEventListener("click", () => {
   const url = new URL(location.href);
   url.searchParams.set("play", selection().players === 2 ? "duo-claim" : "solo-claim");
+  history.pushState({ fromChooser: true }, "", url);
+  void showRoute();
+});
+packsButton.addEventListener("click", () => {
+  const url = new URL(location.href);
+  url.searchParams.set("play", "creator-packs");
   history.pushState({ fromChooser: true }, "", url);
   void showRoute();
 });
