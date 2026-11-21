@@ -1,23 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DuoAction } from "@kelana-ria/contracts";
-import type { duoStore, LobbyAction } from "./duo-store.js";
-import { credential, hasJsonBody, isFix, isId, isObject, json, requestBody, setCredential } from "./http.js";
+import type { duoStore } from "./duo-store.js";
+import { credential, hasJsonBody, isFix, isId, isObject, json, parseLobbyAction, requestBody, setCredential } from "./http.js";
 
 const lobbyPath = "/api/duo";
 const cookieName = "kelana_duo";
-
-function parseLobbyAction(value: unknown): LobbyAction | undefined {
-  if (!isObject(value) || !isId(value.actionId)) return undefined;
-  const { type, actionId, code, passId } = value;
-  if (type === "create") return { type, actionId };
-  if (type === "join" && typeof code === "string" && /^[0-9a-f]{8}$/i.test(code)) {
-    if (passId !== undefined && !isId(passId)) return undefined;
-    return passId
-      ? { type, actionId, code: code.toUpperCase(), passId }
-      : { type, actionId, code: code.toUpperCase() };
-  }
-  return undefined;
-}
 
 function parseRoomAction(value: unknown): DuoAction | undefined {
   if (!isObject(value) || !isId(value.actionId)) return undefined;
@@ -73,7 +60,7 @@ export function duoHandler(store: ReturnType<typeof duoStore>, now: () => number
       const reply = store.act(token, code, action, receivedAt);
       return json(response, reply.status, reply.body);
     }
-    const action = parseLobbyAction(value);
+    const action = parseLobbyAction(value, true);
     if (!action) return json(response, 400, { error: "invalid-request" });
     const reply = store.lobby(token, action, receivedAt);
     return json(response, reply.status, reply.body);

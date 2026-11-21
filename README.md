@@ -54,6 +54,12 @@ With the API and web server running, choose **Berdua**, **Claim the City**, and 
 
 Run `npm run qa:duo --workspace @kelana-ria/web` against a production build to exercise two independent browser profiles. The test records both views and the public event sequence in the mobile QA artifact.
 
+## Play the Compact Hide & Seek fixture
+
+Choose **Berdua**, **Hide & Seek**, and **Jakarta (Compact)**. Open the simulation, create a room, share its invite with a second browser profile, and choose who hides first. Both players check in at CSW–ASEAN and confirm readiness. The hider privately locks a point before release. The seeker checks in at the start after release and investigates a point at a time. After turn one, both check in at the start again to swap roles.
+
+The prepared fixture allows 30 minutes of head start and 60 minutes of search in each turn, with a 30-minute regroup allowance. Locations and timing are for simulated testing. Run `npm run qa:seek --workspace @kelana-ria/web` after building to advance the server clock through a two-turn browser match and capture both views.
+
 ## Review, publish, and settle a creator pack (Test payment)
 
 Open the summary for Jakarta (Compact) Claim the City and choose **Paket kreator Jakarta** (or open `/?play=creator-packs`). Switch between **Penulis**, **Peninjau** and **Katalog Publik** to save a draft, submit it for editorial review, return a correction request, publish the revised version, purchase one sandbox session (**Test payment**), settle it to unlock one paid room and one creator earnings entry, invite a second player on the same pass without starting the clock before readiness, and pause new sales after a confirmed checkpoint closure while keeping existing orders and earnings visible.

@@ -31,6 +31,24 @@ export function isId(value: unknown): value is string {
   return typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value);
 }
 
+export type LobbyAction = { actionId: string } & (
+  | { type: "create" }
+  | { type: "join"; code: string; passId?: string }
+);
+
+export function parseLobbyAction(value: unknown, allowPass = false): LobbyAction | undefined {
+  if (!isObject(value) || !isId(value.actionId)) return undefined;
+  const { type, actionId, code, passId } = value;
+  if (type === "create") return { type, actionId };
+  if (type === "join" && typeof code === "string" && /^[0-9a-f]{8}$/i.test(code)) {
+    if (passId !== undefined && (!allowPass || !isId(passId))) return undefined;
+    return passId
+      ? { type, actionId, code: code.toUpperCase(), passId }
+      : { type, actionId, code: code.toUpperCase() };
+  }
+  return undefined;
+}
+
 export function isFix(value: unknown): value is LocationFix {
   return isObject(value) && ["latitude", "longitude", "accuracy", "timestamp"].every((key) =>
     typeof value[key] === "number" && Number.isFinite(value[key]));

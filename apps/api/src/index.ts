@@ -18,6 +18,8 @@ import {
 import { defaultCreatorDraft, defaultCreatorTasks } from "./pack-fixture.js";
 import { packHandler } from "./pack-http.js";
 import { packStore, validatePackVersionForPublication } from "./pack-store.js";
+import { seekHandler } from "./seek-http.js";
+import { seekStore } from "./seek-store.js";
 import { soloStore, type SoloStoreOptions } from "./solo-store.js";
 
 export type { GameConfiguration } from "@kelana-ria/contracts";
@@ -108,12 +110,17 @@ export function createSoloServer({
     unlockPaidRoom: duo.createPaidRoom,
   });
   const handleDuo = duoHandler(duo, now, secureCookie);
+  const seek = seekStore(databasePath);
+  const handleSeek = seekHandler(seek, now, secureCookie);
   const handlePacks = packHandler(packs, now, secureCookie);
   const server = createServer({ requestTimeout: 15_000 }, async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
       if (url.pathname === "/api/duo" || url.pathname.startsWith("/api/duo/")) {
         return await handleDuo(request, response, url);
+      }
+      if (url.pathname === "/api/seek" || url.pathname.startsWith("/api/seek/")) {
+        return await handleSeek(request, response, url);
       }
       if (url.pathname === "/api/packs" || url.pathname.startsWith("/api/packs/")) {
         return await handlePacks(request, response, url);
@@ -178,6 +185,7 @@ export function createSoloServer({
     }
   });
   server.on("close", () => {
+    seek.close();
     packs.close();
     duo.close();
     store.close();

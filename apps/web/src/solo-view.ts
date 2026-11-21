@@ -1,4 +1,4 @@
-import type { SoloCheckpoint, SoloSession } from "@kelana-ria/contracts";
+import type { SoloCheckpoint, SoloPoint, SoloSession } from "@kelana-ria/contracts";
 
 export function escapeText(value: string) {
   return value.replace(/[&<>"']/g, character => ({
@@ -67,7 +67,7 @@ export function schematic(session: SoloSession, imageUrl: string) {
 }
 
 export function schematicBoard(
-  { start, checkpoints }: Pick<SoloSession["edition"], "start" | "checkpoints">,
+  { start, checkpoints }: { start: SoloPoint; checkpoints: SoloPoint[] },
   imageUrl: string,
   active: boolean,
   ownership: (checkpointId: string) => string | undefined,

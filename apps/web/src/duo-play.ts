@@ -1,13 +1,13 @@
 import type { DuoAction, DuoReply, DuoRoom, LocationFix, SoloChallenge, SoloPoint } from "@kelana-ria/contracts";
 import { getLocation } from "./device-location";
-import { board, checkpointPanel, entry, inviteUrl, lobby, player, result, score } from "./duo-view";
+import { board, checkpointPanel, entry, lobby, result, score } from "./duo-view";
+import { inviteUrl, pendingEntry, player, roomCodePattern, roomTransport, type EntryAction, type Feedback } from "./multiplayer-room";
 import { action, remaining, wib } from "./solo-view";
 import "./solo-play.css";
 import "./duo-play.css";
 
 const apiPath = "/api/duo";
-const pendingEntryKey = "kelana-duo-pending-entry";
-const roomCodePattern = /^[0-9A-F]{8}$/;
+const entryRequests = pendingEntry("kelana-duo-pending-entry", true);
 const mapUrl = new URL("./assets/solo-schematic.webp", import.meta.url).href;
 const errors: Record<string, string> = {
   "room-not-found": "Ruang dengan kode ini tidak ditemukan. Periksa kode undangan.",
@@ -35,70 +35,27 @@ const errors: Record<string, string> = {
   "invalid-pass": "Pass sesi tidak valid atau belum lunas.",
 };
 
-type EntryAction = { type: "create" } | { type: "join"; code: string; passId?: string };
-type EntryRequest = EntryAction & { actionId: string };
 type RoundAction = DuoAction extends infer A ? A extends DuoAction ? Omit<A, "actionId"> : never : never;
 type RequestAction = (EntryAction | RoundAction) & { actionId: string };
 type Pending = { path: string; action: RequestAction };
 
-function readEntryRequest(roomCode: string): EntryRequest | undefined {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(pendingEntryKey) ?? "null");
-    const request = saved?.request;
-    if (saved?.roomCode !== roomCode || typeof request?.actionId !== "string" || !/^[0-9a-f-]{36}$/.test(request.actionId)) return;
-    const { actionId, type } = request;
-    if (type === "create") return { actionId, type };
-    if (type === "join" && typeof request.code === "string" && roomCodePattern.test(request.code)) {
-      return typeof request.passId === "string" && request.passId
-        ? { actionId, type, code: request.code, passId: request.passId }
-        : { actionId, type, code: request.code };
-    }
-  } catch {
-    // Browsers can restrict session storage. The current page can still retry in memory.
-  }
-}
-
-function rememberEntryRequest(entry?: { roomCode: string; request: EntryRequest }) {
-  try {
-    if (entry) sessionStorage.setItem(pendingEntryKey, JSON.stringify(entry));
-    else sessionStorage.removeItem(pendingEntryKey);
-  } catch {
-    // The request remains available in memory if storage is unavailable.
-  }
-}
-
-async function fetchReply(path: string, signal: AbortSignal, body?: RequestAction): Promise<DuoReply> {
-  const response = await fetch(path, {
-    method: body ? "POST" : "GET",
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: "same-origin",
-    cache: "no-store",
-    signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
-  });
-  if (response.status >= 500) throw new Error(`HTTP ${response.status}`);
-  const reply: DuoReply = await response.json();
-  if (!response.ok && !reply.error) throw new Error(`HTTP ${response.status}`);
-  return reply;
-}
-
 export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   const mount = new AbortController();
   const { signal } = mount;
+  const { credential, request } = roomTransport<DuoReply, RequestAction>(apiPath, "kelana-duo-bootstrap");
   let room: DuoRoom | undefined;
   const initialParams = new URLSearchParams(location.search);
   let inviteCode = (initialParams.get("room") ?? "").trim().toUpperCase();
   let pendingPassId = (initialParams.get("pass") ?? "").trim();
-  const restored = readEntryRequest(inviteCode);
+  const restored = entryRequests.read(inviteCode);
   let joinInput = restored?.type === "join" ? restored.code : inviteCode;
-  let established = false;
   let loading = !restored;
   let serverSampleAt = 0;
   let selectedId: string | undefined;
   let startOpen = false;
   let choiceId = "";
   let challenge: SoloChallenge | undefined;
-  let feedback: { text: string; error?: boolean } | undefined;
+  let feedback: Feedback | undefined;
   let disconnected = false;
   let busy = false;
   let seekingLocation = false;
@@ -293,25 +250,6 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
     return { changed, focus };
   }
 
-  async function credential(requestSignal: AbortSignal) {
-    if (established) return;
-    const read = () => fetchReply(apiPath, requestSignal);
-    const reply = navigator.locks ? await navigator.locks.request("kelana-duo-bootstrap", { signal: requestSignal }, read) : await read();
-    if (reply.error) throw new Error(reply.error);
-    established = true;
-  }
-
-  async function request(path: string, requestSignal: AbortSignal, body?: RequestAction) {
-    await credential(requestSignal);
-    let reply = await fetchReply(path, requestSignal, body);
-    if (reply.error === "session-required") {
-      established = false;
-      await credential(requestSignal);
-      reply = await fetchReply(path, requestSignal, body);
-    }
-    return reply;
-  }
-
   function cancelRead() {
     reading?.abort();
     reading = undefined;
@@ -394,7 +332,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
       pending = undefined;
       disconnected = false;
       focus = receive(reply).focus ?? focus;
-      if (submitted.type === "create" || submitted.type === "join") rememberEntryRequest();
+      if (submitted.type === "create" || submitted.type === "join") entryRequests.remember();
       if (reply.error) {
         reportError(reply.error, reply.distanceMeters);
         if (reply.error === "room-phase-changed") confirmingExit = false;
@@ -429,7 +367,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
     if (request.type === "create" || request.type === "join") {
       const action = { ...request, actionId };
       pending = { path: apiPath, action };
-      rememberEntryRequest({ roomCode: inviteCode, request: action });
+      entryRequests.remember({ roomCode: inviteCode, request: action });
     } else if (room) {
       pending = { path: roomPath(room.code), action: { ...request, actionId } };
     } else return;
@@ -486,7 +424,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   async function copy() {
     if (!room) return;
     try {
-      await navigator.clipboard.writeText(inviteUrl(room.code).href);
+      await navigator.clipboard.writeText(inviteUrl("duo-claim", room.code).href);
       if (!signal.aborted) report("Tautan undangan disalin.");
     } catch {
       if (!signal.aborted) report("Buka menu tautan undangan untuk menyalinnya.", true);

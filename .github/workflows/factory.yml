@@ -36,6 +36,8 @@ jobs:
         run: npm run qa:solo --workspace @kelana-ria/web
       - name: Verify Compact Claim across two devices
         run: npm run qa:duo --workspace @kelana-ria/web
+      - name: Play both Hide & Seek turns
+        run: npm run qa:seek --workspace @kelana-ria/web
       - name: Review and publish a versioned creator pack
         run: npm run qa:packs --workspace @kelana-ria/web
       - name: Upload mobile QA evidence
