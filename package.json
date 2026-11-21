@@ -7,10 +7,14 @@
     "node": "24.x",
     "npm": "11.x"
   },
-  "workspaces": ["apps/*", "packages/*"],
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "build": "tsc --build",
-    "clean": "tsc --build --clean"
+    "build": "tsc --build && npm run bundle --workspace @kelana-ria/web",
+    "clean": "tsc --build --clean",
+    "dev": "npm run dev --workspace @kelana-ria/web"
   },
   "devDependencies": {
     "typescript": "7.0.2"
