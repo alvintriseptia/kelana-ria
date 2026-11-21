@@ -78,7 +78,7 @@ export async function checkChooserTraffic(traffic, origin, dist) {
     if (url.protocol === 'data:') continue;
     assert.equal(url.origin, origin, `Unexpected non-shell request: ${url}`);
     assert.equal(request.method, 'GET', `Unexpected action on chooser: ${url}`);
-    assert.doesNotMatch(url.pathname, /(?:\/assets\/solo-|maplibre|mapbox|geoapify|\/tiles?\/|\/api\/|\.(?:pbf|mvt|pmtiles)$)/i);
+    assert.doesNotMatch(url.pathname, /(?:\/assets\/(?:solo|duo)-|maplibre|mapbox|geoapify|\/tiles?\/|\/api\/|\.(?:pbf|mvt|pmtiles)$)/i);
     // Inspect modules inside fetched production chunks, including chunks with hashed names.
     if (/\/assets\/.*\.m?js$/.test(url.pathname) && !checked.has(url.pathname)) {
       const map = JSON.parse(await readFile(join(dist, url.pathname + '.map'), 'utf8'));

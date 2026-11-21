@@ -54,8 +54,9 @@ function update(writeUrl = false) {
   document.getElementById("summary-time")!.textContent = duration;
   document.getElementById("summary-players")!.textContent = game.players === 1 ? "Solo" : "Berdua";
   document.getElementById("summary-board")!.textContent = board.selectedOptions[0]!.textContent;
-  const playable = !wide && game.players === 1 && !seeking;
+  const playable = !wide && !seeking;
   playButton.hidden = !playable;
+  playButton.textContent = game.players === 2 ? "Coba simulasi berdua" : "Coba simulasi";
   document.getElementById("summary-travel")!.hidden = playable;
   document.getElementById("summary-note")!.textContent = playable
     ? "Coba edisi simulasi dengan lokasi virtual. Kamu bisa bermain dari mana saja."
@@ -86,6 +87,7 @@ function returnToSetup() {
   }
   const url = new URL(location.href);
   url.searchParams.delete("play");
+  url.searchParams.delete("room");
   history.replaceState(null, "", url);
   void showRoute();
 }
@@ -98,7 +100,8 @@ async function showRoute() {
   unmountPlay?.();
   unmountPlay = undefined;
   restoreSelection();
-  const playing = new URLSearchParams(location.search).get("play") === "solo-claim";
+  const mode = new URLSearchParams(location.search).get("play");
+  const playing = mode === "solo-claim" || mode === "duo-claim";
   setup.hidden = playing;
   play.hidden = !playing;
   if (!playing) {
@@ -109,11 +112,13 @@ async function showRoute() {
   }
   if (summary.open) summary.close();
   document.title = "Claim the City · Kelana Ria";
-  const heading = '<h1 lang="en">Claim the City</h1><p class="intro">Jakarta (Compact) · Solo · Edisi siap pakai · Simulasi</p>';
+  const heading = `<h1 lang="en">Claim the City</h1><p class="intro">Jakarta (Compact) · ${mode === "duo-claim" ? "Berdua" : "Solo"} · Edisi siap pakai · Simulasi</p>`;
   play.innerHTML = `${heading}<p role="status">Membuka simulasi…</p>`;
   try {
-    const { mountSoloPlay } = await import("./solo-play");
-    if (currentNavigation === navigation) unmountPlay = mountSoloPlay(play, returnToSetup);
+    const mount = mode === "duo-claim"
+      ? (await import("./duo-play")).mountDuoPlay
+      : (await import("./solo-play")).mountSoloPlay;
+    if (currentNavigation === navigation) unmountPlay = mount(play, returnToSetup);
   } catch {
     if (currentNavigation !== navigation) return;
     play.innerHTML = `${heading}
@@ -140,7 +145,7 @@ form.addEventListener("submit", event => {
 document.getElementById("guide-open")!.addEventListener("click", () => guide.showModal());
 playButton.addEventListener("click", () => {
   const url = new URL(location.href);
-  url.searchParams.set("play", "solo-claim");
+  url.searchParams.set("play", selection().players === 2 ? "duo-claim" : "solo-claim");
   history.pushState({ fromChooser: true }, "", url);
   void showRoute();
 });

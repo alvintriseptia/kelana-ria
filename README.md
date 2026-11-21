@@ -47,3 +47,9 @@ npm run dev
 Choose Solo, Claim the City and Jakarta (Compact), then open **Lihat ringkasan** and **Coba simulasi**. Use **Simulasikan lokasi di sini** to test check-ins without traveling. The board, challenges and location samples are fixtures. The local server stores countdowns, scores and results in `apps/api/.data/solo.sqlite`. Set `SOLO_DATABASE_PATH` to choose another database. The PWA caches the chooser shell. The outing requires a server connection for check-ins, claims and recovery.
 
 Run `npm test --workspace @kelana-ria/api` for server rules, edition validation (`compact-board-v1`), two feasible Compact editions with attributed route snapshots, and same-configuration fallback checks, and `npm run qa:solo --workspace @kelana-ria/web` for the mobile win, loss, closure notice and recovery paths. The browser test starts a fixture API with an isolated database and controlled clock. It writes screenshots and a result report alongside the chooser QA evidence.
+
+## Play the Compact two-player fixture
+
+With the API and web server running, choose **Berdua**, **Claim the City**, and **Jakarta (Compact)**. Open the summary, choose **Coba simulasi berdua**, and create a room. Open its invitation in a second browser profile so each player has a separate seat. Both players check in at CSW–ASEAN and mark themselves ready before the host starts. The room shows who owns each landmark and how many landmarks each player has in every zone.
+
+Run `npm run qa:duo --workspace @kelana-ria/web` against a production build to exercise two independent browser profiles. The test records both views and the public event sequence in the mobile QA artifact.

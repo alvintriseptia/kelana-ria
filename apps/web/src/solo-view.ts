@@ -63,7 +63,15 @@ function checkpointRow(point: SoloCheckpoint, session: SoloSession, selectedId: 
 }
 
 export function schematic(session: SoloSession, imageUrl: string) {
-  const { start, checkpoints } = session.edition;
+  return schematicBoard(session.edition, imageUrl, session.phase === "active", id => session.claimed.includes(id) ? "Diklaim" : undefined);
+}
+
+export function schematicBoard(
+  { start, checkpoints }: Pick<SoloSession["edition"], "start" | "checkpoints">,
+  imageUrl: string,
+  active: boolean,
+  ownership: (checkpointId: string) => string | undefined,
+) {
   return `<figure class="solo-figure">
     <div class="solo-map">
       <img src="${escapeText(imageUrl)}" width="800" height="540" alt="">
@@ -71,10 +79,10 @@ export function schematic(session: SoloSession, imageUrl: string) {
         const id = escapeText(point.id);
         const name = escapeText(point.name);
         const startMarker = index === 0;
-        const claimed = session.claimed.includes(point.id);
+        const claimed = Boolean(ownership(point.id));
         const marker = `<span class="solo-pin ${startMarker ? "solo-pin-start" : ""} ${claimed ? "solo-pin-claimed" : ""}">${startMarker ? "A" : index}</span>`;
         const position = `style="--x:${Number(point.x)}%;--y:${Number(point.y)}%"`;
-        return session.phase === "active" && !startMarker && !claimed
+        return active && !startMarker && !claimed
           ? `<button class="solo-marker" type="button" ${position} data-action="point" data-point="${id}" data-focus="map-${id}" aria-label="${name} di peta">${marker}</button>`
           : `<span class="solo-marker" ${position} aria-hidden="true">${marker}</span>`;
       }).join("")}
@@ -82,7 +90,10 @@ export function schematic(session: SoloSession, imageUrl: string) {
     <figcaption>Skema papan simulasi. Gunakan daftar untuk melihat nama landmark, zona, dan transit terdekat.</figcaption>
     <ol class="solo-map-key" aria-label="Keterangan penanda">
       <li><strong>A</strong> ${escapeText(start.name)} · Titik awal</li>
-      ${checkpoints.map((point, index) => `<li><strong>${index + 1}</strong> ${escapeText(point.name)}${session.claimed.includes(point.id) ? " · Diklaim" : ""}</li>`).join("")}
+      ${checkpoints.map((point, index) => {
+        const owner = ownership(point.id);
+        return `<li><strong>${index + 1}</strong> ${escapeText(point.name)}${owner ? ` · ${escapeText(owner)}` : ""}</li>`;
+      }).join("")}
     </ol>
   </figure>`;
 }

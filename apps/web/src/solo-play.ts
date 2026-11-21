@@ -1,5 +1,6 @@
 import type { LocationFix, SoloAction, SoloChallenge, SoloPoint, SoloReply, SoloSession } from "@kelana-ria/contracts";
 import { action, checkpointList, escapeText, remaining, result, schematic, score, wib } from "./solo-view";
+import { getLocation } from "./device-location";
 import "./solo-play.css";
 
 const apiPath = "/api/solo";
@@ -22,24 +23,6 @@ const errors: Record<string, string> = {
   "invalid-choice": "Pilihan jawaban tidak tersedia. Pilih lagi.",
   "stale-session": "Sesi sudah berubah. Permainan terbaru sudah dimuat.",
 };
-
-function getLocation(): Promise<LocationFix> {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error("Lokasi tidak tersedia di browser ini. Gunakan lokasi simulasi atau coba browser lain."));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(({ coords, timestamp }) => resolve({
-      latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, timestamp,
-    }), error => reject(new Error(error.code === 1
-      ? "Izin lokasi ditolak. Izinkan lokasi di pengaturan browser lalu coba lagi."
-      : error.code === 3
-        ? "Permintaan lokasi terlalu lama. Coba check-in lagi."
-        : "Lokasi belum ditemukan. Coba pindah ke area terbuka lalu check-in lagi.")), {
-      enableHighAccuracy: true, maximumAge: 0, timeout: 10_000,
-    });
-  });
-}
 
 async function requestSession(signal: AbortSignal, action?: SoloAction, checkpointId?: string): Promise<SoloReply> {
   const endpoint = checkpointId
