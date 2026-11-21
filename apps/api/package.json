@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc --build",
     "start": "node dist/index.js",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "npm run build && node --test test/*.test.mjs",
+    "capture:integration": "npm run build && node scripts/capture-integration.mjs"
   },
   "dependencies": {
     "@kelana-ria/contracts": "0.0.0",
