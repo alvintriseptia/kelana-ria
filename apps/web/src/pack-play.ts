@@ -119,7 +119,9 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
   const mount = new AbortController();
   const { signal } = mount;
 
-  let activeRole: PackRole = "writer";
+  const urlRole = new URLSearchParams(location.search).get("role");
+  let activeRole: PackRole =
+    urlRole === "reviewer" || urlRole === "public" ? urlRole : "writer";
   let workspace: PackWorkspaceReply | undefined;
   let feedback = "";
   let feedbackError = false;
@@ -542,7 +544,7 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
     { signal },
   );
 
-  void loadRole("writer");
+  void loadRole(activeRole);
 
   return () => {
     mount.abort();

@@ -55,14 +55,28 @@ try {
     return { status: response.status(), body: await response.json() };
   }
 
-  async function switchRole(actor, buttonName) {
+  async function switchRole(actor, buttonName, expectedRole) {
     const [response] = await Promise.all([
       actor.page.waitForResponse(
         (res) =>
           res.url().startsWith(origin + "/api/packs") &&
+          res.url().includes(`role=${expectedRole}`) &&
           res.request().method() === "GET",
       ),
       click(actor, buttonName),
+    ]);
+    return response.json();
+  }
+
+  async function openPacksAs(actor, role) {
+    const [response] = await Promise.all([
+      actor.page.waitForResponse(
+        (res) =>
+          res.url().startsWith(origin + "/api/packs") &&
+          res.url().includes(`role=${role}`) &&
+          res.request().method() === "GET",
+      ),
+      actor.page.goto(`${origin}/?play=creator-packs&role=${role}`),
     ]);
     return response.json();
   }
@@ -74,7 +88,15 @@ try {
   // 1. Writer opens Creator Pack studio from chooser summary, saves v1 draft, and submits v1.
   await writer.page.goto(origin);
   await click(writer, "Lihat ringkasan");
-  await click(writer, "Paket kreator Jakarta");
+  await Promise.all([
+    writer.page.waitForResponse(
+      (res) =>
+        res.url().startsWith(origin + "/api/packs") &&
+        res.url().includes("role=writer") &&
+        res.request().method() === "GET",
+    ),
+    click(writer, "Paket kreator Jakarta"),
+  ]);
   await writer.page.getByRole("heading", { name: "Paket Kreator Jakarta", level: 1 }).waitFor();
 
   const savedV1 = await postPack(writer, "Simpan draf", "save-draft");
@@ -83,8 +105,7 @@ try {
   assert.equal(savedV1.body.versions[0].status, "draft");
 
   // Public buyer checks catalog while v1 is draft -> empty.
-  await buyer.page.goto(origin + "/?play=creator-packs");
-  const buyerInitial = await switchRole(buyer, "Katalog Publik");
+  const buyerInitial = await openPacksAs(buyer, "public");
   assert.deepEqual(buyerInitial.listings, []);
   await buyer.page.getByText("Belum ada versi paket kreator yang sedang dijual.").waitFor();
 
@@ -93,8 +114,7 @@ try {
   assert.equal(submittedV1.body.versions[0].status, "submitted");
 
   // 2. Reviewer inspects submitted v1 and requests a correction (A28).
-  await reviewer.page.goto(origin + "/?play=creator-packs");
-  const reviewQueueV1 = await switchRole(reviewer, "Peninjau");
+  const reviewQueueV1 = await openPacksAs(reviewer, "reviewer");
   assert.equal(reviewQueueV1.versions.length, 1);
   assert.equal(reviewQueueV1.versions[0].status, "submitted");
 
@@ -103,7 +123,7 @@ try {
   assert.equal(returnedV1.body.versions[0].status, "changes-requested");
 
   // 3. Writer sees the returned note, revises verification notes into v2, and resubmits v2.
-  const writerReturned = await switchRole(writer, "Penulis");
+  const writerReturned = await switchRole(writer, "Penulis", "writer");
   assert.equal(writerReturned.versions[0].status, "changes-requested");
   await writer.page.locator("#pack-view").getByText(/Perjelas patokan pengamatan/i).waitFor();
 
@@ -120,14 +140,14 @@ try {
   assert.equal(submittedV2.body.versions[1].status, "submitted");
 
   // 4. Reviewer publishes v2.
-  await switchRole(reviewer, "Peninjau");
+  await switchRole(reviewer, "Peninjau", "reviewer");
   const publishedV2 = await postPack(reviewer, "Terbitkan v2", "publish-version");
   assert.equal(publishedV2.status, 200);
   assert.equal(publishedV2.body.versions[1].status, "published");
   await reviewer.page.screenshot({ path: join(results, "pack-reviewer-published.png"), fullPage: true });
 
   // 5. Writer starts a new unapproved draft v3; public catalog still shows only approved v2 (A28).
-  await switchRole(writer, "Penulis");
+  await switchRole(writer, "Penulis", "writer");
   await writer.page.locator("#pack-title-input").fill("Jejak Transit Kebayoran (Draf v3 Pribadi)");
   const savedV3 = await postPack(writer, "Simpan draf", "save-draft");
   assert.equal(savedV3.status, 200);
@@ -135,7 +155,7 @@ try {
   assert.equal(savedV3.body.versions[2].status, "draft");
 
   // 6. Buyer browses public catalog: sees ONLY v2 with byline and without answer keys.
-  const publicCatalog = await switchRole(buyer, "Katalog Publik");
+  const publicCatalog = await switchRole(buyer, "Katalog Publik", "public");
   assert.equal(publicCatalog.listings.length, 1);
   assert.equal(publicCatalog.listings[0].version, 2);
   assert.equal(publicCatalog.listings[0].byline, "Raka Pratama · Kolektif Jelajah Selatan");
@@ -157,7 +177,7 @@ try {
   assert.equal(closureReported.status, 200);
 
   // 8. Reviewer sees the closure report and pauses v2 sales (A31).
-  const reviewerWithClosure = await switchRole(reviewer, "Peninjau");
+  const reviewerWithClosure = await switchRole(reviewer, "Peninjau", "reviewer");
   assert.equal(reviewerWithClosure.closures.length, 1);
   const pausedV2 = await postPack(reviewer, "Jeda penjualan v2", "pause-version");
   assert.equal(pausedV2.status, 200);
@@ -167,7 +187,7 @@ try {
   await reviewer.page.screenshot({ path: join(results, "pack-paused-orders.png"), fullPage: true });
 
   // 9. Public catalog stops new orders while existing orders remain visible to buyer, reviewer, and writer.
-  const buyerAfterPause = await switchRole(buyer, "Katalog Publik");
+  const buyerAfterPause = await switchRole(buyer, "Katalog Publik", "public");
   assert.deepEqual(buyerAfterPause.listings, []);
   assert.equal(buyerAfterPause.orders.length, 1);
   assert.match(buyerAfterPause.orders[0].supportNote, /Penjualan v2 dijeda/);
@@ -185,7 +205,7 @@ try {
   assert.equal(blockedOrderRes.status(), 409);
   assert.equal((await blockedOrderRes.json()).error, "sales-paused");
 
-  const writerAfterPause = await switchRole(writer, "Penulis");
+  const writerAfterPause = await switchRole(writer, "Penulis", "writer");
   assert.equal(writerAfterPause.orders.length, 1);
   assert.equal(writerAfterPause.orders[0].orderId, "ord-sandbox-1");
   assert.equal(writerAfterPause.orders[0].creatorShareIdr, 21_250);
