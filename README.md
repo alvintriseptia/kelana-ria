@@ -53,3 +53,7 @@ Run `npm test --workspace @kelana-ria/api` for server rules, edition validation 
 With the API and web server running, choose **Berdua**, **Claim the City**, and **Jakarta (Compact)**. Open the summary, choose **Coba simulasi berdua**, and create a room. Open its invitation in a second browser profile so each player has a separate seat. Both players check in at CSW–ASEAN and mark themselves ready before the host starts. The room shows who owns each landmark and how many landmarks each player has in every zone.
 
 Run `npm run qa:duo --workspace @kelana-ria/web` against a production build to exercise two independent browser profiles. The test records both views and the public event sequence in the mobile QA artifact.
+
+## Review and publish a creator pack
+
+Open the summary for Jakarta (Compact) Claim the City and choose **Paket kreator Jakarta** (or open `/?play=creator-packs`). Switch between **Penulis**, **Peninjau** and **Katalog Publik** to save a draft, submit it for editorial review, return a correction request, publish the revised version, and pause new sales after a confirmed checkpoint closure while keeping existing orders visible. Run `npm run qa:packs --workspace @kelana-ria/web` to verify all three roles in isolated browser profiles.

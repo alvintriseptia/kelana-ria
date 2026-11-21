@@ -4,9 +4,18 @@ import type { SoloAction } from "@kelana-ria/contracts";
 import { duoHandler } from "./duo-http.js";
 import { duoStore } from "./duo-store.js";
 import { credential, hasJsonBody, isFix, isId, isObject, json, requestBody, setCredential } from "./http.js";
+import { defaultCreatorDraft, defaultCreatorTasks } from "./pack-fixture.js";
+import { packHandler } from "./pack-http.js";
+import { packStore, validatePackVersionForPublication } from "./pack-store.js";
 import { soloStore, type SoloStoreOptions } from "./solo-store.js";
 
 export type { GameConfiguration } from "@kelana-ria/contracts";
+export {
+  defaultCreatorDraft,
+  defaultCreatorTasks,
+  packStore,
+  validatePackVersionForPublication,
+};
 export {
   COMPACT_BOARD_VERSION,
   compactAlternate,
@@ -65,12 +74,21 @@ export function createSoloServer({
 }: { databasePath?: string; now?: () => number; secureCookie?: boolean } & SoloStoreOptions = {}) {
   const store = soloStore(databasePath, { now, ...storeOptions });
   const duo = duoStore(databasePath);
+  const packs = packStore(databasePath, {
+    catalog: storeOptions.catalog,
+    routes: storeOptions.snapshotRoutes,
+    closedCheckpoints: storeOptions.closedCheckpoints,
+  });
   const handleDuo = duoHandler(duo, now, secureCookie);
+  const handlePacks = packHandler(packs, now, secureCookie);
   const server = createServer({ requestTimeout: 15_000 }, async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
       if (url.pathname === "/api/duo" || url.pathname.startsWith("/api/duo/")) {
         return await handleDuo(request, response, url);
+      }
+      if (url.pathname === "/api/packs" || url.pathname.startsWith("/api/packs/")) {
+        return await handlePacks(request, response, url);
       }
       const token = credential(request, cookieName);
       if (request.method === "GET" && url.pathname === "/api/solo") {
@@ -132,6 +150,7 @@ export function createSoloServer({
     }
   });
   server.on("close", () => {
+    packs.close();
     duo.close();
     store.close();
   });

@@ -150,3 +150,120 @@ export type DuoReply = {
   challenge?: SoloChallenge;
   distanceMeters?: number;
 };
+
+export type PackRole = "public" | "writer" | "reviewer";
+
+export type PackVersionStatus =
+  | "draft"
+  | "submitted"
+  | "changes-requested"
+  | "published"
+  | "paused";
+
+export type PackTaskInput = {
+  checkpointId: string;
+  question: string;
+  choices: { id: string; label: string }[];
+  correctChoiceId: string;
+  verificationNotes: string;
+};
+
+export type PackPublicCheckpoint = {
+  id: string;
+  name: string;
+  zone: string;
+  transit: string;
+};
+
+export type PackOrderSummary = {
+  orderId: string;
+  packId: string;
+  version: number;
+  title: string;
+  byline: string;
+  players: 1 | 2;
+  grossAmountIdr: number;
+  platformFeeIdr: number;
+  creatorShareIdr: number;
+  status: "settled";
+  settledAt: number;
+  supportNote?: string;
+  sandbox: true;
+};
+
+export type PackPublicListing = {
+  packId: string;
+  version: number;
+  status: "published";
+  byline: string;
+  title: string;
+  format: "claim-the-city";
+  board: "compact";
+  boardVersion: string;
+  supportedPlayers: (1 | 2)[];
+  priceIdr: number;
+  startName: string;
+  areaSummary: string;
+  durationMinutes: number;
+  transitFaresNote: string;
+  publishedAt: number;
+  checkpoints: PackPublicCheckpoint[];
+};
+
+export type PackVersionDetail = {
+  packId: string;
+  version: number;
+  status: PackVersionStatus;
+  byline: string;
+  title: string;
+  format: "claim-the-city";
+  board: "compact";
+  boardVersion: string;
+  supportedPlayers: (1 | 2)[];
+  priceIdr: number;
+  durationMinutes: number;
+  updatedAt: number;
+  publishedAt: number | null;
+  reviewNote: string | null;
+  pausedReason: string | null;
+  tasks: PackTaskInput[];
+};
+
+export type PackClosureReport = {
+  reportId: string;
+  packId: string;
+  version: number;
+  checkpointId: string;
+  reason: string;
+  reportedAt: number;
+};
+
+export type PackDraftPayload = {
+  packId?: string;
+  byline: string;
+  title: string;
+  format: "claim-the-city";
+  board: "compact";
+  supportedPlayers: (1 | 2)[];
+  priceIdr: number;
+  tasks: PackTaskInput[];
+};
+
+export type PackAction = { actionId: string } & (
+  | { type: "save-draft"; draft: PackDraftPayload }
+  | { type: "submit-draft"; packId: string; version: number }
+  | { type: "request-changes"; packId: string; version: number; note: string }
+  | { type: "publish-version"; packId: string; version: number }
+  | { type: "report-closure"; packId: string; version: number; checkpointId: string; reason: string }
+  | { type: "pause-version"; packId: string; version: number; reason: string }
+  | { type: "create-order"; packId: string; version: number; players: 1 | 2 }
+);
+
+export type PackWorkspaceReply = {
+  role: PackRole;
+  listings: PackPublicListing[];
+  versions?: PackVersionDetail[];
+  closures?: PackClosureReport[];
+  orders: PackOrderSummary[];
+  error?: string;
+};
