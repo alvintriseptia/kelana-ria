@@ -3,9 +3,38 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { TLSSocket } from "node:tls";
 import { fileURLToPath } from "node:url";
 import type { LocationFix, SoloAction, SoloReply } from "@kelana-ria/contracts";
-import { soloStore } from "./solo-store.js";
+import { soloStore, type SoloStoreOptions } from "./solo-store.js";
 
 export type { GameConfiguration } from "@kelana-ria/contracts";
+export {
+  COMPACT_BOARD_VERSION,
+  compactAlternate,
+  compactCatalog,
+  compactCheckpoints,
+  compactReviewedTasks,
+  compactRouteAttribution,
+  compactStart,
+  compactTrial,
+  compactWalkingSnapshot,
+  preparedCompactFixtures,
+  type CompactBoardCatalog,
+  type ReviewedTask,
+  type RouteLeg,
+  type SoloFixture,
+  type WalkingRouteSnapshot,
+} from "./solo-fixture.js";
+export {
+  isFreshSoloEdition,
+  prepareSoloFixture,
+  toSoloCandidate,
+  validateSoloFixture,
+  type EditionGenerator,
+  type EditionGeneratorRequest,
+  type PrepareEditionResult,
+  type ProposedSoloEdition,
+  type RouteSnapshotProvider,
+  type ValidationResult,
+} from "./solo-validation.js";
 
 const cookieName = "kelana_solo";
 const maxBodyBytes = 16 * 1024;
@@ -16,7 +45,11 @@ function credential(request: IncomingMessage) {
   return match?.[1];
 }
 
-function json(response: ServerResponse, status: number, content: SoloReply | { error: string }) {
+function json(
+  response: ServerResponse,
+  status: number,
+  content: SoloReply | { error: string; closedCheckpointId?: string },
+) {
   response.writeHead(status, {
     "Cache-Control": "no-store",
     "Content-Type": "application/json; charset=utf-8",
@@ -40,9 +73,13 @@ function isFix(value: unknown): value is LocationFix {
 
 function parseAction(value: unknown): SoloAction | undefined {
   if (!isObject(value) || !isId(value.actionId) || !isId(value.sessionId)) return undefined;
-  const { type, actionId, sessionId, checkpointId, choiceId, fix } = value;
+  const { type, actionId, sessionId, checkpointId, choiceId, fix, freshEdition } = value;
   const identity = { actionId, sessionId };
-  if (type === "start" || type === "abandon" || type === "replay") return { type, ...identity };
+  if (type === "start" || type === "abandon") return { type, ...identity };
+  if (type === "replay") {
+    if (freshEdition !== undefined && typeof freshEdition !== "boolean") return undefined;
+    return freshEdition === undefined ? { type, ...identity } : { type, freshEdition, ...identity };
+  }
   if (!isId(checkpointId)) return undefined;
   if (type === "check-in" && isFix(fix)) return { type, checkpointId, fix, ...identity };
   if (type === "answer" && isId(choiceId) && (fix === undefined || isFix(fix))) {
@@ -69,14 +106,30 @@ export function createSoloServer({
   databasePath = defaultDatabasePath,
   now = Date.now,
   secureCookie = false,
-}: { databasePath?: string; now?: () => number; secureCookie?: boolean } = {}) {
-  const store = soloStore(databasePath);
+  ...storeOptions
+}: { databasePath?: string; now?: () => number; secureCookie?: boolean } & SoloStoreOptions = {}) {
+  const store = soloStore(databasePath, { now, ...storeOptions });
   const server = createServer({ requestTimeout: 15_000 }, async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
       const token = credential(request);
       if (request.method === "GET" && url.pathname === "/api/solo") {
-        const session = store.session(token, now());
+        const requestedRunId = url.searchParams.get("sessionId");
+        if (requestedRunId !== null) {
+          if (!isId(requestedRunId)) return json(response, 400, { error: "invalid-request" });
+          const archived = store.runById(requestedRunId, now());
+          if (!archived) return json(response, 404, { error: "not-found" });
+          json(response, 200, archived);
+          return;
+        }
+        const session = await store.session(token, now());
+        if ("error" in session) {
+          json(response, 409, {
+            error: session.error,
+            closedCheckpointId: session.closedCheckpointId,
+          });
+          return;
+        }
         if (session.token) {
           const secure = secureCookie || request.socket instanceof TLSSocket;
           response.setHeader("Set-Cookie", `${cookieName}=${session.token}; Path=/api/solo; HttpOnly; SameSite=Strict; Max-Age=2592000${secure ? "; Secure" : ""}`);
@@ -107,7 +160,7 @@ export function createSoloServer({
           return json(response, 400, { error: "invalid-request" });
         }
         if (!action) return json(response, 400, { error: "invalid-request" });
-        const reply = store.act(token, action, receivedAt);
+        const reply = await store.act(token, action, receivedAt);
         if (!reply) return json(response, 401, { error: "session-required" });
         json(response, 200, reply);
         return;

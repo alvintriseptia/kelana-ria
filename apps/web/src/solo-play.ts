@@ -18,6 +18,7 @@ const errors: Record<string, string> = {
   "round-finished": "Sesi sudah selesai. Hasil terakhir sudah dimuat.",
   "run-in-progress": "Sesi masih berlangsung.",
   "unknown-checkpoint": "Landmark ini tidak tersedia di edisi ini.",
+  "checkpoint-closed": "Landmark ditutup sementara untuk waktu bermain ini. Hasil sebelumnya tetap tersimpan.",
   "invalid-choice": "Pilihan jawaban tidak tersedia. Pilih lagi.",
   "stale-session": "Sesi sudah berubah. Permainan terbaru sudah dimuat.",
 };
@@ -146,15 +147,17 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   }
 
   function briefing(state: SoloSession) {
-    const { start, durationMs, targets, id } = state.edition;
+    const { start, durationMs, targets, id, origin, routes } = state.edition;
     const ready = (state.startVerifiedUntil ?? 0) > estimatedNow();
+    const originText = origin === "live" ? "Edisi langsung tervalidasi" : "Edisi siap pakai";
+    const routeText = routes ? ` · Rute ${escapeText(routes.attribution)}` : "";
     return `<div class="solo-layout solo-briefing">
       <div class="solo-main-column">
         <section class="solo-objective" aria-labelledby="solo-brief-heading">
           <h2 id="solo-brief-heading">Misi kamu</h2>
           <p>Klaim <strong>${targets.landmarks} landmark</strong> di setidaknya <strong>${targets.zones} zona</strong> dalam <strong>${Math.round(durationMs / 60_000)} menit</strong>.</p>
           <p>Check-in lalu jawab satu tantangan untuk mengklaim landmark. Sesi ini memakai titik dan tantangan uji untuk bermain dari mana saja.</p>
-          <p class="solo-edition">Edisi ${escapeText(id)} · Berjalan kaki, MRT, KRL, dan Transjakarta adalah pilihan perjalanan dalam aturan permainan.</p>
+          <p class="solo-edition">Edisi ${escapeText(id)} (${originText}) · Berjalan kaki, MRT, KRL, dan Transjakarta adalah pilihan perjalanan dalam aturan permainan${routeText}.</p>
         </section>
         <section class="solo-ticket" id="solo-action" aria-labelledby="solo-action-heading">
           <span class="solo-start-label">Titik awal</span>
@@ -164,6 +167,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
           <div class="solo-actions">
             ${ready ? action("Mulai", "start", "primary", busy || !!pending) : ""}
             ${selectedId === start.id ? locationActions(ready) : action("Check-in di titik awal", "open-start", ready ? "secondary" : "primary", busy || !!pending)}
+            ${action("Edisi lain", "fresh-edition", "secondary", busy || !!pending)}
           </div>
         </section>
       </div>
@@ -247,7 +251,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
       view.innerHTML = disconnected ? "" : '<p role="status">Memuat sesi…</p>';
     } else {
       const phaseChanged = previousPhase !== session.phase;
-      view.innerHTML = session.phase === "briefing" ? briefing(session) : session.phase === "active" ? active(session) : result(session);
+      view.innerHTML = session.phase === "briefing" ? briefing(session) : session.phase === "active" ? active(session) : result(session, feedbackMarkup());
       if (phaseChanged && previousPhase) focus = session.phase === "won" || session.phase === "lost" || session.phase === "abandoned"
         ? "#solo-result-heading" : "#solo-title";
       previousPhase = session.phase;
@@ -311,7 +315,12 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
     receive(reply);
     const distance = reply.distanceMeters === undefined ? "" : `Jarak ${Math.round(reply.distanceMeters)} m. `;
     if (reply.error) {
-      const message = errors[reply.error] ?? "Permintaan belum berhasil. Coba lagi.";
+      const closedName = reply.error === "checkpoint-closed" && reply.closedCheckpointId
+        ? session?.edition.checkpoints.find(point => point.id === reply.closedCheckpointId)?.name
+        : undefined;
+      const message = closedName
+        ? `${closedName} ditutup sementara. Edisi ini tidak dapat dimulai. Hasil sebelumnya tetap tersimpan.`
+        : (errors[reply.error] ?? "Permintaan belum berhasil. Coba lagi.");
       showFeedback(distance + message, "error");
       announcement.textContent = distance + message;
       if (reply.error === "wrong-answer") choiceId = "";
@@ -481,6 +490,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
       case "simulate": if (point) void locatePoint(point, true); break;
       case "start": void send({ type: "start" }); break;
       case "replay": void send({ type: "replay" }); break;
+      case "fresh-edition": void send({ type: "replay", freshEdition: true }); break;
       case "abandon": void send({ type: "abandon" }); break;
       case "confirm-exit":
       case "cancel-exit":

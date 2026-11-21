@@ -11,6 +11,7 @@ export type ActionOutcome = {
   error?: string;
   challengeCheckpointId?: string;
   distanceMeters?: number;
+  closedCheckpointId?: string;
 };
 
 export function newRun(fixture: SoloFixture): SoloRun {
@@ -41,12 +42,13 @@ export function expire({ state }: SoloRun, now: number) {
 }
 
 export function view({ state, fixture }: SoloRun, now: number, outcome: ActionOutcome = {}): SoloReply {
-  const { error, distanceMeters, challengeCheckpointId } = outcome;
+  const { error, distanceMeters, challengeCheckpointId, closedCheckpointId } = outcome;
   const canViewChallenge = challengeCheckpointId && state.phase === "active" && !state.claimed.includes(challengeCheckpointId);
   return {
     session: { ...state, edition: fixture.edition, now },
     error,
     distanceMeters,
+    closedCheckpointId,
     challenge: canViewChallenge ? fixture.tasks[challengeCheckpointId].challenge : undefined,
   };
 }
@@ -80,12 +82,23 @@ export function openChallenge({ state, fixture }: SoloRun, checkpointId: string)
   return { challengeCheckpointId: checkpointId };
 }
 
-export function apply(run: SoloRun, action: Exclude<SoloAction, { type: "replay" }>, now: number): ActionOutcome {
+export function apply(
+  run: SoloRun,
+  action: Exclude<SoloAction, { type: "replay" }>,
+  now: number,
+  closedCheckpoints?: ReadonlySet<string>,
+): ActionOutcome {
   const { state, fixture } = run;
   const { edition, checkIn } = fixture;
   if (action.type === "start") {
     if (state.startedAt !== null) return {};
     if (state.phase !== "briefing") return { error: "round-finished" };
+    if (closedCheckpoints) {
+      const closedPoint = edition.checkpoints.find((point) => closedCheckpoints.has(point.id));
+      if (closedPoint) {
+        return { error: "checkpoint-closed", closedCheckpointId: closedPoint.id };
+      }
+    }
     if (state.startVerifiedUntil === null || now > state.startVerifiedUntil) return { error: "start-unverified" };
     state.startedAt = now;
     state.deadline = now + edition.durationMs;
@@ -102,6 +115,12 @@ export function apply(run: SoloRun, action: Exclude<SoloAction, { type: "replay"
   }
 
   if (action.type === "check-in" && action.checkpointId === edition.start.id && state.phase === "briefing") {
+    if (closedCheckpoints) {
+      const closedPoint = edition.checkpoints.find((point) => closedCheckpoints.has(point.id));
+      if (closedPoint) {
+        return { error: "checkpoint-closed", closedCheckpointId: closedPoint.id };
+      }
+    }
     const outcome = verify(edition.start, action.fix, now, checkIn);
     if (!outcome.error) {
       state.startVerifiedUntil = Math.max(state.startVerifiedUntil ?? 0, action.fix.timestamp + checkIn.maxAgeMs);
