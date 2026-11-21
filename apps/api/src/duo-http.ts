@@ -1,20 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DuoAction } from "@kelana-ria/contracts";
-import type { duoStore, LobbyAction } from "./duo-store.js";
-import { credential, hasJsonBody, isFix, isId, isObject, json, requestBody, setCredential } from "./http.js";
+import type { duoStore } from "./duo-store.js";
+import { credential, hasJsonBody, isFix, isId, isObject, json, parseLobbyAction, requestBody, setCredential } from "./http.js";
 
 const lobbyPath = "/api/duo";
 const cookieName = "kelana_duo";
-
-function parseLobbyAction(value: unknown): LobbyAction | undefined {
-  if (!isObject(value) || !isId(value.actionId)) return undefined;
-  const { type, actionId, code } = value;
-  if (type === "create") return { type, actionId };
-  if (type === "join" && typeof code === "string" && /^[0-9a-f]{8}$/i.test(code)) {
-    return { type, actionId, code: code.toUpperCase() };
-  }
-  return undefined;
-}
 
 function parseRoomAction(value: unknown): DuoAction | undefined {
   if (!isObject(value) || !isId(value.actionId)) return undefined;

@@ -1,8 +1,8 @@
 #play #duo-view { margin-top: clamp(18px, 3vw, 32px); }
 
-#play #duo-join { display: grid; gap: 7px; }
-#play #duo-join label { font-size: .9rem; font-weight: 750; }
-#play #duo-join input {
+#play .multiplayer-join { display: grid; gap: 7px; }
+#play .multiplayer-join label { font-size: .9rem; font-weight: 750; }
+#play .multiplayer-join input {
   width: 100%;
   min-width: 0;
   min-height: 44px;
@@ -16,8 +16,8 @@
   letter-spacing: .1em;
   text-transform: uppercase;
 }
-#play .duo-entry #duo-join { margin-top: 18px; }
-#play .duo-entry .solo-actions + #duo-join { padding-top: 16px; border-top: 1px dashed var(--line); }
+#play .duo-entry .multiplayer-join { margin-top: 18px; }
+#play .duo-entry .solo-actions + .multiplayer-join { padding-top: 16px; border-top: 1px dashed var(--line); }
 
 #play .duo-invite {
   display: flex;

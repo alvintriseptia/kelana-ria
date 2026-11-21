@@ -10,7 +10,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "qa": "node qa/check.mjs",
     "qa:solo": "node qa/solo.mjs",
-    "qa:duo": "node qa/duo.mjs"
+    "qa:duo": "node qa/duo.mjs",
+    "qa:seek": "node qa/seek.mjs"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "5.3.0",

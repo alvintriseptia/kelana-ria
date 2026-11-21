@@ -1,44 +1,13 @@
 import type { DuoRoom, DuoSeat, SoloChallenge, SoloPoint } from "@kelana-ria/contracts";
 import { action, escapeText, schematicBoard, wib } from "./solo-view";
-
-export const player = { host: "Pemain 1", guest: "Pemain 2" } as const;
-const seats = ["host", "guest"] as const;
-
-export function inviteUrl(code: string) {
-  const url = new URL("/", location.origin);
-  url.searchParams.set("play", "duo-claim");
-  url.searchParams.set("room", code);
-  return url;
-}
-
-type Feedback = { text: string; error?: boolean };
-
-export function feedbackMarkup(feedback: Feedback | undefined) {
-  return feedback ? `<p class="solo-feedback ${feedback.error ? "solo-feedback-error" : ""}">${escapeText(feedback.text)}</p>` : "";
-}
+import { feedbackMarkup, inviteMarkup, player, roomEntry, seats, type Feedback } from "./multiplayer-room";
 
 export function entry(code: string, busy: boolean, feedback: Feedback | undefined) {
-  return `<div class="solo-layout">
-    <section class="solo-objective" aria-labelledby="duo-objective-heading">
-      <h2 id="duo-objective-heading">Kuasai zona terbanyak</h2>
-      <p>Berlomba mengklaim landmark di Jakarta. Klaim lebih banyak landmark di satu zona daripada lawan untuk menguasainya.</p>
-      <p>Simulasi ini memakai edisi uji siap pakai. Kedua pemain bisa bermain dari lokasi mana saja.</p>
-    </section>
-    <section class="solo-ticket duo-entry" aria-labelledby="duo-room-heading">
-      <h2 id="duo-room-heading" tabindex="-1">${code ? "Gabung ruang undangan" : "Main dengan teman"}</h2>
-      ${feedbackMarkup(feedback)}
-      ${code ? '<p>Konfirmasi kode untuk mengambil kursi Pemain 2.</p>'
-        : `<p>Buat ruang dan undang satu teman, atau gabung dengan kode yang kamu terima.</p>
-          <div class="solo-actions">${action("Buat ruang", "create", "primary", busy)}</div>`}
-      <form id="duo-join">
-        <label for="duo-invite-input">Kode undangan</label>
-        <input id="duo-invite-input" data-focus="invite-input" name="code" type="text" value="${escapeText(code)}"
-          minlength="8" maxlength="8" pattern="[0-9A-Fa-f]{8}" autocapitalize="characters" spellcheck="false" required>
-        <button class="${code ? "primary" : "secondary"}" type="submit" data-focus="join" ${busy ? "disabled" : ""}>Gabung ruang</button>
-      </form>
-      ${code ? `<div class="solo-actions">${action("Ganti ruang", "new-room", "solo-back", busy)}</div>` : ""}
-    </section>
-  </div>`;
+  return roomEntry("duo", code, busy, feedback, `<section class="solo-objective" aria-labelledby="duo-objective-heading">
+    <h2 id="duo-objective-heading">Kuasai zona terbanyak</h2>
+    <p>Berlomba mengklaim landmark di Jakarta. Klaim lebih banyak landmark di satu zona daripada lawan untuk menguasainya.</p>
+    <p>Simulasi ini memakai edisi uji siap pakai. Kedua pemain bisa bermain dari lokasi mana saja.</p>
+  </section>`);
 }
 
 function seatMarkup(state: DuoRoom, seat: DuoSeat) {
@@ -71,11 +40,7 @@ export function lobby(
       </section>
       <section class="solo-ticket" aria-labelledby="duo-room-heading">
         <h2 id="duo-room-heading" tabindex="-1">Ruang tunggu</h2>
-        <div class="duo-invite">
-          <p>Kode undangan <strong class="duo-code">${escapeText(state.code)}</strong></p>
-          ${state.seat === "host" ? `<a href="${escapeText(inviteUrl(state.code).href)}" data-focus="invite-link">Tautan undangan</a>
-            ${action("Salin tautan", "copy")}` : ""}
-        </div>
+        ${inviteMarkup(state.code, state.seat === "host", "duo-claim")}
         <ul class="duo-seats" aria-label="Kursi pemain">${seats.map(seat => seatMarkup(state, seat)).join("")}</ul>
       </section>
       <section class="solo-ticket" id="duo-action" aria-labelledby="duo-action-heading">

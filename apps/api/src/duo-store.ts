@@ -3,11 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 import type { DuoAction, DuoReply } from "@kelana-ria/contracts";
 import { applyDuo, expireDuo, memberSeat, newDuoRun, newMember, openDuoChallenge, viewDuo } from "./duo-rules.js";
 import type { DuoActionOutcome, DuoRun } from "./duo-rules.js";
-
-export type LobbyAction = { actionId: string } & (
-  | { type: "create" }
-  | { type: "join"; code: string }
-);
+import type { LobbyAction } from "./http.js";
 
 type Response = { status: number; body: DuoReply };
 type LobbyReceipt = { code: string } | { failure: Response };

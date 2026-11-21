@@ -53,3 +53,9 @@ Run `npm test --workspace @kelana-ria/api` for server rules and `npm run qa:solo
 With the API and web server running, choose **Berdua**, **Claim the City**, and **Jakarta (Compact)**. Open the summary, choose **Coba simulasi berdua**, and create a room. Open its invitation in a second browser profile so each player has a separate seat. Both players check in at CSW–ASEAN and mark themselves ready before the host starts. The room shows who owns each landmark and how many landmarks each player has in every zone.
 
 Run `npm run qa:duo --workspace @kelana-ria/web` against a production build to exercise two independent browser profiles. The test records both views and the public event sequence in the mobile QA artifact.
+
+## Play the Compact Hide & Seek fixture
+
+Choose **Berdua**, **Hide & Seek**, and **Jakarta (Compact)**. Open the simulation, create a room, share its invite with a second browser profile, and choose who hides first. Both players check in at CSW–ASEAN and confirm readiness. The hider privately locks a point before release. The seeker checks in at the start after release and investigates a point at a time. After turn one, both check in at the start again to swap roles.
+
+The prepared fixture allows 30 minutes of head start and 60 minutes of search in each turn, with a 30-minute regroup allowance. Locations and timing are for simulated testing. Run `npm run qa:seek --workspace @kelana-ria/web` after building to advance the server clock through a two-turn browser match and capture both views.

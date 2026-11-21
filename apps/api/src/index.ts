@@ -4,6 +4,8 @@ import type { SoloAction } from "@kelana-ria/contracts";
 import { duoHandler } from "./duo-http.js";
 import { duoStore } from "./duo-store.js";
 import { credential, hasJsonBody, isFix, isId, isObject, json, requestBody, setCredential } from "./http.js";
+import { seekHandler } from "./seek-http.js";
+import { seekStore } from "./seek-store.js";
 import { soloStore } from "./solo-store.js";
 
 export type { GameConfiguration } from "@kelana-ria/contracts";
@@ -32,11 +34,16 @@ export function createSoloServer({
   const store = soloStore(databasePath);
   const duo = duoStore(databasePath);
   const handleDuo = duoHandler(duo, now, secureCookie);
+  const seek = seekStore(databasePath);
+  const handleSeek = seekHandler(seek, now, secureCookie);
   const server = createServer({ requestTimeout: 15_000 }, async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
       if (url.pathname === "/api/duo" || url.pathname.startsWith("/api/duo/")) {
         return await handleDuo(request, response, url);
+      }
+      if (url.pathname === "/api/seek" || url.pathname.startsWith("/api/seek/")) {
+        return await handleSeek(request, response, url);
       }
       const token = credential(request, cookieName);
       if (request.method === "GET" && url.pathname === "/api/solo") {
@@ -83,6 +90,7 @@ export function createSoloServer({
     }
   });
   server.on("close", () => {
+    seek.close();
     duo.close();
     store.close();
   });
