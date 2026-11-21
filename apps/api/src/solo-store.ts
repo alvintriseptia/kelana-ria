@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { SoloAction } from "@kelana-ria/contracts";
+import type { GameBoard, SoloAction } from "@kelana-ria/contracts";
 import {
   compactCatalog,
   compactWalkingSnapshot,
@@ -19,6 +19,11 @@ import {
   type EditionGenerator,
   type RouteSnapshotProvider,
 } from "./solo-validation.js";
+import {
+  preparedWideFixtures,
+  wideCatalog,
+  wideWalkingSnapshot,
+} from "./wide-fixture.js";
 
 function digest(credential: string) {
   return createHash("sha256").update(credential).digest("hex");
@@ -48,6 +53,12 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
       credential_hash TEXT PRIMARY KEY,
       current_run_id TEXT NOT NULL REFERENCES solo_runs(id)
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS solo_board_players (
+      credential_hash TEXT NOT NULL,
+      board TEXT NOT NULL,
+      current_run_id TEXT NOT NULL REFERENCES solo_runs(id),
+      PRIMARY KEY (credential_hash, board)
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS solo_actions (
       run_id TEXT NOT NULL REFERENCES solo_runs(id),
       action_id TEXT NOT NULL,
@@ -58,15 +69,51 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
   `);
 
   const addRun = database.prepare("INSERT INTO solo_runs (id, snapshot) VALUES (?, ?)");
-  const addPlayer = database.prepare("INSERT INTO solo_players (credential_hash, current_run_id) VALUES (?, ?)");
-  const getRun = database.prepare(`
+  const upsertPlayer = database.prepare(
+    "INSERT INTO solo_players (credential_hash, current_run_id) VALUES (?, ?) ON CONFLICT(credential_hash) DO UPDATE SET current_run_id = excluded.current_run_id",
+  );
+  const upsertBoardPlayer = database.prepare(
+    "INSERT INTO solo_board_players (credential_hash, board, current_run_id) VALUES (?, ?, ?) ON CONFLICT(credential_hash, board) DO UPDATE SET current_run_id = excluded.current_run_id",
+  );
+  const getLegacyRun = database.prepare(`
     SELECT snapshot FROM solo_players JOIN solo_runs ON current_run_id = id WHERE credential_hash = ?
+  `);
+  const getBoardRun = database.prepare(`
+    SELECT snapshot FROM solo_board_players JOIN solo_runs ON current_run_id = id WHERE credential_hash = ? AND board = ?
+  `);
+  const hasAnyCredential = database.prepare(`
+    SELECT 1 FROM solo_players WHERE credential_hash = ?
+    UNION ALL
+    SELECT 1 FROM solo_board_players WHERE credential_hash = ?
+    LIMIT 1
   `);
   const getRunById = database.prepare("SELECT snapshot FROM solo_runs WHERE id = ?");
   const updateRun = database.prepare("UPDATE solo_runs SET snapshot = ? WHERE id = ?");
-  const movePlayer = database.prepare("UPDATE solo_players SET current_run_id = ? WHERE credential_hash = ?");
   const getAction = database.prepare("SELECT outcome, replayed_run_id FROM solo_actions WHERE run_id = ? AND action_id = ?");
   const addAction = database.prepare("INSERT INTO solo_actions (run_id, action_id, outcome, replayed_run_id) VALUES (?, ?, ?, ?)");
+
+  function boardConfig(board: GameBoard) {
+    if (board === "jakarta-wide") {
+      const overrideWide = options.catalog?.board === "jakarta-wide";
+      return {
+        catalog: overrideWide ? options.catalog! : wideCatalog,
+        snapshotRoutes:
+          overrideWide && options.snapshotRoutes !== undefined
+            ? options.snapshotRoutes
+            : wideWalkingSnapshot,
+        fallbacks:
+          overrideWide && options.fallbacks ? options.fallbacks : preparedWideFixtures,
+      };
+    }
+    return {
+      catalog: options.catalog ?? compactCatalog,
+      snapshotRoutes:
+        options.snapshotRoutes === undefined
+          ? compactWalkingSnapshot
+          : options.snapshotRoutes,
+      fallbacks: options.fallbacks ?? preparedCompactFixtures,
+    };
+  }
 
   function resolveClosed(): ReadonlySet<string> {
     const raw =
@@ -88,8 +135,18 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
     }
   }
 
-  function currentRun(key: string, now: number) {
-    const snapshot = getRun.get(key)?.snapshot;
+  function bindPlayerRun(key: string, board: GameBoard, runId: string) {
+    upsertBoardPlayer.run(key, board, runId);
+    if (board === "compact") {
+      upsertPlayer.run(key, runId);
+    }
+  }
+
+  function currentRun(key: string, now: number, board: GameBoard = "compact") {
+    let snapshot = getBoardRun.get(key, board)?.snapshot;
+    if (typeof snapshot !== "string" && board === "compact") {
+      snapshot = getLegacyRun.get(key)?.snapshot;
+    }
     if (typeof snapshot !== "string") return undefined;
     const run = JSON.parse(snapshot) as SoloRun;
     if (expire(run, now)) updateRun.run(JSON.stringify(run), run.state.id);
@@ -104,6 +161,13 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
     return run;
   }
 
+  function boardForSessionId(sessionId: string): GameBoard {
+    const snapshot = getRunById.get(sessionId)?.snapshot;
+    if (typeof snapshot !== "string") return "compact";
+    const parsed = JSON.parse(snapshot) as SoloRun;
+    return parsed.fixture.edition.board === "jakarta-wide" ? "jakarta-wide" : "compact";
+  }
+
   return {
     close() { database.close(); },
     runById(runId: string, now: number) {
@@ -112,19 +176,17 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
         return run ? view(run, now) : undefined;
       });
     },
-    async session(credential: string | undefined, now: number) {
+    async session(credential: string | undefined, now: number, board: GameBoard = "compact") {
       const key = credential ? digest(credential) : undefined;
-      const saved = key ? transact(() => currentRun(key, now)) : undefined;
+      const saved = key ? transact(() => currentRun(key, now, board)) : undefined;
       if (saved) return { reply: view(saved, now) };
 
       const clock = options.now ?? (() => now);
+      const config = boardConfig(board);
       const prepared = await prepareSoloFixture({
-        catalog: options.catalog ?? compactCatalog,
-        snapshotRoutes:
-          options.snapshotRoutes === undefined
-            ? compactWalkingSnapshot
-            : options.snapshotRoutes,
-        fallbacks: options.fallbacks ?? preparedCompactFixtures,
+        catalog: config.catalog,
+        snapshotRoutes: config.snapshotRoutes,
+        fallbacks: config.fallbacks,
         closedCheckpoints: resolveClosed(),
         aiProvider: options.aiProvider,
         routeProvider: options.routeProvider,
@@ -140,28 +202,31 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
 
       const currentNow = clock();
       return transact(() => {
-        const existing = key ? currentRun(key, currentNow) : undefined;
+        const existing = key ? currentRun(key, currentNow, board) : undefined;
         if (existing) return { reply: view(existing, currentNow) };
 
-        const token = randomBytes(32).toString("base64url");
+        const knownKey = key && hasAnyCredential.get(key, key) ? key : undefined;
+        const token = knownKey ? undefined : randomBytes(32).toString("base64url");
+        const activeKey = knownKey ?? digest(token!);
         const run = newRun(prepared.fixture);
         addRun.run(run.state.id, JSON.stringify(run));
-        addPlayer.run(digest(token), run.state.id);
-        return { reply: view(run, currentNow), token };
+        bindPlayerRun(activeKey, board, run.state.id);
+        return token ? { reply: view(run, currentNow), token } : { reply: view(run, currentNow) };
       });
     },
-    challenge(credential: string, checkpointId: string, now: number) {
+    challenge(credential: string, checkpointId: string, now: number, board: GameBoard = "compact") {
       return transact(() => {
-        const run = currentRun(digest(credential), now);
+        const run = currentRun(digest(credential), now, board);
         if (run) return view(run, now, openChallenge(run, checkpointId));
         return undefined;
       });
     },
-    async act(credential: string, action: SoloAction, now: number) {
+    async act(credential: string, action: SoloAction, now: number, requestedBoard?: GameBoard) {
       const key = digest(credential);
       const closed = resolveClosed();
       const precheck = transact(() => {
-        const run = currentRun(key, now);
+        const board = requestedBoard ?? boardForSessionId(action.sessionId);
+        const run = currentRun(key, now, board);
         if (!run) return undefined;
         const prior = getAction.get(action.sessionId, action.actionId);
         if (action.sessionId !== run.state.id) {
@@ -171,12 +236,13 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
         if (typeof prior?.outcome === "string") {
           return { done: view(run, now, JSON.parse(prior.outcome) as ActionOutcome) };
         }
-        return { run };
+        return { run, board };
       });
       if (!precheck) return undefined;
       if ("done" in precheck) return precheck.done;
 
-      const { run } = precheck;
+      const { run, board } = precheck;
+      const config = boardConfig(board);
       const canReplaySame =
         action.type === "replay" &&
         !action.freshEdition &&
@@ -189,11 +255,8 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
 
       if (canReplaySame) {
         const rechecked = validateSoloFixture(run.fixture, {
-          catalog: options.catalog ?? compactCatalog,
-          routes:
-            options.snapshotRoutes === undefined
-              ? compactWalkingSnapshot
-              : options.snapshotRoutes,
+          catalog: config.catalog,
+          routes: config.snapshotRoutes,
           closedCheckpoints: closed,
         });
         if (!rechecked.ok) {
@@ -203,11 +266,11 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
           });
         }
         return transact(() => {
-          const current = currentRun(key, now);
+          const current = currentRun(key, now, board);
           if (!current || current.state.id !== run.state.id) return undefined;
           const next = newRun(current.fixture);
           addRun.run(next.state.id, JSON.stringify(next));
-          movePlayer.run(next.state.id, key);
+          bindPlayerRun(key, board, next.state.id);
           addAction.run(current.state.id, action.actionId, "{}", next.state.id);
           return view(next, now);
         });
@@ -215,12 +278,9 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
 
       if (canPrepareFresh) {
         const prepared = await prepareSoloFixture({
-          catalog: options.catalog ?? compactCatalog,
-          snapshotRoutes:
-            options.snapshotRoutes === undefined
-              ? compactWalkingSnapshot
-              : options.snapshotRoutes,
-          fallbacks: options.fallbacks ?? preparedCompactFixtures,
+          catalog: config.catalog,
+          snapshotRoutes: config.snapshotRoutes,
+          fallbacks: config.fallbacks,
           closedCheckpoints: closed,
           previousEdition: run.fixture.edition,
           aiProvider: options.aiProvider,
@@ -235,18 +295,18 @@ export function soloStore(databasePath: string, options: SoloStoreOptions = {}) 
           });
         }
         return transact(() => {
-          const current = currentRun(key, now);
+          const current = currentRun(key, now, board);
           if (!current || current.state.id !== run.state.id) return undefined;
           const next = newRun(prepared.fixture);
           addRun.run(next.state.id, JSON.stringify(next));
-          movePlayer.run(next.state.id, key);
+          bindPlayerRun(key, board, next.state.id);
           addAction.run(current.state.id, action.actionId, "{}", next.state.id);
           return view(next, now);
         });
       }
 
       return transact(() => {
-        const current = currentRun(key, now);
+        const current = currentRun(key, now, board);
         if (!current) return undefined;
         const prior = getAction.get(action.sessionId, action.actionId);
         if (action.sessionId !== current.state.id) {

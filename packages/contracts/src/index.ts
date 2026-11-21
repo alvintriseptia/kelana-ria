@@ -1,6 +1,8 @@
 // Public setup choices from PRD section 2.
+export type GameBoard = "compact" | "jakarta-wide";
+
 export type GameConfiguration = {
-  board: "compact" | "jakarta-wide";
+  board: GameBoard;
 } & (
   | { format: "hide-and-seek"; players: 2 }
   | { format: "claim-the-city"; players: 1 | 2 }
@@ -37,10 +39,10 @@ export type SoloEditionOrigin = "prepared" | "live";
 
 export type SoloEdition = {
   id: string;
-  board?: "compact";
+  board?: GameBoard;
   boardVersion?: string;
   format?: "claim-the-city";
-  players?: 1;
+  players?: 1 | 2;
   origin?: SoloEditionOrigin;
   fallbackReason?: string;
   durationMs: number;
@@ -384,6 +386,8 @@ export type SeekRoom = {
   seat: DuoSeat;
   edition: {
     id: string;
+    board?: GameBoard;
+    boardVersion?: string;
     start: SoloPoint;
     checkpoints: SoloPoint[];
     headStartMs: number;

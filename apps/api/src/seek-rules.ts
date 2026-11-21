@@ -1,16 +1,25 @@
-import type { DuoSeat, SeekAction, SeekClueView, SeekPhase, SeekQuestion, SeekReply, SeekRoom, SoloPoint } from "@kelana-ria/contracts";
+import type { DuoSeat, GameBoard, SeekAction, SeekClueView, SeekPhase, SeekQuestion, SeekReply, SeekRoom, SoloPoint } from "@kelana-ria/contracts";
 import {
-  compactClueBoard, expireSeekQuestion, newSeekClueState, recordSeekReference, seekClueMenu, seekObjectiveAnswer,
+  clueBoardFor, expireSeekQuestion, newSeekClueState, recordSeekReference, seekClueMenu, seekObjectiveAnswer,
   seekQuestionRequest, seekWalkingComparison, type ClueBoard, type SeekClueState,
 } from "./seek-clues.js";
 import { autoKeepSeekDraw, chooseSeekCards, discardHeldCards, drawSeekCards, seekCardEffectMs } from "./seek-deck.js";
-import { compactTrial } from "./solo-fixture.js";
+import { COMPACT_BOARD_VERSION, compactTrial } from "./solo-fixture.js";
 import { verifyLocation } from "./solo-rules.js";
+import { JAKARTA_WIDE_BOARD_VERSION, wideTrial } from "./wide-fixture.js";
 
 const minute = 60_000;
-const compactSeekTrial = {
+
+export type SeekFixture = {
+  edition: SeekRoom["edition"];
+  checkIn: typeof compactTrial.checkIn;
+};
+
+export const compactSeekTrial: SeekFixture = {
   edition: {
     id: "compact-seek-trial-v1",
+    board: "compact",
+    boardVersion: COMPACT_BOARD_VERSION,
     start: compactTrial.edition.start,
     checkpoints: compactTrial.edition.checkpoints.map(({ id, name, latitude, longitude, x, y }): SoloPoint =>
       ({ id, name, latitude, longitude, x, y })),
@@ -20,6 +29,25 @@ const compactSeekTrial = {
   },
   checkIn: compactTrial.checkIn,
 };
+
+export const wideSeekTrial: SeekFixture = {
+  edition: {
+    id: "wide-seek-trial-v1",
+    board: "jakarta-wide",
+    boardVersion: JAKARTA_WIDE_BOARD_VERSION,
+    start: wideTrial.edition.start,
+    checkpoints: wideTrial.edition.checkpoints.map(({ id, name, latitude, longitude, x, y }): SoloPoint =>
+      ({ id, name, latitude, longitude, x, y })),
+    headStartMs: 60 * minute,
+    searchMs: 120 * minute,
+    regroupMs: 60 * minute,
+  },
+  checkIn: wideTrial.checkIn,
+};
+
+export function seekFixtureForBoard(board: GameBoard = "compact"): SeekFixture {
+  return board === "jakarta-wide" ? wideSeekTrial : compactSeekTrial;
+}
 
 type Member = {
   credentialHash: string;
@@ -31,7 +59,7 @@ type Member = {
 export type SeekRun = Pick<SeekRoom,
   "code" | "phase" | "turn" | "firstHider" | "roleRevision" | "startedAt" | "releaseAt" | "phaseEndsAt" | "ruledOut" | "turns" | "outcome"
 > & {
-  fixture: typeof compactSeekTrial;
+  fixture: SeekFixture;
   host: Member;
   guest: Member | null;
   lock: { checkpointId: string; at: number } | null;
@@ -46,10 +74,11 @@ export function newSeekMember(credentialHash: string): Member {
   return { credentialHash, ready: false, startVerifiedUntil: null, regrouped: false };
 }
 
-export function newSeekRun(code: string, credentialHash: string): SeekRun {
+export function newSeekRun(code: string, credentialHash: string, board: GameBoard = "compact"): SeekRun {
+  const fixture = seekFixtureForBoard(board);
   return {
     code,
-    fixture: compactSeekTrial,
+    fixture,
     phase: "lobby",
     turn: 1,
     firstHider: null,
@@ -61,7 +90,7 @@ export function newSeekRun(code: string, credentialHash: string): SeekRun {
     guest: null,
     lock: null,
     seekerVerified: false,
-    clueBoard: compactClueBoard(compactSeekTrial.edition.start, compactSeekTrial.edition.checkpoints),
+    clueBoard: clueBoardFor(board, fixture.edition.start, fixture.edition.checkpoints),
     clueState: newSeekClueState(),
     ruledOut: [],
     turns: [],
@@ -71,8 +100,8 @@ export function newSeekRun(code: string, credentialHash: string): SeekRun {
 
 export function hydrateSeek(run: SeekRun) {
   if (run.clueBoard && run.clueState) return false;
-  const { start, checkpoints } = run.fixture.edition;
-  run.clueBoard ??= compactClueBoard(start, checkpoints);
+  const { start, checkpoints, board } = run.fixture.edition;
+  run.clueBoard ??= clueBoardFor(board ?? "compact", start, checkpoints);
   if (!run.clueState) {
     run.clueState = newSeekClueState();
     if (run.seekerVerified) recordSeekReference(run.clueState, start.id);

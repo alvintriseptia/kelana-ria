@@ -56,14 +56,12 @@ function update(writeUrl = false) {
   document.getElementById("summary-time")!.textContent = duration;
   document.getElementById("summary-players")!.textContent = game.players === 1 ? "Solo" : "Berdua";
   document.getElementById("summary-board")!.textContent = board.selectedOptions[0]!.textContent;
-  const playable = !wide;
-  playButton.hidden = !playable;
-  packsButton.hidden = !playable || seeking;
+  playButton.hidden = false;
+  packsButton.hidden = wide || seeking;
   playButton.textContent = seeking ? "Coba simulasi Hide & Seek" : game.players === 2 ? "Coba simulasi berdua" : "Coba simulasi";
-  document.getElementById("summary-travel")!.hidden = playable;
-  document.getElementById("summary-note")!.textContent = playable
-    ? "Coba edisi simulasi dengan lokasi virtual. Kamu bisa bermain dari mana saja."
-    : "Pratinjau pengaturan. Sesi permainan belum tersedia.";
+  document.getElementById("summary-travel")!.hidden = true;
+  document.getElementById("summary-note")!.textContent =
+    "Coba edisi simulasi dengan lokasi virtual. Kamu bisa bermain dari mana saja.";
   if (writeUrl) {
     const url = new URL(location.href);
     url.searchParams.set("players", String(game.players));
@@ -105,9 +103,11 @@ async function showRoute() {
   const url = new URL(location.href);
   const params = url.searchParams;
   const requestedSeek = params.get("play") === "hide-and-seek";
+  const rawBoard = params.get("board");
+  const validBoard = rawBoard === null || rawBoard === "compact" || rawBoard === "jakarta-wide";
   const unsupportedSeek = requestedSeek && (
     (params.has("players") && params.get("players") !== "2") ||
-    (params.has("board") && params.get("board") !== "compact") ||
+    !validBoard ||
     (params.has("format") && params.get("format") !== "hide-and-seek")
   );
   if (unsupportedSeek) {
@@ -117,7 +117,7 @@ async function showRoute() {
   } else if (requestedSeek) {
     params.set("players", "2");
     params.set("format", "hide-and-seek");
-    params.set("board", "compact");
+    params.set("board", rawBoard === "jakarta-wide" ? "jakarta-wide" : "compact");
     history.replaceState(history.state, "", url);
   }
   restoreSelection();
@@ -130,7 +130,7 @@ async function showRoute() {
     document.title = "Pilih permainan · Kelana Ria";
     play.replaceChildren();
     if (unsupportedSeek) {
-      feedback.textContent = "Simulasi Hide & Seek tersedia untuk dua pemain di Jakarta (Compact). Pilih pengaturan itu untuk bermain.";
+      feedback.textContent = "Simulasi Hide & Seek tersedia untuk dua pemain di Jakarta (Compact) atau Jakarta (Wide). Pilih pengaturan itu untuk bermain.";
       feedback.classList.remove("sr-only");
     }
     if (wasPlaying) form.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus();
@@ -138,10 +138,11 @@ async function showRoute() {
   }
   if (summary.open) summary.close();
   const format = seeking ? "Hide & Seek" : "Claim the City";
+  const boardLabel = params.get("board") === "jakarta-wide" ? "Jakarta (Wide)" : "Jakarta (Compact)";
   document.title = mode === "creator-packs" ? "Paket Kreator · Kelana Ria" : `${format} · Kelana Ria`;
   const heading = mode === "creator-packs"
     ? '<h1>Paket Kreator Jakarta</h1><p class="intro">Jakarta (Compact) · Claim the City · Tinjauan &amp; Katalog</p>'
-    : `<h1 lang="en">${format}</h1><p class="intro">Jakarta (Compact) · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Edisi siap pakai · Simulasi</p>`;
+    : `<h1 lang="en">${format}</h1><p class="intro">${boardLabel} · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Edisi siap pakai · Simulasi</p>`;
   play.innerHTML = `${heading}<p role="status">Membuka simulasi…</p>`;
   try {
     const mount = seeking ? (await import("./seek-play")).mountSeekPlay

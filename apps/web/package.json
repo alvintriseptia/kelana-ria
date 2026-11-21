@@ -12,7 +12,8 @@
     "qa:solo": "node qa/solo.mjs",
     "qa:duo": "node qa/duo.mjs",
     "qa:seek": "node qa/seek.mjs",
-    "qa:packs": "node qa/packs.mjs"
+    "qa:packs": "node qa/packs.mjs",
+    "qa:release": "node qa/release.mjs"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "5.3.0",

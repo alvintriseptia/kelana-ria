@@ -1,4 +1,5 @@
 import type {
+  GameBoard,
   SoloChallenge,
   SoloCheckpoint,
   SoloEdition,
@@ -59,6 +60,7 @@ export type ValidationResult =
         | "unsupported-challenge"
         | "wrong-site-task"
         | "unreviewed-answer"
+        | "insufficient-wide-checkpoints"
         | "single-landmark-target"
         | "insufficient-zones"
         | "requires-all-landmarks"
@@ -78,9 +80,9 @@ export function toSoloCandidate(
     return input as SoloFixture;
   }
   const proposal = input as ProposedSoloEdition;
-  const board = proposal.board ?? "compact";
-  const format = proposal.format ?? "claim-the-city";
-  const players = proposal.players ?? 1;
+  const board = proposal.board ?? catalog.board;
+  const format = proposal.format ?? catalog.format;
+  const players = proposal.players ?? catalog.players;
   if (
     board !== catalog.board ||
     format !== catalog.format ||
@@ -153,12 +155,14 @@ export function toSoloCandidate(
 
   return {
     edition: {
-      id: proposal.id ?? "compact-solo-generated",
-      board: "compact",
+      id: proposal.id ?? `${catalog.board}-solo-generated`,
+      board: catalog.board,
       boardVersion,
       format: "claim-the-city",
-      players: 1,
-      durationMs: proposal.durationMs ?? 60 * 60 * 1000,
+      players: catalog.players,
+      durationMs:
+        proposal.durationMs ??
+        (catalog.board === "jakarta-wide" ? 120 : 60) * 60 * 1000,
       targets: proposal.targets ?? { landmarks: 4, zones: 2 },
       start: catalog.start,
       checkpoints,
@@ -189,9 +193,9 @@ export function validateSoloFixture(
   const candidate = converted;
   const { edition } = candidate;
 
-  const board = edition.board ?? "compact";
-  const format = edition.format ?? "claim-the-city";
-  const players = edition.players ?? 1;
+  const board = edition.board ?? catalog.board;
+  const format = edition.format ?? catalog.format;
+  const players = edition.players ?? catalog.players;
   if (
     board !== catalog.board ||
     format !== catalog.format ||
@@ -320,6 +324,15 @@ export function validateSoloFixture(
       },
       correctChoiceId: catalogTask.correctChoiceId,
     };
+  }
+
+  if (catalog.board === "jakarta-wide" && catalog.compactCheckpointIds) {
+    const outsideCompactCount = canonicalCheckpoints.filter(
+      (point) => !catalog.compactCheckpointIds!.has(point.id),
+    ).length;
+    if (outsideCompactCount < 2) {
+      return { ok: false, error: "insufficient-wide-checkpoints" };
+    }
   }
 
   if (!edition.targets || edition.targets.landmarks < 2) {
@@ -456,10 +469,10 @@ export function validateSoloFixture(
   const validatedFixture: SoloFixture = {
     edition: {
       id: edition.id,
-      board: "compact",
+      board: catalog.board,
       boardVersion: catalog.boardVersion,
       format: "claim-the-city",
-      players: 1,
+      players: catalog.players,
       origin: edition.origin ?? "prepared",
       fallbackReason: edition.fallbackReason,
       durationMs: edition.durationMs,
@@ -499,10 +512,10 @@ export function isFreshSoloEdition(
 }
 
 export type EditionGeneratorRequest = {
-  board: "compact";
+  board: GameBoard;
   boardVersion: string;
   format: "claim-the-city";
-  players: 1;
+  players: 1 | 2;
   attempt: 1 | 2;
   previousEditionId?: string;
   remainingBudgetMs: number;
@@ -516,7 +529,7 @@ export type EditionGenerator = (
   | Promise<ProposedSoloEdition | SoloFixture>;
 
 export type RouteSnapshotProvider = (request: {
-  board: "compact";
+  board: GameBoard;
   boardVersion: string;
 }) => WalkingRouteSnapshot | Promise<WalkingRouteSnapshot>;
 
@@ -567,7 +580,7 @@ export async function prepareSoloFixture({
   if (routeProvider) {
     try {
       const liveRoutes = await routeProvider({
-        board: "compact",
+        board: catalog.board,
         boardVersion: catalog.boardVersion,
       });
       if (
@@ -606,10 +619,10 @@ export async function prepareSoloFixture({
       try {
         // Strictly public board metadata — never player coordinates or room secrets.
         const request: EditionGeneratorRequest = Object.freeze({
-          board: "compact",
+          board: catalog.board,
           boardVersion: catalog.boardVersion,
-          format: "claim-the-city",
-          players: 1,
+          format: catalog.format,
+          players: catalog.players,
           attempt,
           previousEditionId: previousEdition?.id,
           remainingBudgetMs,

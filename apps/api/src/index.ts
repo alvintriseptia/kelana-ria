@@ -1,9 +1,9 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import type { SoloAction } from "@kelana-ria/contracts";
+import type { GameBoard, SoloAction } from "@kelana-ria/contracts";
 import { duoHandler } from "./duo-http.js";
 import { duoStore } from "./duo-store.js";
-import { credential, hasJsonBody, isFix, isId, isObject, json, requestBody, setCredential } from "./http.js";
+import { credential, hasJsonBody, isFix, isGameBoard, isId, isObject, json, requestBody, setCredential } from "./http.js";
 import {
   createMidtransAdapterFromEnv,
   createMidtransSandboxAdapter,
@@ -22,7 +22,7 @@ import { seekHandler } from "./seek-http.js";
 import { seekStore } from "./seek-store.js";
 import { soloStore, type SoloStoreOptions } from "./solo-store.js";
 
-export type { GameConfiguration } from "@kelana-ria/contracts";
+export type { GameBoard, GameConfiguration } from "@kelana-ria/contracts";
 export {
   createMidtransAdapterFromEnv,
   createMidtransSandboxAdapter,
@@ -49,12 +49,38 @@ export {
   compactTrial,
   compactWalkingSnapshot,
   preparedCompactFixtures,
+  type BoardCatalog,
   type CompactBoardCatalog,
   type ReviewedTask,
   type RouteLeg,
   type SoloFixture,
   type WalkingRouteSnapshot,
 } from "./solo-fixture.js";
+export {
+  compactCheckpointIdSet,
+  JAKARTA_WIDE_BOARD_VERSION,
+  preparedWideFixtures,
+  wideAlternate,
+  wideBranches,
+  wideCatalog,
+  wideCheckpoints,
+  wideOuterCheckpoints,
+  wideOuterReviewedTasks,
+  wideReviewedTasks,
+  wideRouteAttribution,
+  wideTrial,
+  wideWalkingSnapshot,
+} from "./wide-fixture.js";
+export {
+  compactDuoTrial,
+  duoFixtureForBoard,
+  wideDuoTrial,
+} from "./duo-rules.js";
+export {
+  compactSeekTrial,
+  seekFixtureForBoard,
+  wideSeekTrial,
+} from "./seek-rules.js";
 export {
   isFreshSoloEdition,
   prepareSoloFixture,
@@ -70,6 +96,12 @@ export {
 
 const cookieName = "kelana_solo";
 const defaultDatabasePath = fileURLToPath(new URL("../.data/solo.sqlite", import.meta.url));
+
+function parseBoardParam(url: URL): GameBoard | "invalid" | undefined {
+  const raw = url.searchParams.get("board");
+  if (raw === null) return undefined;
+  return isGameBoard(raw) ? raw : "invalid";
+}
 
 function parseAction(value: unknown): SoloAction | undefined {
   if (!isObject(value) || !isId(value.actionId) || !isId(value.sessionId)) return undefined;
@@ -135,7 +167,9 @@ export function createSoloServer({
           json(response, 200, archived);
           return;
         }
-        const session = await store.session(token, now());
+        const board = parseBoardParam(url);
+        if (board === "invalid") return json(response, 400, { error: "invalid-request" });
+        const session = await store.session(token, now(), board ?? "compact");
         if ("error" in session) {
           json(response, 409, {
             error: session.error,
@@ -151,8 +185,9 @@ export function createSoloServer({
       }
       if (request.method === "GET" && url.pathname === "/api/solo/challenge") {
         const checkpointId = url.searchParams.get("checkpointId");
-        if (!isId(checkpointId)) return json(response, 400, { error: "invalid-request" });
-        const reply = token && store.challenge(token, checkpointId, now());
+        const board = parseBoardParam(url);
+        if (!isId(checkpointId) || board === "invalid") return json(response, 400, { error: "invalid-request" });
+        const reply = token && store.challenge(token, checkpointId, now(), board ?? "compact");
         if (!reply) return json(response, 401, { error: "session-required" });
         json(response, 200, reply);
         return;
@@ -162,6 +197,8 @@ export function createSoloServer({
         if (!hasJsonBody(request)) {
           return json(response, 415, { error: "invalid-request" });
         }
+        const board = parseBoardParam(url);
+        if (board === "invalid") return json(response, 400, { error: "invalid-request" });
         const body = await requestBody(request);
         const receivedAt = now();
         if (body === undefined) return json(response, 413, { error: "invalid-request" });
@@ -172,7 +209,7 @@ export function createSoloServer({
           return json(response, 400, { error: "invalid-request" });
         }
         if (!action) return json(response, 400, { error: "invalid-request" });
-        const reply = await store.act(token, action, receivedAt);
+        const reply = await store.act(token, action, receivedAt, board);
         if (!reply) return json(response, 401, { error: "session-required" });
         json(response, 200, reply);
         return;

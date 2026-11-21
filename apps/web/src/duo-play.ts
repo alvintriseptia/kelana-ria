@@ -1,7 +1,7 @@
-import type { DuoAction, DuoReply, DuoRoom, LocationFix, SoloChallenge, SoloPoint } from "@kelana-ria/contracts";
+import type { DuoAction, DuoReply, DuoRoom, GameBoard, LocationFix, SoloChallenge, SoloPoint } from "@kelana-ria/contracts";
 import { getLocation } from "./device-location";
 import { board, checkpointPanel, entry, lobby, result, score } from "./duo-view";
-import { inviteUrl, pendingEntry, player, roomCodePattern, roomTransport, type EntryAction, type Feedback } from "./multiplayer-room";
+import { boardDisplayName, inviteUrl, pendingEntry, player, roomCodePattern, roomTransport, type EntryAction, type Feedback } from "./multiplayer-room";
 import { action, remaining, wib } from "./solo-view";
 import "./solo-play.css";
 import "./duo-play.css";
@@ -45,6 +45,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   const { credential, request } = roomTransport<DuoReply, RequestAction>(apiPath, "kelana-duo-bootstrap");
   let room: DuoRoom | undefined;
   const initialParams = new URLSearchParams(location.search);
+  const requestedBoard: GameBoard = initialParams.get("board") === "jakarta-wide" ? "jakarta-wide" : "compact";
   let inviteCode = (initialParams.get("room") ?? "").trim().toUpperCase();
   let pendingPassId = (initialParams.get("pass") ?? "").trim();
   const restored = entryRequests.read(inviteCode);
@@ -72,7 +73,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   </nav>
   <header class="solo-header">
     <h1 id="duo-title" tabindex="-1" lang="en">Claim the City</h1>
-    <p>Jakarta (Compact) · Berdua <span>Edisi siap pakai</span></p>
+    <p><strong id="duo-board-label">${boardDisplayName(requestedBoard)}</strong> · Berdua <span>Edisi siap pakai</span></p>
   </header>
   <p id="duo-announcement" class="sr-only" role="status" aria-atomic="true"></p>
   <div id="duo-connection" class="solo-connection" hidden></div>
@@ -81,6 +82,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   const view = root.querySelector<HTMLElement>("#duo-view")!;
   const connection = root.querySelector<HTMLElement>("#duo-connection")!;
   const announcement = root.querySelector<HTMLElement>("#duo-announcement")!;
+  const boardLabelEl = root.querySelector<HTMLElement>("#duo-board-label")!;
   root.querySelector<HTMLElement>("#duo-title")!.focus();
 
   function now() {
@@ -161,6 +163,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
 
   function paint(focus?: string) {
     if (signal.aborted) return;
+    boardLabelEl.textContent = boardDisplayName(room?.edition.board ?? requestedBoard);
     const focused = document.activeElement as HTMLElement | null;
     const key = focused?.dataset.focus;
     const focusWasInView = view.contains(focused);
@@ -424,7 +427,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   async function copy() {
     if (!room) return;
     try {
-      await navigator.clipboard.writeText(inviteUrl("duo-claim", room.code).href);
+      await navigator.clipboard.writeText(inviteUrl("duo-claim", room.code, room.edition.board).href);
       if (!signal.aborted) report("Tautan undangan disalin.");
     } catch {
       if (!signal.aborted) report("Buka menu tautan undangan untuk menyalinnya.", true);
@@ -445,7 +448,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
       case "back": returnToSetup(); break;
       case "retry": reconnect(); break;
       case "create":
-      case "replay": send({ type: "create" }); break;
+      case "replay": send({ type: "create", board: room?.edition.board ?? requestedBoard }); break;
       case "new-room":
         cancelRead();
         setCode("");

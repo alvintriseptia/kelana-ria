@@ -1,4 +1,5 @@
 import type {
+  GameBoard,
   SoloChallenge,
   SoloCheckpoint,
   SoloEdition,
@@ -30,7 +31,7 @@ export type RouteLeg = {
 };
 
 export type WalkingRouteSnapshot = {
-  board: "compact";
+  board: GameBoard;
   boardVersion: string;
   provider: string;
   retrievedAt: string;
@@ -40,17 +41,20 @@ export type WalkingRouteSnapshot = {
   legs: RouteLeg[];
 };
 
-export type CompactBoardCatalog = {
-  board: "compact";
+export type BoardCatalog = {
+  board: GameBoard;
   boardVersion: string;
   format: "claim-the-city";
-  players: 1;
+  players: 1 | 2;
   start: SoloPoint;
   checkIn: { radiusMeters: number; maxAccuracyMeters: number; maxAgeMs: number };
   cooldownMs: number;
   checkpoints: Record<string, SoloCheckpoint>;
   tasks: Record<string, ReviewedTask>;
+  compactCheckpointIds?: ReadonlySet<string>;
 };
+
+export type CompactBoardCatalog = BoardCatalog;
 
 export const COMPACT_BOARD_VERSION = "compact-board-v1";
 
