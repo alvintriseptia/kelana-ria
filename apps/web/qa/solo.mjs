@@ -21,8 +21,9 @@ const fixtureAnswers = {
 };
 await mkdir(results, { recursive: true });
 let clockOffset = 0;
+const closed = new Set();
 const now = () => Date.now() + clockOffset;
-const api = createSoloServer({ databasePath: ":memory:", now });
+const api = createSoloServer({ databasePath: ":memory:", now, closedCheckpoints: () => closed });
 api.listen(0, "127.0.0.1");
 await once(api, "listening");
 
@@ -233,6 +234,24 @@ try {
   assert.equal(lost.events.at(-1).type, "expired");
   assert.equal(lost.events.at(-1).at, again.deadline);
   await page.screenshot({ path: join(results, "solo-expiry.png"), fullPage: true });
+
+  // A20: Close Taman Literasi before replay starts; confirm old result stays readable and alternate open edition can be chosen.
+  closed.add("taman-literasi");
+  const blockedReplay = await afterAction("Main lagi");
+  assert.equal(blockedReplay.error, "checkpoint-closed");
+  assert.equal(blockedReplay.closedCheckpointId, "taman-literasi");
+  await page.locator("#solo-view").getByText(/Taman Literasi ditutup sementara/i).waitFor();
+  await page.getByRole("heading", { name: "Waktu habis", exact: true }).waitFor();
+  assert.equal((await state()).id, lost.id);
+  await page.screenshot({ path: join(results, "solo-closure-notice.png"), fullPage: true });
+
+  const switched = await afterAction("Edisi lain");
+  assert.equal(switched.error, undefined);
+  assert.equal(switched.session.phase, "briefing");
+  assert.equal(switched.session.edition.id, "compact-solo-kebayoran-v1");
+  assert.ok(switched.session.edition.openings.length >= 2);
+  await page.locator("#solo-view").getByText(/Geoapify/i).waitFor();
+  closed.clear();
   // Delay the first cookie-bearing response while another tab opens the same fixture.
   const multiTab = await browser.newContext(phoneOptions(browser));
   try {
