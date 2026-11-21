@@ -23,7 +23,23 @@ await mkdir(results, { recursive: true });
 let clockOffset = 0;
 const closed = new Set();
 const now = () => Date.now() + clockOffset;
-const api = createSoloServer({ databasePath: ":memory:", now, closedCheckpoints: () => closed });
+const providerTelemetry = { aiAttempts: 0, routeAttempts: 0, activeRoundCalls: 0 };
+let inActiveRound = false;
+const api = createSoloServer({
+  databasePath: ":memory:",
+  now,
+  closedCheckpoints: () => closed,
+  aiProvider() {
+    providerTelemetry.aiAttempts += 1;
+    if (inActiveRound) providerTelemetry.activeRoundCalls += 1;
+    throw new Error("rehearsed-ai-outage");
+  },
+  routeProvider() {
+    providerTelemetry.routeAttempts += 1;
+    if (inActiveRound) providerTelemetry.activeRoundCalls += 1;
+    throw new Error("rehearsed-route-outage");
+  },
+});
 api.listen(0, "127.0.0.1");
 await once(api, "listening");
 
@@ -113,8 +129,16 @@ try {
   await page.getByRole("button", { name: "Coba simulasi", exact: true })
     .or(page.getByRole("link", { name: "Coba simulasi", exact: true })).click();
   await page.getByRole("button", { name: "Check-in di titik awal", exact: true }).waitFor();
-  assert.match(await page.locator("main").innerText(), /Simulasi/i);
+  const briefingText = await page.locator("main").innerText();
+  assert.match(briefingText, /Simulasi/i);
+  assert.match(briefingText, /Edisi siap pakai \(cadangan\)/);
+  assert.match(briefingText, /Geoapify/);
+  assert.match(briefingText, /OpenStreetMap/);
+  assert.match(briefingText, /Transjakarta GTFS/);
   const briefing = await state();
+  assert.equal(briefing.edition.origin, "prepared");
+  assert.equal(briefing.edition.fallbackReason, "ai-unavailable");
+  assert.equal(briefing.edition.routes?.source, "snapshot");
   assert.deepEqual(briefing.edition.targets, { landmarks: 4, zones: 2 });
   assert.equal(briefing.startedAt, null);
   await page.screenshot({ path: join(results, "solo-briefing.png"), fullPage: true });
@@ -142,6 +166,7 @@ try {
   const checked = await afterAction("Simulasikan lokasi di sini");
   assert.ok(checked.session.startVerifiedUntil > now());
   const { session: active } = await afterAction("Mulai");
+  inActiveRound = true;
   assert.equal(active.phase, "active");
   assert.equal(active.deadline, active.startedAt + active.edition.durationMs);
   const duplicate = await command({ type: "start" });
@@ -201,6 +226,8 @@ try {
   clockOffset = active.deadline - Date.now() - 15_000;
   await page.reload();
   const won = await claim(nextZone);
+  inActiveRound = false;
+  assert.equal(providerTelemetry.activeRoundCalls, 0, "Active round must not call external providers");
   assert.equal(won.phase, "won");
   assert.equal(won.claimed.length, 5);
   assert.equal(won.zones.length, 2);
@@ -284,12 +311,31 @@ try {
     browser: browser.version(), viewport: page.viewportSize(), simulated: true,
     tileFailures, duplicateStart: duplicate.startedAt === active.startedAt,
     recoveredDroppedAcknowledgment: true, recoveredOfflineReload: true, sharedFirstTabSession: true,
+    providerOutageRehearsal: {
+      mode: "recorded-rehearsal",
+      origin: briefing.edition.origin,
+      fallbackReason: briefing.edition.fallbackReason,
+      routeSource: briefing.edition.routes?.source ?? null,
+      routeAttribution: briefing.edition.routes?.attribution ?? null,
+      aiAttempts: providerTelemetry.aiAttempts,
+      routeAttempts: providerTelemetry.routeAttempts,
+      activeRoundCalls: providerTelemetry.activeRoundCalls,
+    },
+    tileAndRoutingUsage: {
+      mapAssetRequestsIntercepted: tileFailures.length,
+      listFallbackVerified: true,
+      geoapifyFreeDailyCredits: 3000,
+      creditFormula: {
+        tileCreditsPerRequest: 0.25,
+        routingCreditsPerRequest: 1,
+      },
+    },
     evidence: {
       won: publicEvents(won), lost: publicEvents(lost),
       fixtureDigest: createHash("sha256").update(JSON.stringify(briefing.edition)).digest("hex"),
     },
   }, null, 2) + "\n");
-  console.log("Mobile solo Claim passed permission recovery, tile fallback, refresh, win and expiry.");
+  console.log("Mobile solo Claim passed permission recovery, outage rehearsal, tile fallback, refresh, win and expiry.");
 } finally {
   await browser?.close();
   await server?.close();

@@ -76,7 +76,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   </nav>
   <header class="solo-header">
     <h1 id="solo-title" tabindex="-1" lang="en">Claim the City</h1>
-    <p>${boardName} · Solo <span>Edisi siap pakai</span></p>
+    <p>${boardName} · Solo <span id="solo-origin-badge">Edisi siap pakai</span></p>
   </header>
   <p class="sr-only" role="status" id="solo-announcement"></p>
   <div id="solo-connection" class="solo-connection" hidden></div>
@@ -85,6 +85,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   const view = root.querySelector<HTMLElement>("#solo-view")!;
   const connection = root.querySelector<HTMLElement>("#solo-connection")!;
   const announcement = root.querySelector<HTMLElement>("#solo-announcement")!;
+  const originBadge = root.querySelector<HTMLElement>("#solo-origin-badge")!;
   root.querySelector<HTMLElement>("#solo-title")!.focus();
 
   function estimatedNow() {
@@ -136,18 +137,29 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
     </section>`;
   }
 
+  function originLabel(edition: SoloSession["edition"]) {
+    if (edition.origin === "live") return "Edisi langsung tervalidasi";
+    return edition.fallbackReason
+      ? "Edisi siap pakai (cadangan)"
+      : "Edisi siap pakai";
+  }
+
   function briefing(state: SoloSession) {
-    const { start, durationMs, targets, id, origin, routes } = state.edition;
+    const { start, durationMs, targets, id, fallbackReason, routes } = state.edition;
     const ready = (state.startVerifiedUntil ?? 0) > estimatedNow();
-    const originText = origin === "live" ? "Edisi langsung tervalidasi" : "Edisi siap pakai";
-    const routeText = routes ? ` · Rute ${escapeText(routes.attribution)}` : "";
+    const originText = originLabel(state.edition);
+    const fallbackNote = fallbackReason
+      ? " · Penyedia langsung tidak tersedia; memakai edisi siap pakai yang tervalidasi"
+      : "";
+    const routeSourceLabel = routes?.source === "live" ? "Rute langsung" : "Cuplikan rute tersetujui";
+    const routeText = routes ? ` · ${routeSourceLabel}: ${escapeText(routes.attribution)}` : "";
     return `<div class="solo-layout solo-briefing">
       <div class="solo-main-column">
         <section class="solo-objective" aria-labelledby="solo-brief-heading">
           <h2 id="solo-brief-heading">Misi kamu</h2>
           <p>Klaim <strong>${targets.landmarks} landmark</strong> di setidaknya <strong>${targets.zones} zona</strong> dalam <strong>${Math.round(durationMs / 60_000)} menit</strong>.</p>
           <p>Check-in lalu jawab satu tantangan untuk mengklaim landmark. Sesi ini memakai titik dan tantangan uji untuk bermain dari mana saja.</p>
-          <p class="solo-edition">Edisi ${escapeText(id)} (${originText}) · Berjalan kaki, MRT, KRL, dan Transjakarta adalah pilihan perjalanan dalam aturan permainan${routeText}.</p>
+          <p class="solo-edition">Edisi ${escapeText(id)} (${originText}${fallbackNote}) · Berjalan kaki, MRT, KRL, dan Transjakarta adalah pilihan perjalanan dalam aturan permainan${routeText}.</p>
         </section>
         <section class="solo-ticket" id="solo-action" aria-labelledby="solo-action-heading">
           <span class="solo-start-label">Titik awal</span>
@@ -240,6 +252,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
     if (!session) {
       view.innerHTML = disconnected ? "" : '<p role="status">Memuat sesi…</p>';
     } else {
+      updateText(originBadge, originLabel(session.edition));
       const phaseChanged = previousPhase !== session.phase;
       view.innerHTML = session.phase === "briefing" ? briefing(session) : session.phase === "active" ? active(session) : result(session, feedbackMarkup());
       if (phaseChanged && previousPhase) focus = session.phase === "won" || session.phase === "lost" || session.phase === "abandoned"

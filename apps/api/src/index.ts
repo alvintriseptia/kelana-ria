@@ -20,23 +20,65 @@ import { packHandler } from "./pack-http.js";
 import { packStore, validatePackVersionForPublication } from "./pack-store.js";
 import { seekHandler } from "./seek-http.js";
 import { seekStore } from "./seek-store.js";
+import {
+  buildPublicEditionPrompt,
+  createGeoapifyWalkingRouteProvider,
+  createProvidersFromEnv,
+  createWorkersAiEditionGenerator,
+  DEFAULT_CLOUDFLARE_AI_BASE_URL,
+  DEFAULT_CLOUDFLARE_AI_MODEL,
+  DEFAULT_GEOAPIFY_BASE_URL,
+  GEOAPIFY_FREE_DAILY_CREDITS,
+  GEOAPIFY_ROUTING_CREDIT_COST,
+  GEOAPIFY_TILE_CREDIT_COST,
+  GEOAPIFY_WALKING_ATTRIBUTION,
+  parseGeoapifyWalkingResponse,
+  parseWorkersAiEditionResponse,
+  redactUrlCredentials,
+  uniqueWalkingPairs,
+  WORKERS_AI_FREE_DAILY_NEURONS,
+  type ProviderEvidenceMode,
+  type RedactedAiEvidenceEvent,
+  type RedactedProviderEvent,
+  type RedactedRouteEvidenceEvent,
+} from "./provider-adapters.js";
 import { soloStore, type SoloStoreOptions } from "./solo-store.js";
 
 export type { GameBoard, GameConfiguration } from "@kelana-ria/contracts";
 export {
+  buildPublicEditionPrompt,
+  createGeoapifyWalkingRouteProvider,
   createMidtransAdapterFromEnv,
   createMidtransSandboxAdapter,
+  createProvidersFromEnv,
   createRecordedMidtransAdapter,
+  createWorkersAiEditionGenerator,
+  DEFAULT_CLOUDFLARE_AI_BASE_URL,
+  DEFAULT_CLOUDFLARE_AI_MODEL,
+  DEFAULT_GEOAPIFY_BASE_URL,
   defaultCreatorDraft,
   defaultCreatorTasks,
+  GEOAPIFY_FREE_DAILY_CREDITS,
+  GEOAPIFY_ROUTING_CREDIT_COST,
+  GEOAPIFY_TILE_CREDIT_COST,
+  GEOAPIFY_WALKING_ATTRIBUTION,
   packStore,
+  parseGeoapifyWalkingResponse,
+  parseWorkersAiEditionResponse,
+  redactUrlCredentials,
   signMidtransNotification,
+  uniqueWalkingPairs,
   validatePackVersionForPublication,
   verifyMidtransSignature,
+  WORKERS_AI_FREE_DAILY_NEURONS,
   type MidtransAdapter,
   type MidtransNotificationPayload,
+  type ProviderEvidenceMode,
   type RecordedMidtransAdapter,
+  type RedactedAiEvidenceEvent,
   type RedactedMidtransLifecycleEvent,
+  type RedactedProviderEvent,
+  type RedactedRouteEvidenceEvent,
 };
 export {
   COMPACT_BOARD_VERSION,
@@ -233,11 +275,16 @@ export function createSoloServer({
 if (import.meta.main) {
   const host = process.env.HOST ?? "127.0.0.1";
   const port = Number(process.env.PORT ?? 8787);
+  const providers = createProvidersFromEnv(process.env);
   const server = createSoloServer({
     databasePath: process.env.SOLO_DATABASE_PATH,
     secureCookie: process.env.SOLO_SECURE_COOKIE === "1",
+    aiProvider: providers.aiProvider,
+    routeProvider: providers.routeProvider,
   });
   server.listen(port, host, () => {
-    console.log(`Solo API listening on ${host}:${port}`);
+    console.log(
+      `Solo API listening on ${host}:${port} (ai=${providers.aiMode}, routes=${providers.routeMode})`,
+    );
   });
 }
