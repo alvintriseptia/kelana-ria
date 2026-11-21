@@ -240,7 +240,7 @@ try {
   const blockedReplay = await afterAction("Main lagi");
   assert.equal(blockedReplay.error, "checkpoint-closed");
   assert.equal(blockedReplay.closedCheckpointId, "taman-literasi");
-  await page.getByText(/Taman Literasi ditutup sementara/i).waitFor();
+  await page.locator("#solo-view").getByText(/Taman Literasi ditutup sementara/i).waitFor();
   await page.getByRole("heading", { name: "Waktu habis", exact: true }).waitFor();
   assert.equal((await state()).id, lost.id);
   await page.screenshot({ path: join(results, "solo-closure-notice.png"), fullPage: true });
@@ -250,7 +250,7 @@ try {
   assert.equal(switched.session.phase, "briefing");
   assert.equal(switched.session.edition.id, "compact-solo-kebayoran-v1");
   assert.ok(switched.session.edition.openings.length >= 2);
-  await page.getByText(/Geoapify/i).waitFor();
+  await page.locator("#solo-view").getByText(/Geoapify/i).waitFor();
   closed.clear();
   // Delay the first cookie-bearing response while another tab opens the same fixture.
   const multiTab = await browser.newContext(phoneOptions(browser));
