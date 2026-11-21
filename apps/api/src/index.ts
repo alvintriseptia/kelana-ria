@@ -15,6 +15,7 @@ import {
   type RecordedMidtransAdapter,
   type RedactedMidtransLifecycleEvent,
 } from "./midtrans-adapter.js";
+import { mapHandler, type MapProxyOptions } from "./map-http.js";
 import { defaultCreatorDraft, defaultCreatorTasks } from "./pack-fixture.js";
 import { packHandler } from "./pack-http.js";
 import { packStore, validatePackVersionForPublication } from "./pack-store.js";
@@ -167,12 +168,14 @@ export function createSoloServer({
   now = Date.now,
   secureCookie = false,
   midtrans,
+  mapProxy,
   ...storeOptions
 }: {
   databasePath?: string;
   now?: () => number;
   secureCookie?: boolean;
   midtrans?: MidtransAdapter;
+  mapProxy?: MapProxyOptions;
 } & SoloStoreOptions = {}) {
   const store = soloStore(databasePath, { now, ...storeOptions });
   const duo = duoStore(databasePath);
@@ -187,9 +190,13 @@ export function createSoloServer({
   const seek = seekStore(databasePath, now);
   const handleSeek = seekHandler(seek, now, secureCookie);
   const handlePacks = packHandler(packs, now, secureCookie);
+  const handleMap = mapHandler(mapProxy);
   const server = createServer({ requestTimeout: 15_000 }, async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
+      if (url.pathname === "/api/map" || url.pathname.startsWith("/api/map/")) {
+        return await handleMap(request, response, url);
+      }
       if (url.pathname === "/api/duo" || url.pathname.startsWith("/api/duo/")) {
         return await handleDuo(request, response, url);
       }
@@ -281,6 +288,12 @@ if (import.meta.main) {
     secureCookie: process.env.SOLO_SECURE_COOKIE === "1",
     aiProvider: providers.aiProvider,
     routeProvider: providers.routeProvider,
+    mapProxy: {
+      geoapifyApiKey: process.env.GEOAPIFY_API_KEY,
+      geoapifyMapsBaseUrl: process.env.GEOAPIFY_MAPS_BASE_URL,
+      getRoutingRequestCount: () =>
+        providers.events.filter((event) => event.kind === "walking-route" && event.creditsUsed > 0).length,
+    },
   });
   server.listen(port, host, () => {
     console.log(

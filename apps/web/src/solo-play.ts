@@ -1,4 +1,4 @@
-import type { LocationFix, SoloAction, SoloChallenge, SoloPoint, SoloReply, SoloSession } from "@kelana-ria/contracts";
+import type { LocationFix, MapConfig, SoloAction, SoloChallenge, SoloPoint, SoloReply, SoloSession } from "@kelana-ria/contracts";
 import { action, checkpointList, escapeText, remaining, result, schematic, score, wib } from "./solo-view";
 import { getLocation } from "./device-location";
 import "./solo-play.css";
@@ -67,6 +67,9 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   let mapFailed = false;
   let mapRequest: AbortController | undefined;
   let mapImage: string | undefined;
+  let mapConfig: MapConfig | undefined;
+  let mapVectorMode = false;
+  let vectorMap: { destroy: () => void } | undefined;
   let confirmingAbandon = false;
   let eligibility = "";
 
@@ -125,14 +128,19 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   }
 
   function board(state: SoloSession) {
+    const mapBody = !mapShown ? "" : mapFailed
+      ? `<p class="solo-map-notice" role="status">Peta tidak tersedia. Lanjutkan lewat daftar landmark.</p>${action("Muat ulang peta", "retry-map")}`
+      : mapVectorMode
+        ? `<div id="solo-vector-map"><p class="solo-map-notice" role="status">Memuat peta vektor…</p></div>`
+        : mapImage
+          ? `${schematic(state, mapImage)}<div class="solo-actions">${action("Buka peta vektor (MapLibre)", "vector-map")}</div>`
+          : '<p class="solo-map-notice" role="status">Memuat peta…</p>';
     return `<section class="solo-board" aria-labelledby="solo-board-heading">
       <div class="solo-section-heading">
         <h2 id="solo-board-heading">${state.phase === "active" ? "Pilih landmark" : "Landmark di papan"}</h2>
         <button class="secondary" type="button" data-action="map" data-focus="map" aria-expanded="${mapShown}" aria-controls="solo-map-content">${mapShown ? "Tutup peta" : "Lihat peta"}</button>
       </div>
-      <div id="solo-map-content" ${mapShown ? "" : "hidden"}>${mapShown ? mapImage ? schematic(state, mapImage) : mapFailed
-        ? `<p class="solo-map-notice" role="status">Peta tidak tersedia. Lanjutkan lewat daftar landmark.</p>${action("Muat ulang peta", "retry-map")}`
-        : '<p class="solo-map-notice" role="status">Memuat peta…</p>' : ""}</div>
+      <div id="solo-map-content" ${mapShown ? "" : "hidden"}>${mapBody}</div>
       ${checkpointList(state, selectedId)}
     </section>`;
   }
@@ -241,6 +249,8 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
 
   function paint(focus?: string) {
     if (signal.aborted) return;
+    vectorMap?.destroy();
+    vectorMap = undefined;
     const focused = (document.activeElement as HTMLElement | null)?.dataset.focus;
     connection.hidden = !disconnected && !pending;
     if (!connection.hidden) {
@@ -260,6 +270,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
       previousPhase = session.phase;
       eligibility = eligibilityState();
       updateClock();
+      if (mapShown && mapVectorMode && !mapFailed) void mountVectorMap(session);
     }
     if (focus) root.querySelector<HTMLElement>(focus)?.focus();
     else if (focused) root.querySelector<HTMLElement>(`[data-focus="${CSS.escape(focused)}"]:not(:disabled)`)?.focus({ preventScroll: true });
@@ -426,13 +437,89 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
     else await send({ type: "check-in", checkpointId: point.id, fix });
   }
 
+  async function resolveMapConfig(requestSignal: AbortSignal): Promise<MapConfig> {
+    if (mapConfig) return mapConfig;
+    try {
+      const response = await fetch("/api/map/config", {
+        cache: "no-store",
+        signal: AbortSignal.any([signal, requestSignal, AbortSignal.timeout(4_000)]),
+      });
+      if (response.ok) {
+        mapConfig = (await response.json()) as MapConfig;
+        return mapConfig;
+      }
+    } catch {
+      // Offline or unconfigured falls back cleanly to offline-vector / schematic.
+    }
+    mapConfig = {
+      mode: "offline-vector",
+      styleUrl: null,
+      attribution: "Geoapify · © OpenStreetMap contributors · Transjakarta GTFS (CC BY 4.0)",
+      mapLibreLicenseUrl: "/licenses/maplibre-gl.txt",
+      tileCreditCost: 0.25,
+      routingCreditCost: 1,
+      freeDailyCredits: 3000,
+    };
+    return mapConfig;
+  }
+
+  async function mountVectorMap(state: SoloSession) {
+    const host = root.querySelector<HTMLElement>("#solo-vector-map");
+    if (!host || signal.aborted) return;
+    try {
+      const config = await resolveMapConfig(signal);
+      const { mountBoardMap } = await import("./board-map");
+      if (signal.aborted || !mapShown || !mapVectorMode || !root.contains(host)) return;
+      vectorMap?.destroy();
+      vectorMap = mountBoardMap({
+        container: host,
+        config,
+        start: state.edition.start,
+        checkpoints: state.edition.checkpoints.map((point) => {
+          const claimed = state.claimed.includes(point.id);
+          return {
+            ...point,
+            claimed,
+            label: claimed ? "Diklaim" : undefined,
+            selectable: state.phase === "active" && !claimed,
+          };
+        }),
+        selectedId,
+        onSelect(checkpointId) {
+          if (busy || pending) return;
+          setSelected(checkpointId);
+          paint("#solo-action-heading");
+          if (selectedId && session && Object.hasOwn(session.visits, selectedId)) void sync();
+        },
+        onError() {
+          if (signal.aborted) return;
+          mapFailed = true;
+          mapVectorMode = false;
+          paint();
+        },
+      });
+    } catch {
+      if (!signal.aborted) {
+        mapFailed = true;
+        mapVectorMode = false;
+        paint();
+      }
+    }
+  }
+
   async function loadMap() {
-    if (mapImage || mapRequest) return;
+    if (mapRequest) return;
+    if (!mapVectorMode && mapImage) return;
     mapRequest = new AbortController();
     const request = mapRequest;
     mapFailed = false;
     paint();
     try {
+      const config = await resolveMapConfig(request.signal);
+      if (config.mode === "geoapify-vector" || mapVectorMode) {
+        mapVectorMode = true;
+        return;
+      }
       const response = await fetch(mapUrl, { signal: AbortSignal.any([signal, request.signal, AbortSignal.timeout(8_000)]) });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const url = URL.createObjectURL(await response.blob());
@@ -467,10 +554,17 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
         if (!mapShown) {
           mapRequest?.abort();
           mapRequest = undefined;
-        } else if (!mapImage) {
+          vectorMap?.destroy();
+          vectorMap = undefined;
+        } else if (mapVectorMode || !mapImage) {
           void loadMap();
           return;
         }
+        paint();
+        break;
+      case "vector-map":
+        mapVectorMode = true;
+        mapFailed = false;
         paint();
         break;
       case "retry-map": void loadMap(); break;
@@ -540,6 +634,7 @@ export function mountSoloPlay(root: HTMLElement, returnToSetup: () => void) {
   return () => {
     mount.abort();
     window.clearInterval(clock);
+    vectorMap?.destroy();
     if (mapImage) URL.revokeObjectURL(mapImage);
   };
 }
