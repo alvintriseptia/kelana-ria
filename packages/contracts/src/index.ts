@@ -134,6 +134,15 @@ export type DuoRoom = {
   events: DuoEvent[];
   visits: Record<string, number>;
   cooldowns: Record<string, number>;
+  paidPack?: {
+    packId: string;
+    version: number;
+    title: string;
+    byline: string;
+    orderId: string;
+    players: 1 | 2;
+    sandbox: true;
+  };
 };
 
 export type DuoAction = { actionId: string } & (
@@ -160,6 +169,9 @@ export type PackVersionStatus =
   | "published"
   | "paused";
 
+export type PackOrderStatus = "pending" | "settled" | "expired";
+export type PackPaymentMode = "midtrans-sandbox" | "recorded-sandbox";
+
 export type PackTaskInput = {
   checkpointId: string;
   question: string;
@@ -182,12 +194,37 @@ export type PackOrderSummary = {
   title: string;
   byline: string;
   players: 1 | 2;
+  currency: "IDR";
   grossAmountIdr: number;
   platformFeeIdr: number;
   creatorShareIdr: number;
-  status: "settled";
-  settledAt: number;
+  status: PackOrderStatus;
+  createdAt: number;
+  expiresAt: number;
+  checkoutReturnedAt: number | null;
+  settledAt: number | null;
+  passId: string | null;
+  roomCode: string | null;
+  earningsEntryId: string | null;
+  paymentMode: PackPaymentMode;
+  snapRedirectUrl?: string;
   supportNote?: string;
+  sandbox: true;
+};
+
+export type PackEarningsEntry = {
+  earningsEntryId: string;
+  orderId: string;
+  packId: string;
+  version: number;
+  title: string;
+  byline: string;
+  currency: "IDR";
+  grossAmountIdr: number;
+  platformFeeIdr: number;
+  creatorShareIdr: number;
+  settledAt: number;
+  paymentMode: PackPaymentMode;
   sandbox: true;
 };
 
@@ -257,6 +294,17 @@ export type PackAction = { actionId: string } & (
   | { type: "report-closure"; packId: string; version: number; checkpointId: string; reason: string }
   | { type: "pause-version"; packId: string; version: number; reason: string }
   | { type: "create-order"; packId: string; version: number; players: 1 | 2 }
+  | { type: "checkout-return"; orderId: string }
+  | {
+      type: "verify-settlement";
+      orderId: string;
+      statusCode?: string;
+      transactionStatus?: "pending" | "settlement" | "expire" | "cancel" | "deny";
+      grossAmount?: string;
+      currency?: string;
+      signatureKey?: string;
+    }
+  | { type: "redeem-pass"; passId: string; roomCode: string }
 );
 
 export type PackWorkspaceReply = {
@@ -265,5 +313,6 @@ export type PackWorkspaceReply = {
   versions?: PackVersionDetail[];
   closures?: PackClosureReport[];
   orders: PackOrderSummary[];
+  earnings?: PackEarningsEntry[];
   error?: string;
 };

@@ -166,27 +166,70 @@ try {
   assert.doesNotMatch(publicText, /Kunci jawaban pribadi/i);
   await buyer.page.screenshot({ path: join(results, "pack-public-catalog.png"), fullPage: true });
 
-  // 7. Buyer records a sandbox order on v2 and reports a checkpoint closure on Taman Literasi (A31).
+  // 7. Buyer creates a pending sandbox order on v2, returns before settlement (no access), then verifies settlement (A29, A30).
   const ordered = await postPack(buyer, "Beli sesi uji coba (v2)", "create-order");
   assert.equal(ordered.status, 200);
   assert.equal(ordered.body.orders.length, 1);
   assert.equal(ordered.body.orders[0].orderId, "ord-sandbox-1");
+  assert.equal(ordered.body.orders[0].status, "pending");
+  assert.equal(ordered.body.orders[0].passId, null);
+  assert.equal(ordered.body.orders[0].roomCode, null);
   assert.equal(ordered.body.orders[0].creatorShareIdr, 21_250);
 
+  const returned = await postPack(buyer, "Kembali dari checkout (ord-sandbox-1)", "checkout-return");
+  assert.equal(returned.status, 200);
+  assert.equal(returned.body.orders[0].status, "pending");
+  assert.equal(returned.body.orders[0].passId, null);
+  assert.equal(returned.body.orders[0].roomCode, null);
+
+  const settled = await postPack(buyer, "Verifikasi pelunasan (ord-sandbox-1)", "verify-settlement");
+  assert.equal(settled.status, 200);
+  assert.equal(settled.body.orders[0].status, "settled");
+  const { roomCode, passId, earningsEntryId } = settled.body.orders[0];
+  assert.match(roomCode, /^[0-9A-F]{8}$/);
+  assert.equal(passId, "pass-ord-sandbox-1");
+  assert.equal(earningsEntryId, "earn-ord-sandbox-1");
+
+  // 8. Host opens the unlocked paid room, refreshes, and invites a friend on the same pass; clock waits for readiness (A29).
+  await buyer.page.getByRole("link", { name: `Buka ruang berbayar (${roomCode})` }).click();
+  await buyer.page.getByRole("heading", { name: "Ruang tunggu" }).waitFor();
+  await buyer.page.locator("#duo-view").getByText(/Paket kreator berbayar/i).waitFor();
+  assert.equal(new URL(buyer.page.url()).searchParams.get("pass"), null, "Pass query param is stripped after host claims room");
+  assert.equal(await buyer.page.locator("[data-timer]").count(), 0, "Clock stays stopped in lobby");
+
+  // Host reloads and recovers seat 1 via cookie.
+  await buyer.page.reload();
+  await buyer.page.getByRole("heading", { name: "Ruang tunggu" }).waitFor();
+  const inviteHref = await buyer.page.getByRole("link", { name: "Tautan undangan" }).getAttribute("href");
+  assert.ok(inviteHref && inviteHref.includes(`room=${roomCode}`) && !inviteHref.includes("pass="));
+
+  // Second device joins the same paid room using the invite link without paying again.
+  const friend = await device();
+  await friend.page.goto(inviteHref);
+  await friend.page.getByRole("button", { name: "Gabung ruang", exact: true }).click();
+  await friend.page.getByRole("heading", { name: "Ruang tunggu" }).waitFor();
+  await friend.page.locator("#duo-view").getByText(/Paket kreator berbayar/i).waitFor();
+  assert.equal(await friend.page.locator("[data-timer]").count(), 0, "Clock stays stopped until check-in and readiness");
+  await friend.page.screenshot({ path: join(results, "pack-paid-room-guest.png"), fullPage: true });
+  await friend.context.close();
+
+  // 9. Buyer returns to catalog and reports a checkpoint closure on Taman Literasi; reviewer pauses v2 sales (A31).
+  await openPacksAs(buyer, "public");
   const closureReported = await postPack(buyer, "Laporkan penutupan titik (v2)", "report-closure");
   assert.equal(closureReported.status, 200);
 
-  // 8. Reviewer sees the closure report and pauses v2 sales (A31).
   const reviewerWithClosure = await switchRole(reviewer, "Peninjau", "reviewer");
   assert.equal(reviewerWithClosure.closures.length, 1);
+  assert.equal(reviewerWithClosure.earnings.length, 1);
   const pausedV2 = await postPack(reviewer, "Jeda penjualan v2", "pause-version");
   assert.equal(pausedV2.status, 200);
   assert.equal(pausedV2.body.versions[1].status, "paused");
   assert.deepEqual(pausedV2.body.listings, []);
   assert.equal(pausedV2.body.orders.length, 1);
+  assert.equal(pausedV2.body.earnings.length, 1);
   await reviewer.page.screenshot({ path: join(results, "pack-paused-orders.png"), fullPage: true });
 
-  // 9. Public catalog stops new orders while existing orders remain visible to buyer, reviewer, and writer.
+  // 10. Public catalog stops new orders while existing orders & reconciled creator earnings remain visible.
   const buyerAfterPause = await switchRole(buyer, "Katalog Publik", "public");
   assert.deepEqual(buyerAfterPause.listings, []);
   assert.equal(buyerAfterPause.orders.length, 1);
@@ -209,7 +252,15 @@ try {
   assert.equal(writerAfterPause.orders.length, 1);
   assert.equal(writerAfterPause.orders[0].orderId, "ord-sandbox-1");
   assert.equal(writerAfterPause.orders[0].creatorShareIdr, 21_250);
-  await writer.page.locator("#pack-view").getByText(/ord-sandbox-1/).waitFor();
+  assert.equal(writerAfterPause.earnings.length, 1);
+  assert.equal(writerAfterPause.earnings[0].earningsEntryId, "earn-ord-sandbox-1");
+  await writer.page.locator("#pack-view").getByText(/earn-ord-sandbox-1/).waitFor();
+
+  const lifecycleRes = await reviewer.context.request.get(
+    origin + "/api/packs/lifecycle?orderId=ord-sandbox-1",
+  );
+  assert.equal(lifecycleRes.status(), 200);
+  const redactedLifecycle = await lifecycleRes.json();
 
   await writeFile(
     join(results, "pack-report.json"),
@@ -224,8 +275,11 @@ try {
         })),
         byline: "Raka Pratama · Kolektif Jelajah Selatan",
         privateAnswerKeysProtected: true,
+        paidRoomCode: roomCode,
         pausedNewOrderStatus: 409,
         preservedOrdersAfterPause: writerAfterPause.orders,
+        reconciledEarningsAfterPause: writerAfterPause.earnings,
+        redactedMidtransLifecycle: redactedLifecycle.events,
       },
       null,
       2,
@@ -237,7 +291,7 @@ try {
     reviewer.context.close(),
     buyer.context.close(),
   ]);
-  console.log("Creator pack review, publication, answer-key protection and pause checks passed.");
+  console.log("Creator pack review, publication, sandbox checkout, paid room unlock, earnings and pause checks passed.");
 } finally {
   await browser?.close();
   await server?.close();

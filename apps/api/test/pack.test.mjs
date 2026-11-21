@@ -247,7 +247,7 @@ test("reviewer can pause sales after a confirmed closure while existing orders r
   await writer.post("submit-draft", { packId: "pack-selatan-compact", version: 1 });
   await reviewer.post("publish-version", { packId: "pack-selatan-compact", version: 1 });
 
-  // 1. Buyer completes one sandbox order on published v1.
+  // 1. Buyer creates a pending sandbox order on published v1, then verifies settlement.
   const ordered = await buyer.post("create-order", {
     packId: "pack-selatan-compact",
     version: 1,
@@ -256,10 +256,23 @@ test("reviewer can pause sales after a confirmed closure while existing orders r
   assert.equal(ordered.status, 200);
   assert.equal(ordered.orders.length, 1);
   assert.equal(ordered.orders[0].orderId, "ord-sandbox-1");
+  assert.equal(ordered.orders[0].status, "pending");
+  assert.equal(ordered.orders[0].passId, null);
+  assert.equal(ordered.orders[0].roomCode, null);
   assert.equal(ordered.orders[0].grossAmountIdr, 25_000);
   assert.equal(ordered.orders[0].platformFeeIdr, 3_750);
   assert.equal(ordered.orders[0].creatorShareIdr, 21_250);
   assert.equal(ordered.orders[0].sandbox, true);
+
+  const settled = await buyer.post("verify-settlement", {
+    orderId: "ord-sandbox-1",
+    transactionStatus: "settlement",
+  });
+  assert.equal(settled.status, 200);
+  assert.equal(settled.orders[0].status, "settled");
+  assert.equal(settled.orders[0].passId, "pass-ord-sandbox-1");
+  assert.match(settled.orders[0].roomCode, /^[0-9A-F]{8}$/);
+  assert.equal(settled.orders[0].earningsEntryId, "earn-ord-sandbox-1");
 
   // 2. Player reports a closure on Taman Literasi; reviewer sees the closure report and pauses v1 sales.
   const reported = await buyer.post("report-closure", {
@@ -292,18 +305,24 @@ test("reviewer can pause sales after a confirmed closure while existing orders r
   assert.equal(newOrderBlocked.status, 409);
   assert.equal(newOrderBlocked.error, "sales-paused");
 
-  // 4. Existing orders remain visible for buyer support, reviewer support, and writer earnings reconciliation.
+  // 4. Existing orders and reconciled earnings remain visible for buyer support, reviewer support, and writer reconciliation.
   const buyerAfterPause = await buyer.get();
   assert.equal(buyerAfterPause.orders.length, 1);
   assert.equal(buyerAfterPause.orders[0].orderId, "ord-sandbox-1");
+  assert.equal(buyerAfterPause.orders[0].status, "settled");
   assert.match(buyerAfterPause.orders[0].supportNote, /Penjualan v1 dijeda/);
 
   const writerAfterPause = await writer.get();
   assert.equal(writerAfterPause.orders.length, 1);
   assert.equal(writerAfterPause.orders[0].orderId, "ord-sandbox-1");
   assert.equal(writerAfterPause.orders[0].creatorShareIdr, 21_250);
+  assert.equal(writerAfterPause.earnings.length, 1);
+  assert.equal(writerAfterPause.earnings[0].earningsEntryId, "earn-ord-sandbox-1");
+  assert.equal(writerAfterPause.earnings[0].creatorShareIdr, 21_250);
 
   const reviewerAfterPause = await reviewer.get();
   assert.equal(reviewerAfterPause.orders.length, 1);
   assert.equal(reviewerAfterPause.orders[0].orderId, "ord-sandbox-1");
+  assert.equal(reviewerAfterPause.earnings.length, 1);
+  assert.equal(reviewerAfterPause.earnings[0].earningsEntryId, "earn-ord-sandbox-1");
 });

@@ -14,9 +14,24 @@ import {
   requestBody,
   setCredential,
 } from "./http.js";
+import type {
+  MidtransNotificationPayload,
+  MidtransTransactionStatus,
+} from "./midtrans-adapter.js";
 import type { packStore } from "./pack-store.js";
 
 const packPath = "/api/packs";
+const webhookPath = "/api/packs/midtrans-notification";
+const lifecyclePath = "/api/packs/lifecycle";
+
+const validTransactionStatuses = new Set<MidtransTransactionStatus>([
+  "pending",
+  "settlement",
+  "capture",
+  "expire",
+  "cancel",
+  "deny",
+]);
 
 function cookieNameForRole(role: PackRole) {
   return `kelana_pack_${role}`;
@@ -112,6 +127,55 @@ function parsePackAction(value: unknown): PackAction | undefined {
     return draft ? { type, actionId, draft } : undefined;
   }
 
+  if (type === "checkout-return") {
+    return isId(value.orderId) ? { type, actionId, orderId: value.orderId } : undefined;
+  }
+
+  if (type === "verify-settlement") {
+    if (!isId(value.orderId)) return undefined;
+    const status = value.transactionStatus;
+    if (
+      status !== undefined &&
+      status !== "pending" &&
+      status !== "settlement" &&
+      status !== "expire" &&
+      status !== "cancel" &&
+      status !== "deny"
+    ) {
+      return undefined;
+    }
+    if (value.statusCode !== undefined && typeof value.statusCode !== "string") return undefined;
+    if (value.grossAmount !== undefined && typeof value.grossAmount !== "string") return undefined;
+    if (value.currency !== undefined && typeof value.currency !== "string") return undefined;
+    if (value.signatureKey !== undefined && typeof value.signatureKey !== "string") return undefined;
+    return {
+      type,
+      actionId,
+      orderId: value.orderId,
+      ...(value.statusCode !== undefined ? { statusCode: value.statusCode } : {}),
+      ...(status !== undefined ? { transactionStatus: status } : {}),
+      ...(value.grossAmount !== undefined ? { grossAmount: value.grossAmount } : {}),
+      ...(value.currency !== undefined ? { currency: value.currency } : {}),
+      ...(value.signatureKey !== undefined ? { signatureKey: value.signatureKey } : {}),
+    };
+  }
+
+  if (type === "redeem-pass") {
+    if (
+      !isId(value.passId) ||
+      typeof value.roomCode !== "string" ||
+      !/^[0-9a-f]{8}$/i.test(value.roomCode)
+    ) {
+      return undefined;
+    }
+    return {
+      type,
+      actionId,
+      passId: value.passId,
+      roomCode: value.roomCode.toUpperCase(),
+    };
+  }
+
   if (!isId(value.packId) || typeof value.version !== "number" || !Number.isInteger(value.version)) {
     return undefined;
   }
@@ -147,12 +211,78 @@ function parsePackAction(value: unknown): PackAction | undefined {
   return undefined;
 }
 
+function parseMidtransNotification(value: unknown): MidtransNotificationPayload | undefined {
+  if (!isObject(value)) return undefined;
+  if (
+    !isId(value.order_id) ||
+    typeof value.status_code !== "string" ||
+    typeof value.gross_amount !== "string" ||
+    typeof value.signature_key !== "string" ||
+    typeof value.transaction_status !== "string" ||
+    !validTransactionStatuses.has(value.transaction_status as MidtransTransactionStatus)
+  ) {
+    return undefined;
+  }
+  if (value.currency !== undefined && typeof value.currency !== "string") return undefined;
+  if (
+    value.fraud_status !== undefined &&
+    value.fraud_status !== "accept" &&
+    value.fraud_status !== "challenge" &&
+    value.fraud_status !== "deny"
+  ) {
+    return undefined;
+  }
+  if (value.payment_type !== undefined && typeof value.payment_type !== "string") return undefined;
+  return {
+    order_id: value.order_id,
+    status_code: value.status_code,
+    gross_amount: value.gross_amount,
+    transaction_status: value.transaction_status as MidtransTransactionStatus,
+    signature_key: value.signature_key,
+    ...(value.currency !== undefined ? { currency: value.currency } : {}),
+    ...(value.fraud_status !== undefined ? { fraud_status: value.fraud_status } : {}),
+    ...(value.payment_type !== undefined ? { payment_type: value.payment_type } : {}),
+  };
+}
+
 export function packHandler(
   store: ReturnType<typeof packStore>,
   now: () => number,
   secureCookie: boolean,
 ) {
   return async (request: IncomingMessage, response: ServerResponse, url: URL) => {
+    if (url.pathname === webhookPath) {
+      if (request.method !== "POST") return json(response, 404, { error: "not-found" });
+      if (!hasJsonBody(request)) return json(response, 415, { error: "invalid-request" });
+      const body = await requestBody(request);
+      const receivedAt = now();
+      if (body === undefined) return json(response, 413, { error: "invalid-request" });
+      let parsedJson: unknown;
+      try {
+        parsedJson = JSON.parse(body);
+      } catch {
+        return json(response, 400, { error: "invalid-request" });
+      }
+      const payload = parseMidtransNotification(parsedJson);
+      if (!payload) return json(response, 400, { error: "invalid-request" });
+      const reply = await store.handleMidtransNotification(payload, receivedAt);
+      return json(response, reply.status, reply.body);
+    }
+
+    if (url.pathname === lifecyclePath) {
+      if (request.method !== "GET") return json(response, 404, { error: "not-found" });
+      const orderId = url.searchParams.get("orderId");
+      if (!isId(orderId)) return json(response, 400, { error: "invalid-request" });
+      const reviewerToken = readPackToken(request, "reviewer");
+      if (!reviewerToken) return json(response, 401, { error: "session-required" });
+      const check = store.bootstrap(reviewerToken, "reviewer", now());
+      if (check.token) return json(response, 403, { error: "forbidden-role" });
+      return json(response, 200, {
+        orderId,
+        events: store.redactedLifecycle(orderId),
+      });
+    }
+
     if (url.pathname !== packPath) {
       return json(response, 404, { error: "not-found" });
     }
@@ -162,7 +292,7 @@ export function packHandler(
     if (request.method === "GET") {
       const requestedRole = preferredRole ?? "public";
       const existingToken = readPackToken(request, requestedRole);
-      const result = store.bootstrap(existingToken, requestedRole);
+      const result = store.bootstrap(existingToken, requestedRole, now());
       if (result.token) {
         setCredential(
           request,
@@ -202,7 +332,7 @@ export function packHandler(
     if (!action) {
       return json(response, 400, { error: "invalid-request" });
     }
-    const reply = store.act(token, action, receivedAt);
+    const reply = await store.act(token, action, receivedAt);
     return json(response, reply.status, reply.body);
   };
 }

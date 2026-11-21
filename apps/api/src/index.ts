@@ -4,6 +4,17 @@ import type { SoloAction } from "@kelana-ria/contracts";
 import { duoHandler } from "./duo-http.js";
 import { duoStore } from "./duo-store.js";
 import { credential, hasJsonBody, isFix, isId, isObject, json, requestBody, setCredential } from "./http.js";
+import {
+  createMidtransAdapterFromEnv,
+  createMidtransSandboxAdapter,
+  createRecordedMidtransAdapter,
+  signMidtransNotification,
+  verifyMidtransSignature,
+  type MidtransAdapter,
+  type MidtransNotificationPayload,
+  type RecordedMidtransAdapter,
+  type RedactedMidtransLifecycleEvent,
+} from "./midtrans-adapter.js";
 import { defaultCreatorDraft, defaultCreatorTasks } from "./pack-fixture.js";
 import { packHandler } from "./pack-http.js";
 import { packStore, validatePackVersionForPublication } from "./pack-store.js";
@@ -11,10 +22,19 @@ import { soloStore, type SoloStoreOptions } from "./solo-store.js";
 
 export type { GameConfiguration } from "@kelana-ria/contracts";
 export {
+  createMidtransAdapterFromEnv,
+  createMidtransSandboxAdapter,
+  createRecordedMidtransAdapter,
   defaultCreatorDraft,
   defaultCreatorTasks,
   packStore,
+  signMidtransNotification,
   validatePackVersionForPublication,
+  verifyMidtransSignature,
+  type MidtransAdapter,
+  type MidtransNotificationPayload,
+  type RecordedMidtransAdapter,
+  type RedactedMidtransLifecycleEvent,
 };
 export {
   COMPACT_BOARD_VERSION,
@@ -70,14 +90,22 @@ export function createSoloServer({
   databasePath = defaultDatabasePath,
   now = Date.now,
   secureCookie = false,
+  midtrans,
   ...storeOptions
-}: { databasePath?: string; now?: () => number; secureCookie?: boolean } & SoloStoreOptions = {}) {
+}: {
+  databasePath?: string;
+  now?: () => number;
+  secureCookie?: boolean;
+  midtrans?: MidtransAdapter;
+} & SoloStoreOptions = {}) {
   const store = soloStore(databasePath, { now, ...storeOptions });
   const duo = duoStore(databasePath);
   const packs = packStore(databasePath, {
     catalog: storeOptions.catalog,
     routes: storeOptions.snapshotRoutes,
     closedCheckpoints: storeOptions.closedCheckpoints,
+    midtrans,
+    unlockPaidRoom: duo.createPaidRoom,
   });
   const handleDuo = duoHandler(duo, now, secureCookie);
   const handlePacks = packHandler(packs, now, secureCookie);
