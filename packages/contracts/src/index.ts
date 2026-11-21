@@ -73,3 +73,53 @@ export type SoloReply = {
   challenge?: SoloChallenge;
   distanceMeters?: number;
 };
+
+export type DuoSeat = "host" | "guest";
+
+export type DuoZone = {
+  name: string;
+  host: number;
+  guest: number;
+  owner: DuoSeat | null;
+};
+
+export type DuoEvent = {
+  type: "started" | "claimed" | "finished" | "canceled";
+  at: number;
+  seat?: DuoSeat;
+  checkpointId?: string;
+};
+
+export type DuoRoom = {
+  code: string;
+  seat: DuoSeat;
+  edition: Omit<SoloEdition, "targets">;
+  phase: "lobby" | "active" | "finished" | "canceled";
+  now: number;
+  startedAt: number | null;
+  deadline: number | null;
+  startVerifiedUntil: number | null;
+  seats: Record<DuoSeat, { joined: boolean; ready: boolean }>;
+  owners: Partial<Record<string, DuoSeat>>;
+  landmarks: Record<DuoSeat, number>;
+  zones: DuoZone[];
+  outcome: { winner: DuoSeat | null; reason: "time" | "all-claimed" | "forfeit" | "canceled" } | null;
+  events: DuoEvent[];
+  visits: Record<string, number>;
+  cooldowns: Record<string, number>;
+};
+
+export type DuoAction = { actionId: string } & (
+  | { type: "check-in"; checkpointId: string; fix: LocationFix }
+  | { type: "ready"; ready: boolean }
+  | { type: "start" }
+  | { type: "answer"; checkpointId: string; choiceId: string; fix?: LocationFix }
+  | { type: "leave"; phase: "lobby" | "active" }
+);
+
+export type DuoReply = {
+  room?: DuoRoom;
+  error?: string;
+  challenge?: SoloChallenge;
+  distanceMeters?: number;
+};
