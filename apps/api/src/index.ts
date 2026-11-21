@@ -1,42 +1,15 @@
 import { createServer } from "node:http";
-import type { IncomingMessage, ServerResponse } from "node:http";
-import { TLSSocket } from "node:tls";
 import { fileURLToPath } from "node:url";
-import type { LocationFix, SoloAction, SoloReply } from "@kelana-ria/contracts";
+import type { SoloAction } from "@kelana-ria/contracts";
+import { duoHandler } from "./duo-http.js";
+import { duoStore } from "./duo-store.js";
+import { credential, hasJsonBody, isFix, isId, isObject, json, requestBody, setCredential } from "./http.js";
 import { soloStore } from "./solo-store.js";
 
 export type { GameConfiguration } from "@kelana-ria/contracts";
 
 const cookieName = "kelana_solo";
-const maxBodyBytes = 16 * 1024;
 const defaultDatabasePath = fileURLToPath(new URL("../.data/solo.sqlite", import.meta.url));
-
-function credential(request: IncomingMessage) {
-  const match = request.headers.cookie?.match(/(?:^|;\s*)kelana_solo=([A-Za-z0-9_-]{43})(?:;|$)/);
-  return match?.[1];
-}
-
-function json(response: ServerResponse, status: number, content: SoloReply | { error: string }) {
-  response.writeHead(status, {
-    "Cache-Control": "no-store",
-    "Content-Type": "application/json; charset=utf-8",
-    "X-Content-Type-Options": "nosniff",
-  });
-  response.end(JSON.stringify(content));
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function isId(value: unknown): value is string {
-  return typeof value === "string" && /^[A-Za-z0-9_-]{1,100}$/.test(value);
-}
-
-function isFix(value: unknown): value is LocationFix {
-  return isObject(value) && ["latitude", "longitude", "accuracy", "timestamp"].every((key) =>
-    typeof value[key] === "number" && Number.isFinite(value[key]));
-}
 
 function parseAction(value: unknown): SoloAction | undefined {
   if (!isObject(value) || !isId(value.actionId) || !isId(value.sessionId)) return undefined;
@@ -51,35 +24,25 @@ function parseAction(value: unknown): SoloAction | undefined {
   return undefined;
 }
 
-async function requestBody(request: IncomingMessage) {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of request.iterator({ destroyOnReturn: false }) as AsyncIterable<Buffer>) {
-    size += chunk.length;
-    if (size > maxBodyBytes) {
-      request.resume();
-      return undefined;
-    }
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
-
 export function createSoloServer({
   databasePath = defaultDatabasePath,
   now = Date.now,
   secureCookie = false,
 }: { databasePath?: string; now?: () => number; secureCookie?: boolean } = {}) {
   const store = soloStore(databasePath);
+  const duo = duoStore(databasePath);
+  const handleDuo = duoHandler(duo, now, secureCookie);
   const server = createServer({ requestTimeout: 15_000 }, async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
-      const token = credential(request);
+      if (url.pathname === "/api/duo" || url.pathname.startsWith("/api/duo/")) {
+        return await handleDuo(request, response, url);
+      }
+      const token = credential(request, cookieName);
       if (request.method === "GET" && url.pathname === "/api/solo") {
         const session = store.session(token, now());
         if (session.token) {
-          const secure = secureCookie || request.socket instanceof TLSSocket;
-          response.setHeader("Set-Cookie", `${cookieName}=${session.token}; Path=/api/solo; HttpOnly; SameSite=Strict; Max-Age=2592000${secure ? "; Secure" : ""}`);
+          setCredential(request, response, cookieName, session.token, "/api/solo", secureCookie);
         }
         json(response, 200, session.reply);
         return;
@@ -94,7 +57,7 @@ export function createSoloServer({
       }
       if (request.method === "POST" && url.pathname === "/api/solo") {
         if (!token) return json(response, 401, { error: "session-required" });
-        if (!/^application\/json(?:\s*;|$)/i.test(request.headers["content-type"] ?? "")) {
+        if (!hasJsonBody(request)) {
           return json(response, 415, { error: "invalid-request" });
         }
         const body = await requestBody(request);
@@ -115,11 +78,14 @@ export function createSoloServer({
       json(response, 404, { error: "not-found" });
     } catch (error) {
       if (request.aborted) return;
-      console.error("Solo API request failed", error);
+      console.error("Game API request failed", error);
       json(response, 500, { error: "server-error" });
     }
   });
-  server.on("close", () => store.close());
+  server.on("close", () => {
+    duo.close();
+    store.close();
+  });
   return server;
 }
 

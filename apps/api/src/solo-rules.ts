@@ -60,7 +60,7 @@ function distanceBetween(point: SoloPoint, fix: LocationFix) {
   return 2 * 6_371_000 * Math.asin(Math.sqrt(Math.min(1, a)));
 }
 
-function verify(point: SoloPoint, fix: LocationFix, now: number, rules: SoloFixture["checkIn"]): ActionOutcome {
+export function verifyLocation(point: SoloPoint, fix: LocationFix, now: number, rules: SoloFixture["checkIn"]): ActionOutcome {
   const { latitude, longitude, accuracy, timestamp } = fix;
   if (Math.abs(latitude) > 90 || Math.abs(longitude) > 180 || accuracy < 0 || timestamp < 0) {
     return { error: "invalid-fix" };
@@ -102,7 +102,7 @@ export function apply(run: SoloRun, action: Exclude<SoloAction, { type: "replay"
   }
 
   if (action.type === "check-in" && action.checkpointId === edition.start.id && state.phase === "briefing") {
-    const outcome = verify(edition.start, action.fix, now, checkIn);
+    const outcome = verifyLocation(edition.start, action.fix, now, checkIn);
     if (!outcome.error) {
       state.startVerifiedUntil = Math.max(state.startVerifiedUntil ?? 0, action.fix.timestamp + checkIn.maxAgeMs);
     }
@@ -114,7 +114,7 @@ export function apply(run: SoloRun, action: Exclude<SoloAction, { type: "replay"
   if (state.claimed.includes(point.id)) return { error: "already-claimed" };
 
   if (action.type === "check-in") {
-    const outcome = verify(point, action.fix, now, checkIn);
+    const outcome = verifyLocation(point, action.fix, now, checkIn);
     if (outcome.error) return outcome;
     state.visits[point.id] = Math.max(state.visits[point.id] ?? 0, action.fix.timestamp + checkIn.maxAgeMs);
     return { ...outcome, challengeCheckpointId: point.id };
@@ -127,7 +127,7 @@ export function apply(run: SoloRun, action: Exclude<SoloAction, { type: "replay"
   if (!task.challenge.choices.some(({ id }) => id === action.choiceId)) return { error: "invalid-choice" };
   if (visitUntil < now && !action.fix) return { error: "fresh-fix-required" };
   if (action.fix) {
-    const outcome = verify(point, action.fix, now, checkIn);
+    const outcome = verifyLocation(point, action.fix, now, checkIn);
     if (outcome.error) return outcome;
     state.visits[point.id] = Math.max(visitUntil, action.fix.timestamp + checkIn.maxAgeMs);
   }
