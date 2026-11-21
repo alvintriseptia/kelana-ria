@@ -77,3 +77,13 @@ The hider answers objective clues, can send a roofline photo, and manages their 
 Both **Jakarta (Compact)** and **Jakarta (Wide)** (`jakarta-wide-board-v1`, activating approved checkpoints outside Compact across Sudirman–Tanah Abang, Manggarai–Cikini, and Jakarta Kota) are playable across Solo Claim, Duo Claim, and Duo Hide & Seek (`120 min` Claim; `60 min` head start, `120 min` search, and `60 min` regroup for wide Hide & Seek trial presets).
 
 Run `npm run qa:release --workspace @kelana-ria/web` after building to execute all six configuration smoke journeys from the mobile chooser to terminal state with reload persistence and inspiration credit (`A18`) checks, writing `apps/web/qa-results/release-report.json`. See [release readiness](docs/qa/release-readiness.md) for the full pass/fail/untested release checklist.
+
+## Run a single-origin production server (phone & field testing)
+
+After running `npm run build`, serve both the built PWA (`apps/web/dist/`) and `/api/*` from a single Node process (ready to sit behind HTTPS / reverse proxy for phone installability and live field checks):
+
+```sh
+npm start
+```
+
+Set `HOST=0.0.0.0`, `PORT=8787`, `SOLO_SECURE_COOKIE=1` (behind HTTPS), and optional provider keys (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `GEOAPIFY_API_KEY`, `MIDTRANS_SERVER_KEY`). Check `GET /api/health` for active provider/map modes and `GET /api/map/usage` for server-side Geoapify tile and routing credit estimates. Ready-to-run human and field protocols live in [`docs/qa/`](docs/qa/).

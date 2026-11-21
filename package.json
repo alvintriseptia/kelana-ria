@@ -14,7 +14,8 @@
   "scripts": {
     "build": "tsc --build && npm run bundle --workspace @kelana-ria/web",
     "clean": "tsc --build --clean",
-    "dev": "npm run dev --workspace @kelana-ria/web"
+    "dev": "npm run dev --workspace @kelana-ria/web",
+    "start": "SERVE_WEB=1 npm start --workspace @kelana-ria/api"
   },
   "devDependencies": {
     "typescript": "7.0.2"
