@@ -21,6 +21,7 @@ import { packHandler } from "./pack-http.js";
 import { packStore, validatePackVersionForPublication } from "./pack-store.js";
 import { seekHandler } from "./seek-http.js";
 import { seekStore } from "./seek-store.js";
+import { staticHandler } from "./static-http.js";
 import {
   buildPublicEditionPrompt,
   createGeoapifyWalkingRouteProvider,
@@ -169,6 +170,8 @@ export function createSoloServer({
   secureCookie = false,
   midtrans,
   mapProxy,
+  staticDir,
+  healthMeta,
   ...storeOptions
 }: {
   databasePath?: string;
@@ -176,6 +179,8 @@ export function createSoloServer({
   secureCookie?: boolean;
   midtrans?: MidtransAdapter;
   mapProxy?: MapProxyOptions;
+  staticDir?: string;
+  healthMeta?: { aiMode: string; routeMode: string };
 } & SoloStoreOptions = {}) {
   const store = soloStore(databasePath, { now, ...storeOptions });
   const duo = duoStore(databasePath);
@@ -191,9 +196,21 @@ export function createSoloServer({
   const handleSeek = seekHandler(seek, now, secureCookie);
   const handlePacks = packHandler(packs, now, secureCookie);
   const handleMap = mapHandler(mapProxy);
+  const handleStatic = staticDir ? staticHandler(staticDir) : undefined;
+  const mapMode = mapProxy?.geoapifyApiKey?.trim() ? "geoapify-vector" : "offline-vector";
   const server = createServer({ requestTimeout: 15_000 }, async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
+      if (request.method === "GET" && url.pathname === "/api/health") {
+        json(response, 200, {
+          ok: true,
+          aiMode: healthMeta?.aiMode ?? "prepared-fallback",
+          routeMode: healthMeta?.routeMode ?? "prepared-fallback",
+          mapMode,
+          staticWeb: Boolean(handleStatic),
+        });
+        return;
+      }
       if (url.pathname === "/api/map" || url.pathname.startsWith("/api/map/")) {
         return await handleMap(request, response, url);
       }
@@ -263,6 +280,9 @@ export function createSoloServer({
         json(response, 200, reply);
         return;
       }
+      if (handleStatic && (await handleStatic(request, response, url))) {
+        return;
+      }
       json(response, 404, { error: "not-found" });
     } catch (error) {
       if (request.aborted) return;
@@ -283,11 +303,15 @@ if (import.meta.main) {
   const host = process.env.HOST ?? "127.0.0.1";
   const port = Number(process.env.PORT ?? 8787);
   const providers = createProvidersFromEnv(process.env);
+  const defaultWebDist = fileURLToPath(new URL("../../web/dist", import.meta.url));
+  const staticDir = process.env.WEB_DIST_DIR || (process.env.SERVE_WEB === "1" ? defaultWebDist : undefined);
   const server = createSoloServer({
     databasePath: process.env.SOLO_DATABASE_PATH,
     secureCookie: process.env.SOLO_SECURE_COOKIE === "1",
     aiProvider: providers.aiProvider,
     routeProvider: providers.routeProvider,
+    staticDir,
+    healthMeta: { aiMode: providers.aiMode, routeMode: providers.routeMode },
     mapProxy: {
       geoapifyApiKey: process.env.GEOAPIFY_API_KEY,
       geoapifyMapsBaseUrl: process.env.GEOAPIFY_MAPS_BASE_URL,
@@ -297,7 +321,7 @@ if (import.meta.main) {
   });
   server.listen(port, host, () => {
     console.log(
-      `Solo API listening on ${host}:${port} (ai=${providers.aiMode}, routes=${providers.routeMode})`,
+      `Kelana Ria server listening on http://${host}:${port} (ai=${providers.aiMode}, routes=${providers.routeMode}, web=${staticDir ? "enabled" : "api-only"})`,
     );
   });
 }
