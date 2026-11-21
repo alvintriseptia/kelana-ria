@@ -46,7 +46,7 @@ npm run dev
 
 Choose Solo, Claim the City and Jakarta (Compact), then open **Lihat ringkasan** and **Coba simulasi**. Use **Simulasikan lokasi di sini** to test check-ins without traveling. The board, challenges and location samples are fixtures. The local server stores countdowns, scores and results in `apps/api/.data/solo.sqlite`. Set `SOLO_DATABASE_PATH` to choose another database. The PWA caches the chooser shell. The outing requires a server connection for check-ins, claims and recovery.
 
-Run `npm test --workspace @kelana-ria/api` for server rules and `npm run qa:solo --workspace @kelana-ria/web` for the mobile win, loss and recovery paths. The browser test starts a fixture API with an isolated database and controlled clock. It writes screenshots and a result report alongside the chooser QA evidence.
+Run `npm test --workspace @kelana-ria/api` for server rules, edition validation (`compact-board-v1`), two feasible Compact editions with attributed route snapshots, and same-configuration fallback checks, and `npm run qa:solo --workspace @kelana-ria/web` for the mobile win, loss, closure notice and recovery paths. The browser test starts a fixture API with an isolated database and controlled clock. It writes screenshots and a result report alongside the chooser QA evidence.
 
 ## Play the Compact two-player fixture
 
@@ -59,3 +59,9 @@ Run `npm run qa:duo --workspace @kelana-ria/web` against a production build to e
 Choose **Berdua**, **Hide & Seek**, and **Jakarta (Compact)**. Open the simulation, create a room, share its invite with a second browser profile, and choose who hides first. Both players check in at CSW–ASEAN and confirm readiness. The hider privately locks a point before release. The seeker checks in at the start after release and investigates a point at a time. After turn one, both check in at the start again to swap roles.
 
 The prepared fixture allows 30 minutes of head start and 60 minutes of search in each turn, with a 30-minute regroup allowance. Locations and timing are for simulated testing. Run `npm run qa:seek --workspace @kelana-ria/web` after building to advance the server clock through a two-turn browser match and capture both views.
+
+## Review, publish, and settle a creator pack (Test payment)
+
+Open the summary for Jakarta (Compact) Claim the City and choose **Paket kreator Jakarta** (or open `/?play=creator-packs`). Switch between **Penulis**, **Peninjau** and **Katalog Publik** to save a draft, submit it for editorial review, return a correction request, publish the revised version, purchase one sandbox session (**Test payment**), settle it to unlock one paid room and one creator earnings entry, invite a second player on the same pass without starting the clock before readiness, and pause new sales after a confirmed checkpoint closure while keeping existing orders and earnings visible.
+
+Set `MIDTRANS_SERVER_KEY` in the API runtime environment to enable live Midtrans Snap sandbox requests (`POST /snap/v1/transactions`, `GET /v2/{order_id}/status`, and SHA-512 verification on `POST /api/packs/midtrans-notification`); optionally override `MIDTRANS_SANDBOX_SNAP_URL` and `MIDTRANS_SANDBOX_API_URL`. When `MIDTRANS_SERVER_KEY` is unset, the API runs in clearly labeled `recorded-sandbox` mode so checkout, idempotent settlement, and paid room unlocking can still be verified offline and in CI without committing secrets. Run `npm run qa:packs --workspace @kelana-ria/web` to verify all roles, checkout settlement, paid room invite, and pause flows in isolated browser profiles.

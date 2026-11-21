@@ -30,24 +30,33 @@ export function lobby(
 ) {
   const verified = (state.startVerifiedUntil ?? 0) > now;
   const ready = state.seats[state.seat].ready;
-  const allReady = seats.every(seat => state.seats[seat].ready);
+  const activeSeats = state.paidPack?.players === 1 ? (["host"] as const) : seats;
+  const allReady = activeSeats.every(seat => state.seats[seat].ready);
+  const paidBanner = state.paidPack
+    ? `<p class="solo-feedback">Paket kreator berbayar: <strong>${escapeText(state.paidPack.title)}</strong> (v${state.paidPack.version}) · Oleh ${escapeText(state.paidPack.byline)} · Test payment</p>`
+    : "";
   return `<div class="solo-main-column">
       <section class="solo-objective" aria-labelledby="duo-objective-heading">
         <h2 id="duo-objective-heading" tabindex="-1">Kuasai zona terbanyak</h2>
+        ${paidBanner}
         <p>Check-in di landmark dan jawab tantangannya. Jawaban benar pertama mengunci klaim. Zona dengan jumlah klaim yang sama tetap netral.</p>
         <p>Jika jumlah zona seri, pemain dengan lebih banyak landmark menang. Permainan selesai dalam <strong>${Math.round(state.edition.durationMs / 60_000)} menit</strong> atau saat semua landmark diklaim.</p>
         <p class="solo-edition">Edisi ${escapeText(state.edition.id)} · Berjalan kaki, MRT, KRL, dan Transjakarta. Perjalanan sungguhan memakai data seluler dan ongkos biasa.</p>
       </section>
       <section class="solo-ticket" aria-labelledby="duo-room-heading">
         <h2 id="duo-room-heading" tabindex="-1">Ruang tunggu</h2>
-        ${inviteMarkup(state.code, state.seat === "host", "duo-claim")}
-        <ul class="duo-seats" aria-label="Kursi pemain">${seats.map(seat => seatMarkup(state, seat)).join("")}</ul>
+        ${inviteMarkup(state.code, state.seat === "host" && state.paidPack?.players !== 1, "duo-claim")}
+        <ul class="duo-seats" aria-label="Kursi pemain">${activeSeats.map}(seat => seatMarkup(state, seat)).join("")}</ul>
       </section>
       <section class="solo-ticket" id="duo-action" aria-labelledby="duo-action-heading">
         <span class="solo-start-label">Titik awal</span>
         <h2 id="duo-action-heading" tabindex="-1">${escapeText(state.edition.start.name)}</h2>
         <p>${verified ? "Check-in titik awal terverifikasi." : "Check-in di titik awal sebelum menyatakan siap."}
-          ${state.seat === "host" ? "Hitung mundur dimulai setelah kedua pemain siap dan kamu menekan Mulai." : "Tuan rumah memulai ronde setelah kedua pemain siap."}</p>
+          ${state.paidPack?.players === 1
+            ? "Hitung mundur dimulai setelah kamu siap dan menekan Mulai."
+            : state.seat === "host"
+              ? "Hitung mundur dimulai setelah kedua pemain siap dan kamu menekan Mulai."
+              : "Tuan rumah memulai ronde setelah kedua pemain siap."}</p>
         ${feedbackMarkup(feedback)}
         <div class="solo-actions">
           ${allReady && state.seat === "host" ? action("Mulai", "start", "primary", busy || !verified) : ""}

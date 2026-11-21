@@ -60,7 +60,7 @@ export function duoHandler(store: ReturnType<typeof duoStore>, now: () => number
       const reply = store.act(token, code, action, receivedAt);
       return json(response, reply.status, reply.body);
     }
-    const action = parseLobbyAction(value);
+    const action = parseLobbyAction(value, true);
     if (!action) return json(response, 400, { error: "invalid-request" });
     const reply = store.lobby(token, action, receivedAt);
     return json(response, reply.status, reply.body);

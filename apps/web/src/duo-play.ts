@@ -7,7 +7,7 @@ import "./solo-play.css";
 import "./duo-play.css";
 
 const apiPath = "/api/duo";
-const entryRequests = pendingEntry("kelana-duo-pending-entry");
+const entryRequests = pendingEntry("kelana-duo-pending-entry", true);
 const mapUrl = new URL("./assets/solo-schematic.webp", import.meta.url).href;
 const errors: Record<string, string> = {
   "room-not-found": "Ruang dengan kode ini tidak ditemukan. Periksa kode undangan.",
@@ -30,6 +30,9 @@ const errors: Record<string, string> = {
   "inaccurate-fix": "Lokasi kurang akurat. Cari area terbuka lalu coba lagi.",
   "outside-radius": "Kamu berada di luar radius check-in. Dekati titiknya lalu coba lagi.",
   "invalid-request": "Permintaan belum berhasil. Periksa pilihanmu dan coba lagi.",
+  "pass-required": "Ruang berbayar ini menunggu tuan rumah membuka sesi dengan pass yang lunas.",
+  "pass-already-bound": "Pass sesi ini sudah terikat ke ruang lain dan tidak dapat digunakan ulang.",
+  "invalid-pass": "Pass sesi tidak valid atau belum lunas.",
 };
 
 type RoundAction = DuoAction extends infer A ? A extends DuoAction ? Omit<A, "actionId"> : never : never;
@@ -41,7 +44,9 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
   const { signal } = mount;
   const { credential, request } = roomTransport<DuoReply, RequestAction>(apiPath, "kelana-duo-bootstrap");
   let room: DuoRoom | undefined;
-  let inviteCode = (new URLSearchParams(location.search).get("room") ?? "").trim().toUpperCase();
+  const initialParams = new URLSearchParams(location.search);
+  let inviteCode = (initialParams.get("room") ?? "").trim().toUpperCase();
+  let pendingPassId = (initialParams.get("pass") ?? "").trim();
   const restored = entryRequests.read(inviteCode);
   let joinInput = restored?.type === "join" ? restored.code : inviteCode;
   let loading = !restored;
@@ -91,6 +96,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
     const url = new URL(location.href);
     if (code) url.searchParams.set("room", code);
     else url.searchParams.delete("room");
+    url.searchParams.delete("pass");
     history.replaceState(history.state, "", url);
   }
 
@@ -258,6 +264,7 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
     const requestSignal = AbortSignal.any([signal, read.signal]);
     let focus: string | undefined;
     let repaint = loading || disconnected || Boolean(checkpointId);
+    let autoClaimPass = "";
     try {
       await credential(requestSignal);
       if (requestSignal.aborted) return;
@@ -273,9 +280,13 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
         const reply = await request(checkpointId ? `${path}/challenge?${new URLSearchParams({ checkpointId })}` : path, requestSignal);
         if (requestSignal.aborted) return;
         if (reply.room) {
+          pendingPassId = "";
           const update = receive(reply);
           focus = update.focus;
           repaint ||= update.changed;
+        } else if (!room && reply.error === "room-required" && pendingPassId) {
+          autoClaimPass = pendingPassId;
+          pendingPassId = "";
         } else if (room && reply.error === "room-required") {
           room = undefined;
           selectPoint();
@@ -295,7 +306,8 @@ export function mountDuoPlay(root: HTMLElement, returnToSetup: () => void) {
       if (reading === read) reading = undefined;
       if (!requestSignal.aborted) {
         loading = false;
-        if (repaint) paint(focus);
+        if (autoClaimPass) send({ type: "join", code: inviteCode, passId: autoClaimPass });
+        else if (repaint) paint(focus);
       }
     }
   }

@@ -98,7 +98,7 @@ export function schematicBoard(
   </figure>`;
 }
 
-export function result(session: SoloSession) {
+export function result(session: SoloSession, feedbackHtml = "") {
   const final = session.events.at(-1);
   const exhausted = final?.type === "expired" && session.deadline !== null && final.at < session.deadline;
   const [title, reason] = session.phase === "won"
@@ -125,7 +125,11 @@ export function result(session: SoloSession) {
       <p>${reason}</p>
       ${score(session)}
       ${session.zones.length ? `<p>Zona dengan klaim · ${escapeText(session.zones.join(", "))}</p>` : ""}
-      ${action("Main lagi", "replay", "primary")}
+      ${feedbackHtml}
+      <div class="solo-actions">
+        ${action("Main lagi", "replay", "primary")}
+        ${action("Edisi lain", "fresh-edition", "secondary")}
+      </div>
     </section>
     <section class="solo-recap" aria-labelledby="solo-recap-heading">
       <h2 id="solo-recap-heading">Riwayat permainan</h2>

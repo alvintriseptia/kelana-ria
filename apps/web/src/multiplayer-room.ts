@@ -5,7 +5,7 @@ export const player: Record<DuoSeat, string> = { host: "Pemain 1", guest: "Pemai
 export const seats = ["host", "guest"] as const;
 export const roomCodePattern = /^[0-9A-F]{8}$/;
 
-export type EntryAction = { type: "create" } | { type: "join"; code: string };
+export type EntryAction = { type: "create" } | { type: "join"; code: string; passId?: string };
 export type EntryRequest = EntryAction & { actionId: string };
 export type Feedback = { text: string; error?: boolean };
 
@@ -16,7 +16,7 @@ export function inviteUrl(mode: string, code: string) {
   return url;
 }
 
-export function pendingEntry(key: string) {
+export function pendingEntry(key: string, allowPass = false) {
   return {
     read(roomCode: string): EntryRequest | undefined {
       try {
@@ -26,7 +26,9 @@ export function pendingEntry(key: string) {
         const { actionId, type } = request;
         if (type === "create") return { actionId, type };
         if (type === "join" && typeof request.code === "string" && roomCodePattern.test(request.code)) {
-          return { actionId, type, code: request.code };
+          return allowPass && typeof request.passId === "string" && request.passId
+            ? { actionId, type, code: request.code, passId: request.passId }
+            : { actionId, type, code: request.code };
         }
       } catch {
         // Browsers can restrict session storage. The current page can still retry in memory.

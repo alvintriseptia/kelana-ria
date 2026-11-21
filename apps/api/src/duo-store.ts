@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
-import type { DuoAction, DuoReply } from "@kelana-ria/contracts";
+import type { DuoAction, DuoReply, DuoRoom } from "@kelana-ria/contracts";
 import { applyDuo, expireDuo, memberSeat, newDuoRun, newMember, openDuoChallenge, viewDuo } from "./duo-rules.js";
-import type { DuoActionOutcome, DuoRun } from "./duo-rules.js";
+import type { DuoActionOutcome, DuoFixture, DuoRun } from "./duo-rules.js";
 import type { LobbyAction } from "./http.js";
 
 type Response = { status: number; body: DuoReply };
@@ -30,6 +30,10 @@ export function duoStore(databasePath: string) {
       code TEXT PRIMARY KEY,
       snapshot TEXT NOT NULL
     ) STRICT;
+    CREATE TABLE IF NOT EXISTS duo_paid_passes (
+      pass_id TEXT PRIMARY KEY,
+      code TEXT NOT NULL
+    ) STRICT;
     CREATE TABLE IF NOT EXISTS duo_actions (
       credential_hash TEXT NOT NULL REFERENCES duo_credentials(credential_hash),
       scope TEXT NOT NULL,
@@ -44,6 +48,8 @@ export function duoStore(databasePath: string) {
   const getRoom = database.prepare("SELECT snapshot FROM duo_rooms WHERE code = ?");
   const addRoom = database.prepare("INSERT INTO duo_rooms (code, snapshot) VALUES (?, ?)");
   const updateRoom = database.prepare("UPDATE duo_rooms SET snapshot = ? WHERE code = ?");
+  const getPaidPass = database.prepare("SELECT code FROM duo_paid_passes WHERE pass_id = ?");
+  const addPaidPass = database.prepare("INSERT INTO duo_paid_passes (pass_id, code) VALUES (?, ?)");
   const getAction = database.prepare("SELECT receipt FROM duo_actions WHERE credential_hash = ? AND scope = ? AND action_id = ?");
   const addAction = database.prepare("INSERT INTO duo_actions (credential_hash, scope, action_id, receipt) VALUES (?, ?, ?, ?)");
 
@@ -87,21 +93,46 @@ export function duoStore(databasePath: string) {
     return { run, seat };
   }
 
+  function nextRoomCode() {
+    let code: string;
+    do {
+      code = randomBytes(4).toString("hex").toUpperCase();
+    } while (getRoom.get(code));
+    return code;
+  }
+
   function lobbyAction(key: string, action: LobbyAction): LobbyReceipt {
     if (action.type === "create") {
-      let code: string;
-      do {
-        code = randomBytes(4).toString("hex").toUpperCase();
-      } while (getRoom.get(code));
+      const code = nextRoomCode();
       addRoom.run(code, JSON.stringify(newDuoRun(code, key)));
       return { code };
     }
 
-    const { code } = action;
+    const { code, passId } = action;
     const run = load(code);
     if (!run) return { failure: failure(404, "room-not-found") };
+
+    if (passId) {
+      const bound = getPaidPass.get(passId) as { code?: string } | undefined;
+      if (!bound) return { failure: failure(403, "invalid-pass") };
+      if (bound.code !== code || run.paidPassId !== passId) {
+        return { failure: failure(409, "pass-already-bound") };
+      }
+    }
+
     if (memberSeat(run, key)) return { code };
-    if (run.guest) return { failure: failure(409, "room-full") };
+
+    if (run.paidPassId && run.host.credentialHash === "") {
+      if (!passId || passId !== run.paidPassId) {
+        return { failure: failure(403, "pass-required") };
+      }
+      if (run.phase !== "lobby") return { failure: failure(409, "round-finished") };
+      run.host.credentialHash = key;
+      save(run);
+      return { code };
+    }
+
+    if (run.paidPack?.players === 1 || run.guest) return { failure: failure(409, "room-full") };
     if (run.phase !== "lobby") return { failure: failure(409, "round-finished") };
     run.host.ready = false;
     run.guest = newMember(key);
@@ -111,6 +142,20 @@ export function duoStore(databasePath: string) {
 
   return {
     close() { database.close(); },
+    createPaidRoom(
+      fixture: DuoFixture,
+      passId: string,
+      paidPack: NonNullable<DuoRoom["paidPack"]>,
+    ): string {
+      return transact(() => {
+        const existing = getPaidPass.get(passId) as { code?: string } | undefined;
+        if (existing?.code) return existing.code;
+        const code = nextRoomCode();
+        addRoom.run(code, JSON.stringify(newDuoRun(code, "", fixture, { passId, paidPack })));
+        addPaidPass.run(passId, code);
+        return code;
+      });
+    },
     bootstrap(credential: string | undefined) {
       if (credential && authenticated(credential)) return undefined;
       const token = randomBytes(32).toString("base64url");

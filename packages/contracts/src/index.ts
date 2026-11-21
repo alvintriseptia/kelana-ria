@@ -17,12 +17,38 @@ export type SoloPoint = {
 
 export type SoloCheckpoint = SoloPoint & { zone: string; transit: string };
 
+export type SoloRouteAttribution = {
+  source: "live" | "snapshot";
+  provider: string;
+  retrievedAt: string;
+  attribution: string;
+};
+
+export type SoloOpeningSummary = {
+  firstCheckpointId: string;
+  stops: string[];
+  zones: string[];
+  estimatedDurationMs: number;
+  withMissedConnectionMs: number;
+  unvisitedCount: number;
+};
+
+export type SoloEditionOrigin = "prepared" | "live";
+
 export type SoloEdition = {
   id: string;
+  board?: "compact";
+  boardVersion?: string;
+  format?: "claim-the-city";
+  players?: 1;
+  origin?: SoloEditionOrigin;
+  fallbackReason?: string;
   durationMs: number;
   targets: { landmarks: number; zones: number };
   start: SoloPoint;
   checkpoints: SoloCheckpoint[];
+  routes?: SoloRouteAttribution;
+  openings?: SoloOpeningSummary[];
 };
 
 export type LocationFix = {
@@ -58,7 +84,7 @@ export type SoloAction = { actionId: string; sessionId: string } & (
   | { type: "start" }
   | { type: "answer"; checkpointId: string; choiceId: string; fix?: LocationFix }
   | { type: "abandon" }
-  | { type: "replay" }
+  | { type: "replay"; freshEdition?: boolean }
 );
 
 export type SoloChallenge = {
@@ -72,6 +98,7 @@ export type SoloReply = {
   error?: string;
   challenge?: SoloChallenge;
   distanceMeters?: number;
+  closedCheckpointId?: string;
 };
 
 export type DuoSeat = "host" | "guest";
@@ -107,6 +134,15 @@ export type DuoRoom = {
   events: DuoEvent[];
   visits: Record<string, number>;
   cooldowns: Record<string, number>;
+  paidPack?: {
+    packId: string;
+    version: number;
+    title: string;
+    byline: string;
+    orderId: string;
+    players: 1 | 2;
+    sandbox: true;
+  };
 };
 
 export type DuoAction = { actionId: string } & (
@@ -122,6 +158,163 @@ export type DuoReply = {
   error?: string;
   challenge?: SoloChallenge;
   distanceMeters?: number;
+};
+
+export type PackRole = "public" | "writer" | "reviewer";
+
+export type PackVersionStatus =
+  | "draft"
+  | "submitted"
+  | "changes-requested"
+  | "published"
+  | "paused";
+
+export type PackOrderStatus = "pending" | "settled" | "expired";
+export type PackPaymentMode = "midtrans-sandbox" | "recorded-sandbox";
+
+export type PackTaskInput = {
+  checkpointId: string;
+  question: string;
+  choices: { id: string; label: string }[];
+  correctChoiceId: string;
+  verificationNotes: string;
+};
+
+export type PackPublicCheckpoint = {
+  id: string;
+  name: string;
+  zone: string;
+  transit: string;
+};
+
+export type PackOrderSummary = {
+  orderId: string;
+  packId: string;
+  version: number;
+  title: string;
+  byline: string;
+  players: 1 | 2;
+  currency: "IDR";
+  grossAmountIdr: number;
+  platformFeeIdr: number;
+  creatorShareIdr: number;
+  status: PackOrderStatus;
+  createdAt: number;
+  expiresAt: number;
+  checkoutReturnedAt: number | null;
+  settledAt: number | null;
+  passId: string | null;
+  roomCode: string | null;
+  earningsEntryId: string | null;
+  paymentMode: PackPaymentMode;
+  snapRedirectUrl?: string;
+  supportNote?: string;
+  sandbox: true;
+};
+
+export type PackEarningsEntry = {
+  earningsEntryId: string;
+  orderId: string;
+  packId: string;
+  version: number;
+  title: string;
+  byline: string;
+  currency: "IDR";
+  grossAmountIdr: number;
+  platformFeeIdr: number;
+  creatorShareIdr: number;
+  settledAt: number;
+  paymentMode: PackPaymentMode;
+  sandbox: true;
+};
+
+export type PackPublicListing = {
+  packId: string;
+  version: number;
+  status: "published";
+  byline: string;
+  title: string;
+  format: "claim-the-city";
+  board: "compact";
+  boardVersion: string;
+  supportedPlayers: (1 | 2)[];
+  priceIdr: number;
+  startName: string;
+  areaSummary: string;
+  durationMinutes: number;
+  transitFaresNote: string;
+  publishedAt: number;
+  checkpoints: PackPublicCheckpoint[];
+};
+
+export type PackVersionDetail = {
+  packId: string;
+  version: number;
+  status: PackVersionStatus;
+  byline: string;
+  title: string;
+  format: "claim-the-city";
+  board: "compact";
+  boardVersion: string;
+  supportedPlayers: (1 | 2)[];
+  priceIdr: number;
+  durationMinutes: number;
+  updatedAt: number;
+  publishedAt: number | null;
+  reviewNote: string | null;
+  pausedReason: string | null;
+  tasks: PackTaskInput[];
+};
+
+export type PackClosureReport = {
+  reportId: string;
+  packId: string;
+  version: number;
+  checkpointId: string;
+  reason: string;
+  reportedAt: number;
+};
+
+export type PackDraftPayload = {
+  packId?: string;
+  byline: string;
+  title: string;
+  format: "claim-the-city";
+  board: "compact";
+  supportedPlayers: (1 | 2)[];
+  priceIdr: number;
+  tasks: PackTaskInput[];
+};
+
+export type PackAction = { actionId: string } & (
+  | { type: "save-draft"; draft: PackDraftPayload }
+  | { type: "submit-draft"; packId: string; version: number }
+  | { type: "request-changes"; packId: string; version: number; note: string }
+  | { type: "publish-version"; packId: string; version: number }
+  | { type: "report-closure"; packId: string; version: number; checkpointId: string; reason: string }
+  | { type: "pause-version"; packId: string; version: number; reason: string }
+  | { type: "create-order"; packId: string; version: number; players: 1 | 2 }
+  | { type: "checkout-return"; orderId: string }
+  | {
+      type: "verify-settlement";
+      orderId: string;
+      statusCode?: string;
+      transactionStatus?: "pending" | "settlement" | "expire" | "cancel" | "deny";
+      grossAmount?: string;
+      currency?: string;
+      signatureKey?: string;
+    }
+  | { type: "redeem-pass"; passId: string; roomCode: string }
+);
+
+export type PackWorkspaceReply = {
+  role: PackRole;
+  listings: PackPublicListing[];
+  versions?: PackVersionDetail[];
+  closures?: PackClosureReport[];
+  orders: PackOrderSummary[];
+  earnings?: PackEarningsEntry[];
+  error?: string;
 };
 
 export type SeekTurn = 1 | 2;

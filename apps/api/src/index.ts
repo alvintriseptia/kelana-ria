@@ -4,20 +4,82 @@ import type { SoloAction } from "@kelana-ria/contracts";
 import { duoHandler } from "./duo-http.js";
 import { duoStore } from "./duo-store.js";
 import { credential, hasJsonBody, isFix, isId, isObject, json, requestBody, setCredential } from "./http.js";
+import {
+  createMidtransAdapterFromEnv,
+  createMidtransSandboxAdapter,
+  createRecordedMidtransAdapter,
+  signMidtransNotification,
+  verifyMidtransSignature,
+  type MidtransAdapter,
+  type MidtransNotificationPayload,
+  type RecordedMidtransAdapter,
+  type RedactedMidtransLifecycleEvent,
+} from "./midtrans-adapter.js";
+import { defaultCreatorDraft, defaultCreatorTasks } from "./pack-fixture.js";
+import { packHandler } from "./pack-http.js";
+import { packStore, validatePackVersionForPublication } from "./pack-store.js";
 import { seekHandler } from "./seek-http.js";
 import { seekStore } from "./seek-store.js";
-import { soloStore } from "./solo-store.js";
+import { soloStore, type SoloStoreOptions } from "./solo-store.js";
 
 export type { GameConfiguration } from "@kelana-ria/contracts";
+export {
+  createMidtransAdapterFromEnv,
+  createMidtransSandboxAdapter,
+  createRecordedMidtransAdapter,
+  defaultCreatorDraft,
+  defaultCreatorTasks,
+  packStore,
+  signMidtransNotification,
+  validatePackVersionForPublication,
+  verifyMidtransSignature,
+  type MidtransAdapter,
+  type MidtransNotificationPayload,
+  type RecordedMidtransAdapter,
+  type RedactedMidtransLifecycleEvent,
+};
+export {
+  COMPACT_BOARD_VERSION,
+  compactAlternate,
+  compactCatalog,
+  compactCheckpoints,
+  compactReviewedTasks,
+  compactRouteAttribution,
+  compactStart,
+  compactTrial,
+  compactWalkingSnapshot,
+  preparedCompactFixtures,
+  type CompactBoardCatalog,
+  type ReviewedTask,
+  type RouteLeg,
+  type SoloFixture,
+  type WalkingRouteSnapshot,
+} from "./solo-fixture.js";
+export {
+  isFreshSoloEdition,
+  prepareSoloFixture,
+  toSoloCandidate,
+  validateSoloFixture,
+  type EditionGenerator,
+  type EditionGeneratorRequest,
+  type PrepareEditionResult,
+  type ProposedSoloEdition,
+  type RouteSnapshotProvider,
+  type ValidationResult,
+} from "./solo-validation.js";
 
 const cookieName = "kelana_solo";
 const defaultDatabasePath = fileURLToPath(new URL("../.data/solo.sqlite", import.meta.url));
 
 function parseAction(value: unknown): SoloAction | undefined {
   if (!isObject(value) || !isId(value.actionId) || !isId(value.sessionId)) return undefined;
-  const { type, actionId, sessionId, checkpointId, choiceId, fix } = value;
+  const { type, actionId, sessionId, checkpointId, choiceId, fix, freshEdition } = value;
   const identity = { actionId, sessionId };
-  if (type === "start" || type === "abandon" || type === "replay") return { type, ...identity };
+  if (type === "start" || type === "abandon") return { type, ...identity };
+  if (type === "replay") {
+    if (freshEdition !== undefined && typeof freshEdition !== "boolean") return undefined;
+    return freshEdition === undefined ? { type, ...identity } : { type, freshEdition, ...identity };
+  }
   if (!isId(checkpointId)) return undefined;
   if (type === "check-in" && isFix(fix)) return { type, checkpointId, fix, ...identity };
   if (type === "answer" && isId(choiceId) && (fix === undefined || isFix(fix))) {
@@ -30,12 +92,27 @@ export function createSoloServer({
   databasePath = defaultDatabasePath,
   now = Date.now,
   secureCookie = false,
-}: { databasePath?: string; now?: () => number; secureCookie?: boolean } = {}) {
-  const store = soloStore(databasePath);
+  midtrans,
+  ...storeOptions
+}: {
+  databasePath?: string;
+  now?: () => number;
+  secureCookie?: boolean;
+  midtrans?: MidtransAdapter;
+} & SoloStoreOptions = {}) {
+  const store = soloStore(databasePath, { now, ...storeOptions });
   const duo = duoStore(databasePath);
+  const packs = packStore(databasePath, {
+    catalog: storeOptions.catalog,
+    routes: storeOptions.snapshotRoutes,
+    closedCheckpoints: storeOptions.closedCheckpoints,
+    midtrans,
+    unlockPaidRoom: duo.createPaidRoom,
+  });
   const handleDuo = duoHandler(duo, now, secureCookie);
   const seek = seekStore(databasePath);
   const handleSeek = seekHandler(seek, now, secureCookie);
+  const handlePacks = packHandler(packs, now, secureCookie);
   const server = createServer({ requestTimeout: 15_000 }, async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
@@ -45,9 +122,27 @@ export function createSoloServer({
       if (url.pathname === "/api/seek" || url.pathname.startsWith("/api/seek/")) {
         return await handleSeek(request, response, url);
       }
+      if (url.pathname === "/api/packs" || url.pathname.startsWith("/api/packs/")) {
+        return await handlePacks(request, response, url);
+      }
       const token = credential(request, cookieName);
       if (request.method === "GET" && url.pathname === "/api/solo") {
-        const session = store.session(token, now());
+        const requestedRunId = url.searchParams.get("sessionId");
+        if (requestedRunId !== null) {
+          if (!isId(requestedRunId)) return json(response, 400, { error: "invalid-request" });
+          const archived = store.runById(requestedRunId, now());
+          if (!archived) return json(response, 404, { error: "not-found" });
+          json(response, 200, archived);
+          return;
+        }
+        const session = await store.session(token, now());
+        if ("error" in session) {
+          json(response, 409, {
+            error: session.error,
+            closedCheckpointId: session.closedCheckpointId,
+          });
+          return;
+        }
         if (session.token) {
           setCredential(request, response, cookieName, session.token, "/api/solo", secureCookie);
         }
@@ -77,7 +172,7 @@ export function createSoloServer({
           return json(response, 400, { error: "invalid-request" });
         }
         if (!action) return json(response, 400, { error: "invalid-request" });
-        const reply = store.act(token, action, receivedAt);
+        const reply = await store.act(token, action, receivedAt);
         if (!reply) return json(response, 401, { error: "session-required" });
         json(response, 200, reply);
         return;
@@ -91,6 +186,7 @@ export function createSoloServer({
   });
   server.on("close", () => {
     seek.close();
+    packs.close();
     duo.close();
     store.close();
   });
