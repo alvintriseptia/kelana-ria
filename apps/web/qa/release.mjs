@@ -112,12 +112,20 @@ try {
         board === "jakarta-wide" ? "Jakarta Transit Conquest" : "Jakarta Selatan Starter";
       const bodyText = await dev.page.textContent("body");
       assert.ok(bodyText.includes(expectedTitle), `Expected ${expectedTitle} to load from /`);
+      await dev.page.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
+      await dev.page.getByRole("button", { name: "Skor", exact: true }).click();
+      assert.match(await dev.page.locator(".cg-score-grid").innerText(),
+        board === "jakarta-wide" ? /0\/5.*0\/3/s : /0\/4.*0\/2/s);
+      assert.ok(await dev.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
       await dev.page.reload({ waitUntil: "networkidle" });
       await dev.page.waitForFunction(() => document.body.textContent.includes("Permainan Aktif"));
 
       if (board === "jakarta-wide") {
-        await dev.page.screenshot({ path: join(results, "release-wide-solo-win.png"), fullPage: true });
+        now += 3 * 60 * 60 * 1000;
+        await dev.page.getByTestId("claim-outcome").waitFor();
+        assert.match(await dev.page.getByTestId("claim-outcome").innerText(), /Sesi Solo Berakhir.*Waktu ronde habis/s);
+        await dev.page.screenshot({ path: join(results, "release-wide-solo-finish.png"), fullPage: true });
       }
       configurations.push({
         board,
@@ -161,6 +169,10 @@ try {
       await guest.page.waitForFunction(() => document.body.textContent.includes("Permainan Aktif"));
 
       if (board === "jakarta-wide") {
+        now += 3 * 60 * 60 * 1000;
+        await host.page.getByTestId("claim-outcome").waitFor();
+        await guest.page.getByTestId("claim-outcome").waitFor();
+        assert.match(await host.page.getByTestId("claim-outcome").innerText(), /Seri!.*Waktu ronde habis/s);
         await host.page.screenshot({ path: join(results, "release-wide-duo-finish.png"), fullPage: true });
       }
       configurations.push({

@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -177,6 +177,7 @@ type LiveClaimSession = {
   format: "claim-the-city";
   pass: RulebookRoomPass;
   match: ClaimEngineMatch;
+  photos: Map<string, Buffer>;
 };
 
 type LiveSession = LiveSeekSession | LiveClaimSession;
@@ -584,7 +585,7 @@ export function rulebookStore(
         hostName,
         hostCredentialHash: digest(hostCredential),
       });
-      session = { format: "claim-the-city", pass, match };
+      session = { format: "claim-the-city", pass, match, photos: new Map() };
     } else {
       const seekPack = rec.pack as HideSeekRulebookPack;
       const match = createSeekEngineMatch({
@@ -822,7 +823,16 @@ export function rulebookStore(
     if (session.format === "claim-the-city") {
       const seatId = findClaimEngineSeat(session.match, credHash);
       if (!seatId) return { error: "not-a-member" };
-      return applyClaimEngineAction(session.match, seatId, action as ClaimEngineAction, now);
+      const claimAction = action as ClaimEngineAction;
+      const photoId = claimAction.type === "submit-challenge" || claimAction.type === "submit-curse-photo"
+        ? claimAction.photoId : undefined;
+      const replay = session.match.appliedActions.has(`${seatId}:${claimAction.actionId}`);
+      if (!replay && photoId !== undefined && photoId !== photo?.id) return { error: "photo-required" };
+      const reply = applyClaimEngineAction(session.match, seatId, claimAction, now);
+      const pending = pendingClaimPhotos(session);
+      if (!replay && !reply.error && photo && pending.has(photo.id)) session.photos.set(photo.id, photo.bytes);
+      pruneClaimPhotos(session, pending);
+      return reply;
     }
     const seatId = findSeekEngineSeat(session.match, credHash);
     if (!seatId) return { error: "not-a-member" };
@@ -933,9 +943,58 @@ export function rulebookStore(
     return actInRoom(roomCode, credential, action, now(), { id: questionId, bytes });
   }
 
-  function viewSeekPhoto(roomCode: string, credential: string, photoId: string, now: number) {
+  function pendingClaimPhotos(session: LiveClaimSession) {
+    const { match } = session;
+    if (match.phase !== "active") return new Set<string>();
+    return new Set([
+      ...Object.values(match.activeAttemptsBySeat).flatMap(attempt => attempt?.pendingPhoto ? [attempt.pendingPhoto.photoId] : []),
+      ...match.deck.activeCurses.flatMap(curse => curse.pendingPhoto ? [curse.pendingPhoto.photoId] : []),
+    ]);
+  }
+
+  function pruneClaimPhotos(session: LiveClaimSession, pending = pendingClaimPhotos(session)) {
+    for (const id of session.photos.keys()) {
+      if (!pending.has(id)) session.photos.delete(id);
+    }
+  }
+
+  async function submitClaimPhoto(
+    roomCode: string, credential: string, actionId: string, encoded: string,
+    target: { landmarkId: string } | { curseInstanceId: string }, now: () => number,
+  ) {
     const session = liveRooms.get(roomCode);
-    if (!session || session.format !== "hide-and-seek" || !findSeekEngineSeat(session.match, digest(credential))) return undefined;
+    if (!session || session.format !== "claim-the-city") return { error: "room-not-found" };
+    const seatId = findClaimEngineSeat(session.match, digest(credential));
+    if (!seatId) return { error: "not-a-member" };
+    const photoId = randomUUID();
+    const action: ClaimEngineAction = "landmarkId" in target
+      ? { type: "submit-challenge", actionId, photoId, landmarkId: target.landmarkId }
+      : { type: "submit-curse-photo", actionId, photoId, curseInstanceId: target.curseInstanceId };
+    if (session.match.appliedActions.has(`${seatId}:${actionId}`)) return actInRoom(roomCode, credential, action, now());
+    let bytes: Buffer;
+    try {
+      bytes = await sanitizeSeekPhoto(encoded);
+    } catch {
+      return { error: "invalid-photo" };
+    }
+    return actInRoom(roomCode, credential, action, now(), { id: photoId, bytes });
+  }
+
+  function viewRoomPhoto(roomCode: string, credential: string, photoId: string, now: number) {
+    const session = liveRooms.get(roomCode);
+    if (!session) return undefined;
+    if (session.format === "claim-the-city") {
+      const seatId = findClaimEngineSeat(session.match, digest(credential));
+      if (!seatId) return undefined;
+      expireClaimEngineMatch(session.match, now);
+      pruneClaimPhotos(session);
+      if (!session.photos.has(photoId)) return undefined;
+      const room = viewClaimEngineMatch(session.match, seatId, now);
+      const eligible = room.pendingRivalPhotoReviews.some(review => review.photoId === photoId) ||
+        room.activeCurses.some(curse => curse.casterSeatId === seatId && curse.pendingPhoto?.photoId === photoId);
+      return eligible ? session.photos.get(photoId) : undefined;
+    }
+    if (!findSeekEngineSeat(session.match, digest(credential))) return undefined;
     expireRoomPhotos(session, now);
     return session.photos.get(photoId);
   }
@@ -1015,6 +1074,7 @@ export function rulebookStore(
       const seatId = findClaimEngineSeat(session.match, credHash);
       if (!seatId) return undefined;
       expireClaimEngineMatch(session.match, now);
+      pruneClaimPhotos(session);
       return {
         format: "claim-the-city" as const,
         room: viewClaimEngineMatch(session.match, seatId, now),
@@ -1088,7 +1148,8 @@ export function rulebookStore(
     joinRoom,
     actInRoom,
     answerSeekPhoto,
-    viewSeekPhoto,
+    submitClaimPhoto,
+    viewRoomPhoto,
     playCardInRoom,
     deckActionInRoom,
     viewRoom,

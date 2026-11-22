@@ -41,11 +41,11 @@ function update(writeUrl = false) {
   const wide = game.board === "jakarta-wide";
   const seeking = game.format === "hide-and-seek";
   const goal = game.players === 1
-    ? `Kunci ${wide ? 6 : 4} landmark di setidaknya ${wide ? 3 : 2} zona sebelum waktu habis.`
+    ? `Kunci ${wide ? 5 : 4} landmark di setidaknya ${wide ? 3 : 2} zona sebelum waktu habis.`
     : "Kuasai zona terbanyak dengan Klaim–Kunci–Rebut dan kartu taktis.";
   const duration = seeking
     ? `Hingga ${wide ? 6 : 3} jam + waktu berkumpul kembali`
-    : `${wide ? 180 : 90} menit`;
+    : `${wide ? 150 : 90} menit`;
   document.getElementById("extent")!.textContent = wide
     ? "Jangkauan lebih luas hingga Manggarai dan Jakarta Kota."
     : "Sekitar Blok M, Senayan, dan Palmerah.";

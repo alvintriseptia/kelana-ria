@@ -18,7 +18,9 @@ export type BoardMapRadarCircle = {
 export type BoardMapPoint = SoloPoint & {
   label?: string;
   markerText?: string;
-  markerKind?: "thermometer" | "seeker" | "station";
+  markerKind?: "thermometer" | "seeker" | "station" | "landmark" | "zone";
+  ownerStyle?: "mine" | "rival";
+  eligible?: boolean;
   claimed?: boolean;
   selectable?: boolean;
   dimmed?: boolean;
@@ -39,6 +41,7 @@ export type BoardMapOptions = {
   deductionBoundary?: GeoCoordinate[];
   thermometer?: { start: GeoCoordinate; end?: GeoCoordinate };
   checkpoints: BoardMapPoint[];
+  labels?: BoardMapPoint[];
   selectedId?: string;
   radarCircles?: BoardMapRadarCircle[];
   deductionOverlays?: SeekDeductionOverlay[];
@@ -590,10 +593,10 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       },
     ];
 
-    current.checkpoints.forEach((point, index) => {
+    [...current.checkpoints, ...(current.labels ?? [])].forEach((point, index) => {
       const pointId = point.id;
       desired.push({
-        key: `ck:${pointId}`,
+        key: `${index < current.checkpoints.length ? "ck" : "label"}:${pointId}`,
         id: pointId,
         tag: point.selectable ? "BUTTON" : "SPAN",
         classes: [
@@ -602,10 +605,12 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
           point.dimmed ? "board-map-pin-dimmed" : "",
           point.markerKind ? `board-map-pin-${point.markerKind}` : "",
           point.statusTag ? `board-map-pin-${point.statusTag}` : "",
-          point.id === selectedId ? "board-map-pin-selected" : "",
+          point.ownerStyle ? `board-map-pin-${point.ownerStyle}` : "",
+          point.eligible ? "board-map-pin-eligible" : "",
+          index < current.checkpoints.length && point.id === selectedId ? "board-map-pin-selected" : "",
         ].filter(Boolean),
         text: point.markerText ?? (point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`),
-        title: point.markerKind === "station" ? point.name : undefined,
+        title: point.markerKind === "station" || point.markerKind === "landmark" ? point.name : undefined,
         ariaLabel: point.label ? `${point.name} (${point.label})` : point.name,
         lat: point.latitude,
         lng: point.longitude,
