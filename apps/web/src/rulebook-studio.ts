@@ -30,6 +30,13 @@ import {
   type SeekStep3State,
 } from "./studio-seek-builder";
 import {
+  evaluateClaimDryRunAnswer,
+  evaluateSeekDryRunClue,
+  renderInteractiveDryRunPanel,
+  resolveValidationJump,
+  type DryRunState,
+} from "./studio-dry-run";
+import {
   createNewLandmark,
   createNewPoi,
   createNewStation,
@@ -104,6 +111,17 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     challengeTarget: "backup",
     challengePrimitive: "call_your_shot",
     cardPrimitive: "sabotage_curse",
+  };
+  const dryRun: DryRunState = {
+    seekAnchorId: "",
+    seekSeekerPosId: "start",
+    seekClueKey: "",
+    seekClueOutput: "",
+    claimLandmarkId: "",
+    claimTestOpen: false,
+    claimShotTier: null,
+    claimMultiStepIdx: 0,
+    claimTestResult: "",
   };
 
   async function persistDraft(
@@ -449,6 +467,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       </div>
     </div>
 
+    ${renderInteractiveDryRunPanel(active, dryRun)}
+
     <div class="rb-card">
       <h3>Pendapatan Kreator (${earnings.length})</h3>
       <ul class="rb-list">
@@ -490,7 +510,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         ${
           validationErrors.length > 0
             ? `<ul class="rb-errors" aria-label="Kesalahan validasi">${validationErrors
-                .map((e) => `<li><code>${escapeText(e.code)}</code> (${escapeText(e.path)}): ${escapeText(e.message)}</li>`)
+                .map((e) => {
+                  const target = resolveValidationJump(e.path, format);
+                  return `<li>
+                    <div><code>${escapeText(e.code)}</code> (${escapeText(e.path)}): ${escapeText(e.message)}</div>
+                    <button type="button" class="secondary" data-jump-path="${escapeText(e.path)}">Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button>
+                  </li>`;
+                })
                 .join("")}</ul>`
             : ""
         }
@@ -696,6 +722,29 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       render();
       return;
     }
+    if (target instanceof HTMLSelectElement && target.id === "dry-seek-anchor") {
+      dryRun.seekAnchorId = target.value;
+      render();
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.id === "dry-seek-pos") {
+      dryRun.seekSeekerPosId = target.value;
+      render();
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.id === "dry-seek-clue") {
+      dryRun.seekClueKey = target.value;
+      render();
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.id === "dry-claim-landmark") {
+      dryRun.claimLandmarkId = target.value;
+      dryRun.claimShotTier = null;
+      dryRun.claimMultiStepIdx = 0;
+      dryRun.claimTestResult = "";
+      render();
+      return;
+    }
     if (target instanceof HTMLInputElement && target.id === "st-json-file") {
       const file = target.files?.[0];
       if (!file) return;
@@ -749,6 +798,53 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         render();
       }
       return;
+    }
+    if (btn.dataset.jumpPath) {
+      const target = resolveValidationJump(btn.dataset.jumpPath, format);
+      tab = "writer";
+      step = target.step;
+      if (target.step2Tab) step2.subTab = target.step2Tab;
+      if (target.seekSubTab) seekStep3.subTab = target.seekSubTab;
+      if (target.claimSubTab) claimStep3.subTab = target.claimSubTab;
+      render();
+      if (target.focusSelector) {
+        const el = root.querySelector<HTMLElement>(target.focusSelector);
+        el?.focus();
+      }
+      return;
+    }
+    if (btn.dataset.dryAction) {
+      const active = currentDraft();
+      if (!active) return;
+      const dryAction = btn.dataset.dryAction;
+      if (dryAction === "run-seek-clue" && !isClaimStudioPack(active.pack)) {
+        dryRun.seekAnchorId = root.querySelector<HTMLSelectElement>("#dry-seek-anchor")?.value ?? dryRun.seekAnchorId;
+        dryRun.seekSeekerPosId = root.querySelector<HTMLSelectElement>("#dry-seek-pos")?.value ?? dryRun.seekSeekerPosId;
+        dryRun.seekClueKey = root.querySelector<HTMLSelectElement>("#dry-seek-clue")?.value ?? dryRun.seekClueKey;
+        dryRun.seekClueOutput = evaluateSeekDryRunClue(active.pack, active, dryRun);
+        render();
+        return;
+      }
+      if (dryAction === "open-claim-test" && isClaimStudioPack(active.pack)) {
+        dryRun.claimLandmarkId =
+          root.querySelector<HTMLSelectElement>("#dry-claim-landmark")?.value ?? dryRun.claimLandmarkId;
+        dryRun.claimTestOpen = true;
+        dryRun.claimShotTier = null;
+        dryRun.claimMultiStepIdx = 0;
+        dryRun.claimTestResult = "";
+        render();
+        return;
+      }
+      if (dryAction === "dry-shot-tier") {
+        dryRun.claimShotTier = btn.dataset.tier === "bold" ? "bold" : "standard";
+        render();
+        return;
+      }
+      if (dryAction === "submit-claim-test" && isClaimStudioPack(active.pack)) {
+        dryRun.claimTestResult = evaluateClaimDryRunAnswer(active.pack, dryRun, root);
+        render();
+        return;
+      }
     }
     if (btn.dataset.mapMode) {
       step2.mapMode = btn.dataset.mapMode as StudioMapMode;
