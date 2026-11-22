@@ -1,0 +1,449 @@
+import type {
+  ClaimCardDefinition,
+  ClaimCardEffect,
+  ClaimChallengeItem,
+  ClaimChallengePrimitive,
+  ClaimRulebookPack,
+} from "@kelana-ria/contracts";
+import { escapeText } from "./solo-view";
+
+export type ClaimStep3SubTab = "session" | "challenges" | "deck";
+
+export type ClaimStep3State = {
+  subTab: ClaimStep3SubTab;
+  challengeTarget: string; // "backup" or landmarkId
+  challengePrimitive: ClaimChallengePrimitive["primitive"];
+  cardPrimitive: ClaimCardEffect["primitive"];
+};
+
+const CHALLENGE_PRIMITIVES: { id: ClaimChallengePrimitive["primitive"]; label: string }[] = [
+  { id: "observation_mcq", label: "Pilihan Ganda (observation_mcq)" },
+  { id: "observation_input", label: "Isian Teks/Angka (observation_input)" },
+  { id: "photo_proof", label: "Bukti Foto (photo_proof)" },
+  { id: "timed_micro_task", label: "Tugas Cepat Bertimer (timed_micro_task)" },
+  { id: "call_your_shot", label: "Pilih Risiko Standar/Bold (call_your_shot)" },
+  { id: "multi_step", label: "Tantangan 2 Langkah (multi_step)" },
+];
+
+const CLAIM_CARD_PRIMITIVES: { id: ClaimCardEffect["primitive"]; label: string }[] = [
+  { id: "scout_challenge", label: "Intip Tantangan (scout_challenge)" },
+  { id: "shield_claim", label: "Perisai Klaim (shield_claim)" },
+  { id: "double_weight", label: "Bobot 2x (double_weight)" },
+  { id: "swap_challenge", label: "Tukar Tantangan (swap_challenge)" },
+  { id: "instant_lock", label: "Kunci Instan (instant_lock)" },
+  { id: "sabotage_curse", label: "Kutukan Sabotase (sabotage_curse)" },
+];
+
+export function renderClaimStep3(
+  pack: ClaimRulebookPack,
+  state: ClaimStep3State,
+  editable: boolean,
+): string {
+  const dis = editable ? "" : "disabled";
+  const totalCards = pack.tacticalDeck.cards.reduce((sum, c) => sum + c.copies, 0);
+
+  return `<div class="rb-card" data-studio-slot="rules-builder">
+    <h3>3. Aturan, Tantangan &amp; Dek Taktis Claim</h3>
+    <div class="rb-actions" aria-label="Sub-tab builder Claim the City">
+      <button type="button" class="${state.subTab === "session" ? "primary" : "secondary"}" data-c3-tab="session">Sesi &amp; Skor</button>
+      <button type="button" class="${state.subTab === "challenges" ? "primary" : "secondary"}" data-c3-tab="challenges">Tantangan (6 Primitif)</button>
+      <button type="button" class="${state.subTab === "deck" ? "primary" : "secondary"}" data-c3-tab="deck">Dek Taktis (${totalCards})</button>
+    </div>
+
+    ${
+      state.subTab === "session"
+        ? renderClaimSession(pack, dis)
+        : state.subTab === "challenges"
+          ? renderClaimChallenges(pack, state, dis, editable)
+          : renderClaimDeck(pack, state, dis, editable)
+    }
+
+    <div class="rb-step-footer">
+      <button type="button" class="secondary" data-step="2">← Peta &amp; Lokasi</button>
+      ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan &amp; Validasi</button>` : ""}
+      <button type="button" class="primary" data-step="4">Lanjut: Validasi &amp; Ajukan →</button>
+    </div>
+  </div>`;
+}
+
+function renderClaimSession(pack: ClaimRulebookPack, dis: string): string {
+  return `<div data-testid="claim-session-panel">
+    <div class="rb-grid-2">
+      <label class="rb-field"><span>Min Pemain (1–6)</span><input id="ed-claim-minp" type="number" min="1" max="6" value="${pack.session.minPlayers}" ${dis}></label>
+      <label class="rb-field"><span>Maks Pemain (1–6)</span><input id="ed-claim-maxp" type="number" min="1" max="6" value="${pack.session.maxPlayers}" ${dis}></label>
+      <label class="rb-field"><span>Mode Tim</span>
+        <select id="ed-claim-team" ${dis}>
+          <option value="ffa" ${pack.session.teamMode === "ffa" ? "selected" : ""}>Free-for-All (FFA)</option>
+          <option value="teams" ${pack.session.teamMode === "teams" ? "selected" : ""}>Tim (Teams)</option>
+        </select>
+      </label>
+      <label class="rb-field"><span>Durasi Sesi (menit)</span><input id="ed-claim-duration" type="number" value="${Math.round(pack.session.durationMs / 60_000)}" ${dis}></label>
+      <label class="rb-field"><span>Target Kunci Solo</span><input id="ed-claim-solo-locks" type="number" value="${pack.session.soloTargets?.lockedLandmarks ?? 4}" ${dis}></label>
+      <label class="rb-field"><span>Target Zona Solo</span><input id="ed-claim-solo-zones" type="number" value="${pack.session.soloTargets?.distinctZones ?? 2}" ${dis}></label>
+      <label class="rb-field"><span>Kebijakan Gagal Multiplayer</span>
+        <select id="ed-claim-fail-policy" ${dis}>
+          <option value="cooldown_ms" ${pack.claiming.multiplayerFailPolicy === "cooldown_ms" ? "selected" : ""}>Jeda Cooldown</option>
+          <option value="burned_for_player" ${pack.claiming.multiplayerFailPolicy === "burned_for_player" ? "selected" : ""}>Hangus untuk Pemain</option>
+        </select>
+      </label>
+      <label class="rb-field"><span>Cooldown Gagal (menit)</span><input id="ed-claim-cooldown" type="number" min="0" max="30" value="${Math.round((pack.claiming.failCooldownMs ?? 300_000) / 60_000)}" ${dis}></label>
+      <label class="rb-field"><span>Batas Kartu Taktis</span><input id="ed-claim-hand" type="number" min="1" max="4" value="${pack.tacticalDeck.maxHandSize}" ${dis}></label>
+    </div>
+    <label class="rb-field">
+      <span>Tambah Cepat Tantangan Foto ke Backup Pool (Judul)</span>
+      <input id="ed-claim-photo-title" placeholder="Mis. Foto Mural Blok M" ${dis}>
+    </label>
+  </div>`;
+}
+
+function renderClaimChallenges(
+  pack: ClaimRulebookPack,
+  state: ClaimStep3State,
+  dis: string,
+  editable: boolean,
+): string {
+  const isBackup = state.challengeTarget === "backup";
+  const items = isBackup
+    ? pack.challenges.backupPool
+    : (pack.challenges.landmarkChallenges[state.challengeTarget] ?? []);
+  const prim = state.challengePrimitive;
+
+  return `<div data-testid="claim-challenges-panel">
+    <label class="rb-field"><span>Target Tantangan</span>
+      <select id="ed-chal-target">
+        <option value="backup" ${isBackup ? "selected" : ""}>Backup Pool (${pack.challenges.backupPool.length} tantangan)</option>
+        ${pack.geography.landmarks
+          .map(
+            (lm) =>
+              `<option value="${escapeText(lm.id)}" ${state.challengeTarget === lm.id ? "selected" : ""}>${escapeText(lm.name)} (${(pack.challenges.landmarkChallenges[lm.id] ?? []).length})</option>`,
+          )
+          .join("")}
+      </select>
+    </label>
+
+    <ul class="rb-list">
+      ${
+        items.length === 0
+          ? "<li>Belum ada tantangan pada target ini.</li>"
+          : items
+              .map(
+                (item, idx) => `<li>
+                  <div><strong>${escapeText(item.title)}</strong> <span class="rb-badge">${escapeText(item.payload.primitive)}</span></div>
+                  <small>${item.reviewed ? `Ditinjau ${escapeText(item.reviewedAt)}` : "Belum ditinjau"} · ${escapeText(item.verificationNotes)}</small>
+                  ${editable ? `<button type="button" class="secondary" data-c3-action="delete-challenge" data-index="${idx}">Hapus</button>` : ""}
+                </li>`,
+              )
+              .join("")
+      }
+    </ul>
+
+    ${
+      editable
+        ? `<div class="rb-card" data-testid="claim-challenge-composer">
+            <h4>+ Tambah Tantangan Tersembunyi (6 Primitif)</h4>
+            <div class="rb-grid-2">
+              <label class="rb-field"><span>Primitif Tantangan</span>
+                <select id="ed-chal-prim" ${dis}>
+                  ${CHALLENGE_PRIMITIVES.map(
+                    (p) => `<option value="${p.id}" ${prim === p.id ? "selected" : ""}>${p.label}</option>`,
+                  ).join("")}
+                </select>
+              </label>
+              <label class="rb-field"><span>Judul Tantangan</span><input id="ed-chal-title" placeholder="Mis. Mural Fasad M Bloc"></label>
+            </div>
+
+            ${
+              prim === "observation_mcq"
+                ? `<label class="rb-field"><span>Pertanyaan Pengamatan</span><input id="ed-chal-prompt" value="Apa warna dominan penanda utama lokasi ini?"></label>
+                   <div class="rb-grid-2">
+                     <label class="rb-field"><span>Opsi A (Benar)</span><input id="ed-chal-opt-a" value="Hijau Tua"></label>
+                     <label class="rb-field"><span>Opsi B</span><input id="ed-chal-opt-b" value="Merah Muda"></label>
+                     <label class="rb-field"><span>Opsi C</span><input id="ed-chal-opt-c" value="Ungu Neon"></label>
+                   </div>`
+                : prim === "observation_input"
+                  ? `<label class="rb-field"><span>Pertanyaan Isian</span><input id="ed-chal-prompt" value="Berapa jumlah tiang utama gerbang?"></label>
+                     <div class="rb-grid-2">
+                       <label class="rb-field"><span>Tipe Input</span>
+                         <select id="ed-chal-inmode">
+                           <option value="text">Teks</option>
+                           <option value="number">Angka</option>
+                         </select>
+                       </label>
+                       <label class="rb-field"><span>Jawaban Benar (koma u/ teks, atau angka)</span><input id="ed-chal-answer" value="jakarta, blok m"></label>
+                     </div>`
+                  : prim === "photo_proof"
+                    ? `<label class="rb-field"><span>Instruksi Foto</span><input id="ed-chal-prompt" value="Ambil foto papan nama publik tanpa tiket masuk."></label>
+                       <div class="rb-grid-2">
+                         <label class="rb-field"><span>Mode Verifikasi</span>
+                           <select id="ed-chal-pmode">
+                             <option value="rival_or_timeout">Persetujuan Lawan / Timeout</option>
+                             <option value="honor_submit">Honor Submit</option>
+                           </select>
+                         </label>
+                         <label class="rb-field"><span>Auto-Approve (menit, maks 5)</span><input id="ed-chal-mins" type="number" min="1" max="5" value="2"></label>
+                       </div>`
+                    : prim === "timed_micro_task"
+                      ? `<label class="rb-field"><span>Instruksi Tugas Cepat</span><input id="ed-chal-prompt" value="Kirim foto penanda ruang publik dalam 90 detik."></label>
+                         <div class="rb-grid-2">
+                           <label class="rb-field"><span>Batas Waktu (detik)</span><input id="ed-chal-secs" type="number" min="30" max="600" value="90"></label>
+                           <label class="rb-field"><span>Tipe Tugas</span>
+                             <select id="ed-chal-ttype">
+                               <option value="photo_proof">Foto Bukti</option>
+                               <option value="observation_input">Isian Cepat</option>
+                             </select>
+                           </label>
+                         </div>`
+                      : prim === "call_your_shot"
+                        ? `<div class="rb-grid-2">
+                            <label class="rb-field"><span>Tema Tantangan</span><input id="ed-chal-theme" value="Detail arsitektur ruang publik"></label>
+                            <label class="rb-field"><span>Soal Standar (Foto)</span><input id="ed-chal-std" value="Foto papan nama depan lokasi."></label>
+                            <label class="rb-field"><span>Soal Bold (Isian Teks)</span><input id="ed-chal-bold" value="Sebutkan kata pertama pada plakat taman."></label>
+                            <label class="rb-field"><span>Jawaban Bold (koma)</span><input id="ed-chal-answer" value="taman, jakarta"></label>
+                          </div>`
+                        : `<div class="rb-grid-2">
+                            <label class="rb-field"><span>Langkah 1 (Foto)</span><input id="ed-chal-std" value="Foto gerbang masuk publik."></label>
+                            <label class="rb-field"><span>Langkah 2 (Isian Teks)</span><input id="ed-chal-bold" value="Tulis nama jalan utama di depan gerbang."></label>
+                            <label class="rb-field"><span>Jawaban Langkah 2</span><input id="ed-chal-answer" value="sudirman, panglima polim"></label>
+                          </div>`
+            }
+            <label class="rb-field"><span>Catatan Verifikasi Lapangan</span><input id="ed-chal-notes" value="Terverifikasi di ruang publik bebas tiket masuk."></label>
+            <button type="button" class="primary" data-c3-action="add-challenge">+ Simpan Tantangan ke Target</button>
+          </div>`
+        : ""
+    }
+  </div>`;
+}
+
+function renderClaimDeck(
+  pack: ClaimRulebookPack,
+  state: ClaimStep3State,
+  dis: string,
+  editable: boolean,
+): string {
+  const prim = state.cardPrimitive;
+  return `<div data-testid="claim-deck-panel">
+    <div class="rb-grid-2">
+      <label class="rb-field"><span>Status Dek Taktis</span>
+        <select id="ed-cdeck-enabled" ${dis}>
+          <option value="true" ${pack.tacticalDeck.enabled ? "selected" : ""}>Aktif</option>
+          <option value="false" ${!pack.tacticalDeck.enabled ? "selected" : ""}>Nonaktif</option>
+        </select>
+      </label>
+      <label class="rb-field"><span>Maks Kutukan per Target</span><input id="ed-cdeck-maxc" type="number" min="1" max="3" value="${pack.tacticalDeck.maxActiveCursesPerTarget}" ${dis}></label>
+    </div>
+    ${editable ? `<button type="button" class="secondary" data-c3-action="save-deck-cfg">Simpan Pengaturan Dek</button>` : ""}
+
+    <ul class="rb-list">
+      ${pack.tacticalDeck.cards
+        .map(
+          (card, idx) => `<li>
+            <div>
+              <strong>${escapeText(card.title)}</strong>
+              <span class="rb-badge">${card.copies}x</span>
+              <span class="rb-badge">${escapeText(card.effect.primitive)}</span>
+            </div>
+            <small>${escapeText(card.description)}</small>
+            ${editable ? `<button type="button" class="secondary" data-c3-action="delete-claim-card" data-index="${idx}">Hapus</button>` : ""}
+          </li>`,
+        )
+        .join("")}
+    </ul>
+
+    ${
+      editable
+        ? `<div class="rb-card" data-testid="claim-card-composer">
+            <h4>+ Tambah Kartu Taktis (6 Primitif)</h4>
+            <div class="rb-grid-2">
+              <label class="rb-field"><span>Primitif Kartu</span>
+                <select id="ed-ccard-prim">
+                  ${CLAIM_CARD_PRIMITIVES.map(
+                    (p) => `<option value="${p.id}" ${prim === p.id ? "selected" : ""}>${p.label}</option>`,
+                  ).join("")}
+                </select>
+              </label>
+              <label class="rb-field"><span>Salinan</span><input id="ed-ccard-copies" type="number" min="1" max="8" value="1"></label>
+              <label class="rb-field"><span>Judul Kartu</span><input id="ed-ccard-title" placeholder="Mis. Sabotase Lampu Merah"></label>
+              <label class="rb-field"><span>Deskripsi</span><input id="ed-ccard-desc" value="Kartu taktis kustom kreator."></label>
+            </div>
+            ${
+              prim === "shield_claim"
+                ? `<label class="rb-field"><span>Durasi Perisai (menit)</span><input id="ed-ccard-mins" type="number" min="1" max="30" value="10"></label>`
+                : prim === "sabotage_curse"
+                  ? `<div class="rb-grid-2">
+                      <label class="rb-field"><span>Blokir</span>
+                        <select id="ed-ccard-blocker">
+                          <option value="block_steals">Blokir Rebut (block_steals)</option>
+                          <option value="block_claims">Blokir Klaim (block_claims)</option>
+                          <option value="block_both">Blokir Keduanya (block_both)</option>
+                        </select>
+                      </label>
+                      <label class="rb-field"><span>Durasi Timer Hapus (menit, maks 10)</span><input id="ed-ccard-mins" type="number" min="1" max="10" value="5"></label>
+                    </div>`
+                  : ""
+            }
+            <button type="button" class="primary" data-c3-action="add-claim-card">+ Tambahkan Kartu Taktis</button>
+          </div>`
+        : ""
+    }
+  </div>`;
+}
+
+export function buildClaimChallengeFromForm(root: HTMLElement, state: ClaimStep3State): ClaimChallengeItem | null {
+  const title = root.querySelector<HTMLInputElement>("#ed-chal-title")?.value.trim();
+  if (!title) return null;
+  const verificationNotes =
+    root.querySelector<HTMLInputElement>("#ed-chal-notes")?.value.trim() || "Terverifikasi di area publik.";
+  const reviewedAt = new Date().toISOString().slice(0, 10);
+  const prim = state.challengePrimitive;
+  let payload: ClaimChallengePrimitive;
+
+  if (prim === "observation_mcq") {
+    payload = {
+      primitive: "observation_mcq",
+      prompt: root.querySelector<HTMLInputElement>("#ed-chal-prompt")?.value.trim() || "Pilih jawaban tepat.",
+      choices: [
+        { id: "a", label: root.querySelector<HTMLInputElement>("#ed-chal-opt-a")?.value.trim() || "Pilihan A" },
+        { id: "b", label: root.querySelector<HTMLInputElement>("#ed-chal-opt-b")?.value.trim() || "Pilihan B" },
+        { id: "c", label: root.querySelector<HTMLInputElement>("#ed-chal-opt-c")?.value.trim() || "Pilihan C" },
+      ],
+      correctChoiceId: "a",
+    };
+  } else if (prim === "observation_input") {
+    const mode = (root.querySelector<HTMLSelectElement>("#ed-chal-inmode")?.value ?? "text") as "text" | "number";
+    const ans = root.querySelector<HTMLInputElement>("#ed-chal-answer")?.value.trim() || "jakarta";
+    if (mode === "number") {
+      const n = Number(ans) || 1;
+      payload = {
+        primitive: "observation_input",
+        prompt: root.querySelector<HTMLInputElement>("#ed-chal-prompt")?.value.trim() || "Masukkan angka.",
+        inputMode: "number",
+        numericRange: { min: n, max: n },
+      };
+    } else {
+      payload = {
+        primitive: "observation_input",
+        prompt: root.querySelector<HTMLInputElement>("#ed-chal-prompt")?.value.trim() || "Masukkan jawaban.",
+        inputMode: "text",
+        acceptedAnswers: ans.split(",").map((s) => s.trim()).filter(Boolean),
+      };
+    }
+  } else if (prim === "photo_proof") {
+    const mins = Math.max(1, Math.min(5, Number(root.querySelector<HTMLInputElement>("#ed-chal-mins")?.value ?? 2)));
+    payload = {
+      primitive: "photo_proof",
+      prompt: root.querySelector<HTMLInputElement>("#ed-chal-prompt")?.value.trim() || "Ambil foto bukti publik.",
+      verificationMode: (root.querySelector<HTMLSelectElement>("#ed-chal-pmode")?.value ??
+        "rival_or_timeout") as "rival_or_timeout" | "honor_submit",
+      autoApproveMs: mins * 60_000,
+    };
+  } else if (prim === "timed_micro_task") {
+    const secs = Math.max(30, Number(root.querySelector<HTMLInputElement>("#ed-chal-secs")?.value ?? 90));
+    const taskType = (root.querySelector<HTMLSelectElement>("#ed-chal-ttype")?.value ?? "photo_proof") as
+      | "photo_proof"
+      | "observation_input";
+    payload =
+      taskType === "observation_input"
+        ? {
+            primitive: "timed_micro_task",
+            prompt: root.querySelector<HTMLInputElement>("#ed-chal-prompt")?.value.trim() || "Jawab cepat.",
+            timeLimitMs: secs * 1000,
+            taskType: "observation_input",
+            acceptedAnswers: ["jakarta", "blok m"],
+          }
+        : {
+            primitive: "timed_micro_task",
+            prompt: root.querySelector<HTMLInputElement>("#ed-chal-prompt")?.value.trim() || "Kirim foto cepat.",
+            timeLimitMs: secs * 1000,
+            taskType: "photo_proof",
+            autoApproveMs: 120_000,
+          };
+  } else if (prim === "call_your_shot") {
+    const ans = (root.querySelector<HTMLInputElement>("#ed-chal-answer")?.value ?? "taman")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    payload = {
+      primitive: "call_your_shot",
+      theme: root.querySelector<HTMLInputElement>("#ed-chal-theme")?.value.trim() || "Pengamatan cepat",
+      standardTask: {
+        primitive: "photo_proof",
+        prompt: root.querySelector<HTMLInputElement>("#ed-chal-std")?.value.trim() || "Foto penanda lokasi.",
+        verificationMode: "rival_or_timeout",
+        autoApproveMs: 120_000,
+      },
+      boldTask: {
+        primitive: "observation_input",
+        prompt: root.querySelector<HTMLInputElement>("#ed-chal-bold")?.value.trim() || "Tulis nama plakat.",
+        inputMode: "text",
+        acceptedAnswers: ans.length ? ans : ["taman"],
+      },
+      boldReward: { drawTacticalCard: true, bonusWeight: 1 },
+    };
+  } else {
+    const ans = (root.querySelector<HTMLInputElement>("#ed-chal-answer")?.value ?? "sudirman")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    payload = {
+      primitive: "multi_step",
+      steps: [
+        {
+          primitive: "photo_proof",
+          prompt: root.querySelector<HTMLInputElement>("#ed-chal-std")?.value.trim() || "Foto pintu masuk.",
+          verificationMode: "rival_or_timeout",
+          autoApproveMs: 120_000,
+        },
+        {
+          primitive: "observation_input",
+          prompt: root.querySelector<HTMLInputElement>("#ed-chal-bold")?.value.trim() || "Tulis nama jalan utama.",
+          inputMode: "text",
+          acceptedAnswers: ans.length ? ans : ["sudirman"],
+        },
+      ],
+    };
+  }
+
+  return {
+    id: `chal-${prim}-${Date.now().toString(36)}`,
+    title,
+    verificationNotes,
+    reviewed: true,
+    reviewedAt,
+    payload,
+  };
+}
+
+export function buildClaimCardFromForm(root: HTMLElement, state: ClaimStep3State): ClaimCardDefinition | null {
+  const title = root.querySelector<HTMLInputElement>("#ed-ccard-title")?.value.trim();
+  if (!title) return null;
+  const description = root.querySelector<HTMLInputElement>("#ed-ccard-desc")?.value.trim() || "Kartu taktis kustom.";
+  const copies = Math.max(1, Number(root.querySelector<HTMLInputElement>("#ed-ccard-copies")?.value ?? 1));
+  const prim = state.cardPrimitive;
+  let effect: ClaimCardEffect;
+  if (prim === "scout_challenge") effect = { primitive: "scout_challenge" };
+  else if (prim === "double_weight") effect = { primitive: "double_weight" };
+  else if (prim === "swap_challenge") effect = { primitive: "swap_challenge" };
+  else if (prim === "instant_lock") effect = { primitive: "instant_lock" };
+  else if (prim === "shield_claim") {
+    const mins = Math.max(1, Number(root.querySelector<HTMLInputElement>("#ed-ccard-mins")?.value ?? 10));
+    effect = { primitive: "shield_claim", durationMs: mins * 60_000 };
+  } else {
+    const mins = Math.max(1, Math.min(10, Number(root.querySelector<HTMLInputElement>("#ed-ccard-mins")?.value ?? 5)));
+    const blockerType = (root.querySelector<HTMLSelectElement>("#ed-ccard-blocker")?.value ?? "block_steals") as
+      | "block_steals"
+      | "block_claims"
+      | "block_both";
+    effect = {
+      primitive: "sabotage_curse",
+      blockerType,
+      clearCondition: { type: "timer", durationMs: mins * 60_000 },
+    };
+  }
+  return {
+    id: `ccard-${prim}-${Date.now().toString(36)}`,
+    copies,
+    title,
+    description,
+    effect,
+  };
+}
