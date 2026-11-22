@@ -443,9 +443,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
                 <label class="rb-field"><span>Harga Sesi (IDR)</span><input id="ed-meta-price" type="number" min="0" step="1000" value="${active.pack.meta.priceIdr}" ${!isEditable(active) ? "disabled" : ""}></label>
               </div>
               <label class="rb-field"><span>Ringkasan Paket</span><input id="ed-meta-summary" value="${escapeText(active.pack.meta.summary)}" ${!isEditable(active) ? "disabled" : ""}></label>
-              <div class="rb-step-footer">
-                ${isEditable(active) ? `<button type="button" class="secondary" data-action="save-draft">Simpan Info</button>` : "<span></span>"}
-                <button type="button" class="primary" data-step="2">Lanjut: Peta &amp; Lokasi →</button>
+              <div class="rb-sticky-footer">
+                <span></span>
+                ${isEditable(active) ? `<button type="button" class="secondary" data-action="save-draft">Simpan</button>` : "<span></span>"}
+                <button type="button" class="primary" data-step="2">Peta →</button>
               </div>
             </div>`
           : ""
@@ -488,9 +489,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         ${editable ? `<button type="button" class="primary" data-action="submit-draft">Ajukan untuk Tinjauan</button>` : ""}
       </div>
       ${dryRunSummary ? `<p role="status" class="rb-badge">${escapeText(dryRunSummary)}</p>` : ""}
-      <div class="rb-step-footer">
-        <button type="button" class="secondary" data-step="3">← Aturan &amp; Kartu</button>
-        <button type="button" class="secondary" data-tab="reviewer">Buka Antrean Peninjau →</button>
+      <div class="rb-sticky-footer">
+        <button type="button" class="secondary" data-step="3">← Aturan</button>
+        ${editable ? `<button type="button" class="secondary" data-action="save-draft">Validasi</button>` : "<span></span>"}
+        <button type="button" class="secondary" data-tab="reviewer">Peninjau →</button>
       </div>
     </div>
 
@@ -573,9 +575,12 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
               : communityVersions
                   .map(
                     (v) => `<li>
-                      <div>
-                        <strong>${escapeText(v.pack.meta.title)}</strong> (<code>${escapeText(v.packId)}</code> v${v.version})
-                        <span class="rb-badge">${escapeText(statusLabel(v.status))}</span>
+                      <div class="rb-rev-head">
+                        <strong>${escapeText(v.pack.meta.title)}</strong>
+                        <div class="rb-badges">
+                          <code>${escapeText(v.packId)} v${v.version}</code>
+                          <span class="rb-badge">${escapeText(statusLabel(v.status))}</span>
+                        </div>
                       </div>
                       ${v.reviewNote ? `<small>Catatan terakhir: ${escapeText(v.reviewNote)}</small>` : ""}
                       ${

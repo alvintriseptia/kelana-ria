@@ -75,16 +75,16 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
 
   if (selected.kind === "start") {
     const sp = record.snapshot.startPoint;
-    return `<div class="rb-card" data-testid="step2-inspector">
-      <h4>Editor Titik Awal</h4>
+    return `<details class="rb-accordion" open data-testid="step2-inspector">
+      <summary>Titik Terpilih: ${escapeText(sp.name)} (Titik Awal)</summary>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Titik Awal</span><input id="ed-sp-name" value="${escapeText(sp.name)}" ${dis}></label>
         <label class="rb-field"><span>Catatan Akses</span><input id="ed-sp-notes" value="${escapeText(sp.accessNotes ?? "")}" ${dis}></label>
         <label class="rb-field"><span>Latitude</span><input id="ed-sp-lat" type="number" step="0.00001" value="${sp.latitude}" ${dis}></label>
         <label class="rb-field"><span>Longitude</span><input id="ed-sp-lng" type="number" step="0.00001" value="${sp.longitude}" ${dis}></label>
       </div>
-      ${editable ? `<button type="button" class="secondary" data-map-action="apply-selected">Terapkan Titik Awal</button>` : ""}
-    </div>`;
+      ${editable ? `<div class="rb-actions"><button type="button" class="secondary" data-map-action="apply-selected">Terapkan Titik Awal</button></div>` : ""}
+    </details>`;
   }
 
   if (selected.kind === "station") {
@@ -92,8 +92,9 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
     const st = record.snapshot.stations[idx];
     if (!st) return "";
     const nameInputId = idx === 0 ? "ed-station-name" : "ed-point-name";
-    return `<div class="rb-card" data-testid="step2-inspector">
-      <h4>Editor Stasiun · <code>${escapeText(st.id)}</code></h4>
+    return `<details class="rb-accordion" open data-testid="step2-inspector">
+      <summary>Titik Terpilih: ${escapeText(st.name)}</summary>
+      <small>ID: <code>${escapeText(st.id)}</code></small>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Stasiun</span><input id="${nameInputId}" data-field="name" value="${escapeText(st.name)}" ${dis}></label>
         <label class="rb-field"><span>Jalur Transit (pisahkan koma)</span><input id="ed-st-lines" value="${escapeText(st.transitLines.join(", "))}" ${dis}></label>
@@ -113,19 +114,20 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
       ${
         editable
           ? `<div class="rb-actions">
-              <button type="button" class="secondary" data-map-action="apply-selected">Terapkan Perubahan Stasiun</button>
+              <button type="button" class="secondary" data-map-action="apply-selected">Terapkan Perubahan</button>
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus Stasiun</button>
             </div>`
           : ""
       }
-    </div>`;
+    </details>`;
   }
 
   if (selected.kind === "poi") {
     const poi = record.snapshot.pois.find((p) => p.id === selected.id);
     if (!poi) return "";
-    return `<div class="rb-card" data-testid="step2-inspector">
-      <h4>Editor POI · <code>${escapeText(poi.id)}</code></h4>
+    return `<details class="rb-accordion" open data-testid="step2-inspector">
+      <summary>Titik Terpilih: ${escapeText(poi.name)} (POI)</summary>
+      <small>ID: <code>${escapeText(poi.id)}</code></small>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama POI</span><input id="ed-poi-name" value="${escapeText(poi.name)}" ${dis}></label>
         <label class="rb-field"><span>Kategori POI</span><input id="ed-poi-cat" value="${escapeText(poi.category)}" ${dis}></label>
@@ -135,12 +137,12 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
       ${
         editable
           ? `<div class="rb-actions">
-              <button type="button" class="secondary" data-map-action="apply-selected">Terapkan Perubahan POI</button>
+              <button type="button" class="secondary" data-map-action="apply-selected">Terapkan Perubahan</button>
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus POI</button>
             </div>`
           : ""
       }
-    </div>`;
+    </details>`;
   }
 
   if (selected.kind === "landmark" && isClaimStudioPack(record.pack)) {
@@ -148,8 +150,9 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
     const lm = record.pack.geography.landmarks[idx];
     if (!lm) return "";
     const nameInputId = idx === 0 ? "ed-claim-landmark-name" : "ed-point-name";
-    return `<div class="rb-card" data-testid="step2-inspector">
-      <h4>Editor Landmark · <code>${escapeText(lm.id)}</code></h4>
+    return `<details class="rb-accordion" open data-testid="step2-inspector">
+      <summary>Titik Terpilih: ${escapeText(lm.name)}</summary>
+      <small>ID: <code>${escapeText(lm.id)}</code></small>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Landmark</span><input id="${nameInputId}" data-field="name" value="${escapeText(lm.name)}" ${dis}></label>
         <label class="rb-field"><span>Zona</span>
@@ -170,12 +173,12 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
       ${
         editable
           ? `<div class="rb-actions">
-              <button type="button" class="secondary" data-map-action="apply-selected">Terapkan Perubahan Landmark</button>
+              <button type="button" class="secondary" data-map-action="apply-selected">Terapkan Perubahan</button>
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus Landmark</button>
             </div>`
           : ""
       }
-    </div>`;
+    </details>`;
   }
 
   return "";
@@ -228,42 +231,32 @@ export function renderStep2Bottom(
            <button type="button" class="secondary" data-select-kind="start" data-select-id="${escapeText(record.snapshot.startPoint.id)}">Pilih Titik Mulai di Inspector</button>`
         : state.subTab === "boundary"
           ? `<div>
-              <ul class="rb-list">
-                ${record.snapshot.boundaryPolygon
-                  .map(
-                    (v, i) => `<li>
-                      <span>Sudut #${i + 1}: <code>${v.latitude}, ${v.longitude}</code></span>
-                      ${editable && record.snapshot.boundaryPolygon.length > 3 ? `<button type="button" class="secondary" data-map-action="remove-vertex" data-vertex-index="${i}">Hapus Sudut</button>` : ""}
-                    </li>`,
-                  )
-                  .join("")}
-              </ul>
               ${
                 editable
                   ? `<div class="rb-grid-2">
                       <label class="rb-field"><span>Lat Sudut Baru</span><input id="ed-v-lat" type="number" step="0.0001" value="${record.snapshot.startPoint.latitude}"></label>
                       <label class="rb-field"><span>Lng Sudut Baru</span><input id="ed-v-lng" type="number" step="0.0001" value="${record.snapshot.startPoint.longitude}"></label>
                     </div>
-                    <button type="button" class="secondary" data-map-action="add-vertex">+ Tambah Sudut Batas</button>`
+                    <div class="rb-actions"><button type="button" class="secondary" data-map-action="add-vertex">+ Tambah Sudut Batas</button></div>`
                   : ""
               }
+              <details class="rb-accordion" data-testid="step2-list-accordion">
+                <summary>Daftar Sudut Batas (${record.snapshot.boundaryPolygon.length})</summary>
+                <ul class="rb-list">
+                  ${record.snapshot.boundaryPolygon
+                    .map(
+                      (v, i) => `<li>
+                        <span>Sudut #${i + 1}: <code>${v.latitude}, ${v.longitude}</code></span>
+                        ${editable && record.snapshot.boundaryPolygon.length > 3 ? `<button type="button" class="secondary" data-map-action="remove-vertex" data-vertex-index="${i}">Hapus Sudut</button>` : ""}
+                      </li>`,
+                    )
+                    .join("")}
+                </ul>
+              </details>
             </div>`
           : claim && isClaimStudioPack(record.pack)
             ? state.subTab === "secondary"
               ? `<div>
-                  <ul class="rb-list">
-                    ${record.pack.geography.zones
-                      .map((z) => {
-                        const count = isClaimStudioPack(record.pack)
-                          ? record.pack.geography.landmarks.filter((l) => l.zoneId === z.id).length
-                          : 0;
-                        return `<li data-zone-id="${escapeText(z.id)}">
-                          <div><strong>${escapeText(z.label)} · ${escapeText(z.name)}</strong> (<code>${escapeText(z.id)}</code> · ${count} landmark)</div>
-                          ${editable ? `<button type="button" class="secondary" data-map-action="delete-zone" data-zone-id="${escapeText(z.id)}">Hapus Zona</button>` : ""}
-                        </li>`;
-                      })
-                      .join("")}
-                  </ul>
                   ${
                     editable
                       ? `<div class="rb-grid-2">
@@ -272,59 +265,84 @@ export function renderStep2Bottom(
                           <label class="rb-field"><span>Label (2 huruf)</span><input id="ed-new-zone-label" placeholder="SP" maxlength="3"></label>
                           <label class="rb-field"><span>Ikon</span><input id="ed-new-zone-icon" value="pin"></label>
                         </div>
-                        <button type="button" class="secondary" data-map-action="add-zone">+ Tambah Zona</button>`
+                        <div class="rb-actions"><button type="button" class="secondary" data-map-action="add-zone">+ Tambah Zona</button></div>`
                       : ""
                   }
+                  <details class="rb-accordion" data-testid="step2-list-accordion">
+                    <summary>Daftar Zona (${record.pack.geography.zones.length})</summary>
+                    <ul class="rb-list">
+                      ${record.pack.geography.zones
+                        .map((z) => {
+                          const count = isClaimStudioPack(record.pack)
+                            ? record.pack.geography.landmarks.filter((l) => l.zoneId === z.id).length
+                            : 0;
+                          return `<li data-zone-id="${escapeText(z.id)}">
+                            <div><strong>${escapeText(z.label)} · ${escapeText(z.name)}</strong> (<code>${escapeText(z.id)}</code> · ${count} landmark)</div>
+                            ${editable ? `<button type="button" class="secondary" data-map-action="delete-zone" data-zone-id="${escapeText(z.id)}">Hapus Zona</button>` : ""}
+                          </li>`;
+                        })
+                        .join("")}
+                    </ul>
+                  </details>
                 </div>`
               : `<div>
-                  ${editable ? `<button type="button" class="secondary" data-map-action="add-landmark">+ Tambah Landmark Baru</button>` : ""}
-                  <ul class="rb-list">
-                    ${record.pack.geography.landmarks
-                      .map(
-                        (l) => `<li>
-                          <div><strong>${escapeText(l.name)}</strong> <span class="rb-badge">${escapeText(l.zoneId)}</span></div>
-                          <small>${l.latitude.toFixed(5)}, ${l.longitude.toFixed(5)} · ${escapeText(l.transitSummary)}</small>
-                          <button type="button" class="secondary" data-select-kind="landmark" data-select-id="${escapeText(l.id)}">Sunting</button>
-                        </li>`,
-                      )
-                      .join("")}
-                  </ul>
+                  ${editable ? `<div class="rb-actions"><button type="button" class="secondary" data-map-action="add-landmark">+ Tambah Landmark Baru</button></div>` : ""}
+                  <details class="rb-accordion" data-testid="step2-list-accordion">
+                    <summary>Daftar Landmark (${record.pack.geography.landmarks.length})</summary>
+                    <ul class="rb-list">
+                      ${record.pack.geography.landmarks
+                        .map(
+                          (l) => `<li>
+                            <div><strong>${escapeText(l.name)}</strong> <span class="rb-badge">${escapeText(l.zoneId)}</span></div>
+                            <small>${l.latitude.toFixed(5)}, ${l.longitude.toFixed(5)} · ${escapeText(l.transitSummary)}</small>
+                            <button type="button" class="secondary" data-select-kind="landmark" data-select-id="${escapeText(l.id)}">Sunting</button>
+                          </li>`,
+                        )
+                        .join("")}
+                    </ul>
+                  </details>
                 </div>`
             : state.subTab === "secondary"
               ? `<div>
-                  ${editable ? `<button type="button" class="secondary" data-map-action="add-poi">+ Tambah POI Baru</button>` : ""}
-                  <ul class="rb-list">
-                    ${record.snapshot.pois
-                      .map(
-                        (p) => `<li>
-                          <div><strong>${escapeText(p.name)}</strong> <span class="rb-badge">${escapeText(p.category)}</span></div>
-                          <small>${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}</small>
-                          <button type="button" class="secondary" data-select-kind="poi" data-select-id="${escapeText(p.id)}">Sunting</button>
-                        </li>`,
-                      )
-                      .join("")}
-                  </ul>
+                  ${editable ? `<div class="rb-actions"><button type="button" class="secondary" data-map-action="add-poi">+ Tambah POI Baru</button></div>` : ""}
+                  <details class="rb-accordion" data-testid="step2-list-accordion">
+                    <summary>Daftar POI (${record.snapshot.pois.length})</summary>
+                    <ul class="rb-list">
+                      ${record.snapshot.pois
+                        .map(
+                          (p) => `<li>
+                            <div><strong>${escapeText(p.name)}</strong> <span class="rb-badge">${escapeText(p.category)}</span></div>
+                            <small>${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}</small>
+                            <button type="button" class="secondary" data-select-kind="poi" data-select-id="${escapeText(p.id)}">Sunting</button>
+                          </li>`,
+                        )
+                        .join("")}
+                    </ul>
+                  </details>
                 </div>`
               : `<div>
-                  ${editable ? `<button type="button" class="secondary" data-map-action="add-station">+ Tambah Stasiun Baru</button>` : ""}
-                  <ul class="rb-list">
-                    ${record.snapshot.stations
-                      .map(
-                        (s) => `<li>
-                          <div><strong>${escapeText(s.name)}</strong> ${s.eligibleHidingAnchor ? '<span class="rb-badge">Jangkar</span>' : '<span class="rb-badge rb-badge-warn">Non-jangkar</span>'}</div>
-                          <small>${s.latitude.toFixed(5)}, ${s.longitude.toFixed(5)} · ${escapeText(s.transitLines.join(", "))}</small>
-                          <button type="button" class="secondary" data-select-kind="station" data-select-id="${escapeText(s.id)}">Sunting</button>
-                        </li>`,
-                      )
-                      .join("")}
-                  </ul>
+                  ${editable ? `<div class="rb-actions"><button type="button" class="secondary" data-map-action="add-station">+ Tambah Stasiun Baru</button></div>` : ""}
+                  <details class="rb-accordion" data-testid="step2-list-accordion">
+                    <summary>Daftar Stasiun (${record.snapshot.stations.length})</summary>
+                    <ul class="rb-list">
+                      ${record.snapshot.stations
+                        .map(
+                          (s) => `<li>
+                            <div><strong>${escapeText(s.name)}</strong> ${s.eligibleHidingAnchor ? '<span class="rb-badge">Jangkar</span>' : '<span class="rb-badge rb-badge-warn">Non-jangkar</span>'}</div>
+                            <small>${s.latitude.toFixed(5)}, ${s.longitude.toFixed(5)} · ${escapeText(s.transitLines.join(", "))}</small>
+                            <button type="button" class="secondary" data-select-kind="station" data-select-id="${escapeText(s.id)}">Sunting</button>
+                          </li>`,
+                        )
+                        .join("")}
+                    </ul>
+                  </details>
                 </div>`
     }
 
-    <div class="rb-step-footer">
-      <button type="button" class="secondary" data-step="1">← Draf &amp; Info</button>
-      ${editable ? `<button type="button" class="secondary" data-action="save-draft" ${dis}>Simpan Peta &amp; Validasi</button>` : ""}
-      <button type="button" class="primary" data-step="3">Lanjut: Aturan &amp; Kartu →</button>
+    <div class="rb-sticky-footer">
+      <button type="button" class="secondary" data-step="1">← Draf</button>
+      ${editable ? `<button type="button" class="secondary" data-action="save-draft" ${dis}>Simpan</button>` : "<span></span>"}
+      <button type="button" class="primary" data-step="3">Aturan →</button>
     </div>`;
 }
 

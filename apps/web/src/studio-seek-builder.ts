@@ -65,10 +65,10 @@ export function renderSeekStep3(
           : renderSeekDeck(pack, state, dis, editable)
     }
 
-    <div class="rb-step-footer">
-      <button type="button" class="secondary" data-step="2">← Peta &amp; Lokasi</button>
-      ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan &amp; Validasi</button>` : ""}
-      <button type="button" class="primary" data-step="4">Lanjut: Validasi &amp; Ajukan →</button>
+    <div class="rb-sticky-footer">
+      <button type="button" class="secondary" data-step="2">← Peta</button>
+      ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan</button>` : "<span></span>"}
+      <button type="button" class="primary" data-step="4">Validasi →</button>
     </div>
   </div>`;
 }
@@ -133,21 +133,23 @@ function renderSeekBook(
     </div>
     ${editable ? `<button type="button" class="secondary" data-s3-action="save-family-cfg">Simpan Pengaturan Keluarga</button>` : ""}
 
-    <h4>Daftar Item ${escapeText(family)} (${items.length})</h4>
-    <ul class="rb-list">
-      ${
-        items.length === 0
-          ? "<li>Belum ada item pada keluarga ini.</li>"
-          : items
-              .map(
-                (item, idx) => `<li>
-                  <div><strong>${escapeText(item.label)}</strong> <code>${escapeText(item.id)}</code></div>
-                  ${editable ? `<button type="button" class="secondary" data-s3-action="delete-book-item" data-index="${idx}">Hapus</button>` : ""}
-                </li>`,
-              )
-              .join("")
-      }
-    </ul>
+    <details class="rb-accordion">
+      <summary>Daftar Item ${escapeText(family)} (${items.length})</summary>
+      <ul class="rb-list">
+        ${
+          items.length === 0
+            ? "<li>Belum ada item pada keluarga ini.</li>"
+            : items
+                .map(
+                  (item, idx) => `<li>
+                    <div><strong>${escapeText(item.label)}</strong> <code>${escapeText(item.id)}</code></div>
+                    ${editable ? `<button type="button" class="secondary" data-s3-action="delete-book-item" data-index="${idx}">Hapus</button>` : ""}
+                  </li>`,
+                )
+                .join("")
+        }
+      </ul>
+    </details>
 
     ${
       editable
@@ -186,28 +188,31 @@ function renderSeekDeck(
   const prim = state.cardPrimitive;
   return `<div data-testid="seek-deck-panel">
     <p><small>Total kartu: <strong>${pack.deck.cards.reduce((s, c) => s + c.copies, 0)}</strong> · Batas tangan: ${pack.deck.baseHandLimit} · Maks kutukan pemblokir aktif: ${pack.deck.maxActiveBlockingCurses}</small></p>
-    <ul class="rb-list">
-      ${pack.deck.cards
-        .map(
-          (card, idx) => `<li>
-            <div>
-              <strong>${escapeText(card.title)}</strong>
-              <span class="rb-badge">${card.copies}x</span>
-              <span class="rb-badge">${escapeText(card.effect.primitive)}</span>
-            </div>
-            <small>${escapeText(card.description)}</small>
-            ${
-              editable
-                ? `<div class="rb-actions">
-                    <button type="button" class="secondary" data-s3-action="dup-seek-card" data-index="${idx}">Duplikat</button>
-                    <button type="button" class="secondary" data-s3-action="delete-seek-card" data-index="${idx}">Hapus</button>
-                  </div>`
-                : ""
-            }
-          </li>`,
-        )
-        .join("")}
-    </ul>
+    <details class="rb-accordion">
+      <summary>Daftar Kartu di Dek (${pack.deck.cards.length} jenis)</summary>
+      <ul class="rb-list">
+        ${pack.deck.cards
+          .map(
+            (card, idx) => `<li>
+              <div>
+                <strong>${escapeText(card.title)}</strong>
+                <span class="rb-badge">${card.copies}x</span>
+                <span class="rb-badge">${escapeText(card.effect.primitive)}</span>
+              </div>
+              <small>${escapeText(card.description)}</small>
+              ${
+                editable
+                  ? `<div class="rb-actions">
+                      <button type="button" class="secondary" data-s3-action="dup-seek-card" data-index="${idx}">Duplikat</button>
+                      <button type="button" class="secondary" data-s3-action="delete-seek-card" data-index="${idx}">Hapus</button>
+                    </div>`
+                  : ""
+              }
+            </li>`,
+          )
+          .join("")}
+      </ul>
+    </details>
 
     ${
       editable
