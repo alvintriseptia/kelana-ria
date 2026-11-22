@@ -132,6 +132,7 @@ export {
   pointInPolygon,
   validateHideSeekRulebook,
 } from "./seek-engine/rulebook-validator.js";
+export { validateClaimRulebook } from "./claim-engine/claim-rulebook-validator.js";
 export {
   evaluateMatching,
   evaluateMeasuring,
