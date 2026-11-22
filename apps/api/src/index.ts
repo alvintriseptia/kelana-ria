@@ -214,10 +214,19 @@ export {
   type GeoSeedProvider,
   type GeoSeedRequest,
 } from "./seek-engine/geo-seeder.js";
-export { loadOfficialSeekPacks, type LoadedOfficialSeekPack } from "./official-packs.js";
+export {
+  loadOfficialClaimPacks,
+  loadOfficialSeekPacks,
+  type LoadedOfficialClaimPack,
+  type LoadedOfficialSeekPack,
+} from "./official-packs.js";
 export {
   rulebookStore,
+  toPublicClaimListing,
   toPublicSeekListing,
+  type AnyRulebookPack,
+  type ClaimPublicListing,
+  type HideSeekPublicListing,
   type RulebookPublicListing,
   type RulebookRoomPass,
   type StoredRulebookRecord,

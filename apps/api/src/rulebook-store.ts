@@ -3,6 +3,11 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
+  ClaimEngineAction,
+  ClaimEngineActionReply,
+  ClaimEngineRoomView,
+  ClaimRulebookPack,
+  ClaimRulebookValidationResult,
   GeoSnapshot,
   HideSeekRulebookPack,
   HideSeekRulebookValidationResult,
@@ -15,13 +20,22 @@ import type {
   SeekEngineRoomView,
 } from "@kelana-ria/contracts";
 import {
+  applyClaimEngineAction,
+  createClaimEngineMatch,
+  findClaimEngineSeat,
+  joinClaimEngineMatch,
+  viewClaimEngineMatch,
+  type ClaimEngineMatch,
+} from "./claim-engine/claim-engine.js";
+import { validateClaimRulebook } from "./claim-engine/claim-rulebook-validator.js";
+import {
   createMidtransAdapterFromEnv,
   parseMidtransIdrAmount,
   type MidtransAdapter,
   type MidtransNotificationPayload,
   type RecordedMidtransAdapter,
 } from "./midtrans-adapter.js";
-import { loadOfficialSeekPacks } from "./official-packs.js";
+import { loadOfficialClaimPacks, loadOfficialSeekPacks } from "./official-packs.js";
 import {
   createSeekDeckState,
   enqueueSeekDrawBatches,
@@ -55,6 +69,9 @@ function isRecordedAdapter(adapter: MidtransAdapter): adapter is RecordedMidtran
   return adapter.mode === "recorded-sandbox" && typeof (adapter as Partial<RecordedMidtransAdapter>).setOrderState === "function";
 }
 
+export type AnyRulebookPack = HideSeekRulebookPack | ClaimRulebookPack;
+export type AnyRulebookValidationResult = HideSeekRulebookValidationResult | ClaimRulebookValidationResult;
+
 export type StoredRulebookRecord = {
   packId: string;
   version: number;
@@ -62,7 +79,7 @@ export type StoredRulebookRecord = {
   isOfficial: boolean;
   status: PackVersionStatus;
   ownerHash: string;
-  pack: HideSeekRulebookPack;
+  pack: AnyRulebookPack;
   snapshot: GeoSnapshot;
   updatedAt: number;
   publishedAt: number | null;
@@ -70,7 +87,7 @@ export type StoredRulebookRecord = {
   pausedReason: string | null;
 };
 
-export type RulebookPublicListing = {
+export type HideSeekPublicListing = {
   packId: string;
   version: number;
   format: "hide-and-seek";
@@ -96,25 +113,72 @@ export type RulebookPublicListing = {
   publishedAt: number;
 };
 
+export type ClaimPublicListing = {
+  packId: string;
+  version: number;
+  format: "claim-the-city";
+  isOfficial: boolean;
+  status: "published";
+  title: string;
+  byline: string;
+  summary: string;
+  cityLabel: string;
+  difficulty: ClaimRulebookPack["meta"]["difficulty"];
+  priceIdr: number;
+  minPlayers: number;
+  maxPlayers: number;
+  durationMinutes: number;
+  soloTargets: ClaimRulebookPack["session"]["soloTargets"] | null;
+  startName: string;
+  zones: { id: string; name: string; label: string; landmarkCount: number }[];
+  landmarkCount: number;
+  challengePrimitives: string[];
+  tacticalDeckSummary: { enabled: boolean; totalCards: number; maxHandSize: number };
+  publishedAt: number;
+};
+
+export type RulebookPublicListing = HideSeekPublicListing | ClaimPublicListing;
+
 export type RulebookRoomPass = {
   passId: string;
   orderId: string | null;
   roomCode: string;
   packId: string;
   version: number;
+  format: RulebookFormat;
   maxPlayers: number;
   paid: boolean;
   createdAt: number;
 };
 
 type LiveSeekSession = {
+  format: "hide-and-seek";
   pass: RulebookRoomPass;
   match: SeekEngineMatch;
   deck: SeekDeckEngineState;
 };
 
-export function toPublicSeekListing(record: StoredRulebookRecord): RulebookPublicListing {
-  const { pack, snapshot } = record;
+type LiveClaimSession = {
+  format: "claim-the-city";
+  pass: RulebookRoomPass;
+  match: ClaimEngineMatch;
+};
+
+type LiveSession = LiveSeekSession | LiveClaimSession;
+
+function isClaimPack(pack: AnyRulebookPack): pack is ClaimRulebookPack {
+  return pack.meta.format === "claim-the-city";
+}
+
+function validateAnyPack(pack: AnyRulebookPack, snapshot: GeoSnapshot): AnyRulebookValidationResult {
+  return isClaimPack(pack)
+    ? validateClaimRulebook(pack, snapshot)
+    : validateHideSeekRulebook(pack, snapshot);
+}
+
+export function toPublicSeekListing(record: StoredRulebookRecord): HideSeekPublicListing {
+  const pack = record.pack as HideSeekRulebookPack;
+  const { snapshot } = record;
   const families = Object.entries(pack.investigationBook.families)
     .filter(([, cfg]) => cfg?.enabled)
     .map(([family, cfg]) => ({
@@ -164,6 +228,52 @@ export function toPublicSeekListing(record: StoredRulebookRecord): RulebookPubli
   };
 }
 
+export function toPublicClaimListing(record: StoredRulebookRecord): ClaimPublicListing {
+  const pack = record.pack as ClaimRulebookPack;
+  const { snapshot } = record;
+  const primitives = new Set<string>();
+  for (const list of Object.values(pack.challenges.landmarkChallenges)) {
+    for (const item of list) primitives.add(item.payload.primitive);
+  }
+  for (const item of pack.challenges.challengeHandPool ?? []) {
+    primitives.add(item.payload.primitive);
+  }
+  const zones = pack.geography.zones.map((z) => ({
+    id: z.id,
+    name: z.name,
+    label: z.label,
+    landmarkCount: pack.geography.landmarks.filter((lm) => lm.zoneId === z.id).length,
+  }));
+  const totalCards = pack.tacticalDeck.cards.reduce((sum, c) => sum + c.copies, 0);
+  return {
+    packId: record.packId,
+    version: record.version,
+    format: "claim-the-city",
+    isOfficial: record.isOfficial,
+    status: "published",
+    title: pack.meta.title,
+    byline: pack.meta.byline,
+    summary: pack.meta.summary,
+    cityLabel: pack.meta.cityLabel,
+    difficulty: pack.meta.difficulty,
+    priceIdr: pack.meta.priceIdr,
+    minPlayers: pack.session.minPlayers,
+    maxPlayers: pack.session.maxPlayers,
+    durationMinutes: Math.round(pack.session.durationMs / 60_000),
+    soloTargets: pack.session.soloTargets ?? null,
+    startName: snapshot.startPoint.name,
+    zones,
+    landmarkCount: pack.geography.landmarks.length,
+    challengePrimitives: [...primitives].sort(),
+    tacticalDeckSummary: {
+      enabled: pack.tacticalDeck.enabled,
+      totalCards,
+      maxHandSize: pack.tacticalDeck.maxHandSize,
+    },
+    publishedAt: record.publishedAt ?? record.updatedAt,
+  };
+}
+
 export function rulebookStore(
   databasePath: string,
   options: { midtrans?: MidtransAdapter; officialPacksDir?: string } = {},
@@ -205,7 +315,8 @@ export function rulebookStore(
     );
   `);
 
-  const officialLoaded = loadOfficialSeekPacks(options.officialPacksDir);
+  const officialSeekLoaded = loadOfficialSeekPacks(options.officialPacksDir);
+  const officialClaimLoaded = loadOfficialClaimPacks(options.officialPacksDir);
   const upsertVersionStmt = db.prepare(`
     INSERT OR REPLACE INTO rulebook_versions (pack_id, version, format, is_official, status, owner_hash, payload)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -223,15 +334,14 @@ export function rulebookStore(
   const getPassByCodeStmt = db.prepare("SELECT payload FROM rulebook_passes WHERE room_code = ?");
   const insertPassStmt = db.prepare("INSERT OR IGNORE INTO rulebook_passes (pass_id, order_id, room_code, payload) VALUES (?, ?, ?, ?)");
 
-  // Seed official free packs into the exact same table as community packs
   const nowSeed = Date.now();
-  for (const { pack, snapshot } of officialLoaded) {
+  const seedOfficial = (pack: AnyRulebookPack, snapshot: GeoSnapshot) => {
     const existing = getVersionStmt.get(pack.meta.packId, pack.meta.version) as { payload: string } | undefined;
     if (!existing) {
       const rec: StoredRulebookRecord = {
         packId: pack.meta.packId,
         version: pack.meta.version,
-        format: "hide-and-seek",
+        format: pack.meta.format,
         isOfficial: true,
         status: "published",
         ownerHash: "official",
@@ -244,9 +354,11 @@ export function rulebookStore(
       };
       upsertVersionStmt.run(rec.packId, rec.version, rec.format, 1, rec.status, rec.ownerHash, JSON.stringify(rec));
     }
-  }
+  };
+  for (const { pack, snapshot } of officialSeekLoaded) seedOfficial(pack, snapshot);
+  for (const { pack, snapshot } of officialClaimLoaded) seedOfficial(pack, snapshot);
 
-  const liveRooms = new Map<string, LiveSeekSession>();
+  const liveRooms = new Map<string, LiveSession>();
 
   function getRecord(packId: string, version: number): StoredRulebookRecord | undefined {
     const row = getVersionStmt.get(packId, version) as { payload: string } | undefined;
@@ -269,10 +381,10 @@ export function rulebookStore(
     return (listVersionsStmt.all() as { payload: string }[]).map((row) => JSON.parse(row.payload) as StoredRulebookRecord);
   }
 
-  function listPublicListings(): RulebookPublicListing[] {
+  function listPublicListings(format?: RulebookFormat): RulebookPublicListing[] {
     return allRecords()
-      .filter((r) => r.status === "published" && r.format === "hide-and-seek")
-      .map(toPublicSeekListing);
+      .filter((r) => r.status === "published" && (!format || r.format === format))
+      .map((r) => (r.format === "claim-the-city" ? toPublicClaimListing(r) : toPublicSeekListing(r)));
   }
 
   function cloneOfficialTemplate(
@@ -288,7 +400,7 @@ export function rulebookStore(
     }
     const maxRow = maxVersionStmt.get(overrides.packId) as { max_v: number | null } | undefined;
     const nextVersion = (maxRow?.max_v ?? 0) + 1;
-    const clonedPack: HideSeekRulebookPack = {
+    const clonedPack: AnyRulebookPack = {
       ...structuredClone(template.pack),
       meta: {
         ...template.pack.meta,
@@ -299,11 +411,11 @@ export function rulebookStore(
         byline: overrides.byline,
         priceIdr: overrides.priceIdr,
       },
-    };
+    } as AnyRulebookPack;
     const record: StoredRulebookRecord = {
       packId: overrides.packId,
       version: nextVersion,
-      format: "hide-and-seek",
+      format: template.format,
       isOfficial: false,
       status: "draft",
       ownerHash: digest(creatorCredential),
@@ -320,10 +432,10 @@ export function rulebookStore(
 
   function saveDraft(
     creatorCredential: string,
-    pack: HideSeekRulebookPack,
+    pack: AnyRulebookPack,
     snapshot: GeoSnapshot,
     now: number,
-  ): { ok: true; record: StoredRulebookRecord; validation: HideSeekRulebookValidationResult } | { ok: false; error: string } {
+  ): { ok: true; record: StoredRulebookRecord; validation: AnyRulebookValidationResult } | { ok: false; error: string } {
     if (!pack?.meta?.packId) return { ok: false, error: "invalid-metadata" };
     if (pack.meta.isOfficial) return { ok: false, error: "cannot-author-official-pack" };
     const ownerHash = digest(creatorCredential);
@@ -332,15 +444,15 @@ export function rulebookStore(
       return { ok: false, error: "version-immutable" };
     }
     const version = existing ? existing.version : ((maxVersionStmt.get(pack.meta.packId) as { max_v: number | null } | undefined)?.max_v ?? 0) + 1;
-    const normalizedPack: HideSeekRulebookPack = {
+    const normalizedPack = {
       ...pack,
       meta: { ...pack.meta, version, isOfficial: false },
-    };
-    const validation = validateHideSeekRulebook(normalizedPack, snapshot);
+    } as AnyRulebookPack;
+    const validation = validateAnyPack(normalizedPack, snapshot);
     const record: StoredRulebookRecord = {
       packId: normalizedPack.meta.packId,
       version,
-      format: "hide-and-seek",
+      format: normalizedPack.meta.format,
       isOfficial: false,
       status: "draft",
       ownerHash,
@@ -360,12 +472,12 @@ export function rulebookStore(
     packId: string,
     version: number,
     now: number,
-  ): { ok: true; record: StoredRulebookRecord } | { ok: false; error: string; validation?: HideSeekRulebookValidationResult } {
+  ): { ok: true; record: StoredRulebookRecord } | { ok: false; error: string; validation?: AnyRulebookValidationResult } {
     const rec = getRecord(packId, version);
     if (!rec || rec.isOfficial) return { ok: false, error: "not-found" };
     if (rec.ownerHash !== digest(creatorCredential)) return { ok: false, error: "owner-only" };
     if (rec.status !== "draft" && rec.status !== "changes-requested") return { ok: false, error: "invalid-status" };
-    const validation = validateHideSeekRulebook(rec.pack, rec.snapshot);
+    const validation = validateAnyPack(rec.pack, rec.snapshot);
     if (!validation.ok) return { ok: false, error: "validation-failed", validation };
     rec.status = "submitted";
     rec.updatedAt = now;
@@ -378,7 +490,7 @@ export function rulebookStore(
     version: number,
     decision: { action: "request-changes"; note: string } | { action: "publish" } | { action: "pause"; reason: string },
     now: number,
-  ): { ok: true; record: StoredRulebookRecord } | { ok: false; error: string; validation?: HideSeekRulebookValidationResult } {
+  ): { ok: true; record: StoredRulebookRecord } | { ok: false; error: string; validation?: AnyRulebookValidationResult } {
     const rec = getRecord(packId, version);
     if (!rec || rec.isOfficial) return { ok: false, error: "not-found" };
     if (decision.action === "request-changes") {
@@ -391,7 +503,7 @@ export function rulebookStore(
     }
     if (decision.action === "publish") {
       if (rec.status !== "submitted") return { ok: false, error: "invalid-status" };
-      const validation = validateHideSeekRulebook(rec.pack, rec.snapshot);
+      const validation = validateAnyPack(rec.pack, rec.snapshot);
       if (!validation.ok) return { ok: false, error: "validation-failed", validation };
       rec.status = "published";
       rec.publishedAt = now;
@@ -408,14 +520,15 @@ export function rulebookStore(
     return { ok: true, record: rec };
   }
 
-  function instantiateSeekRoom(
+  function instantiateRoom(
     rec: StoredRulebookRecord,
     hostCredential: string,
     hostName: string,
     now: number,
     orderId: string | null = null,
-  ): LiveSeekSession {
-    const roomCode = `RB-${randomBytes(3).toString("hex").toUpperCase()}`;
+  ): LiveSession {
+    const prefix = rec.format === "claim-the-city" ? "RC" : "RB";
+    const roomCode = `${prefix}-${randomBytes(3).toString("hex").toUpperCase()}`;
     const passId = `pass-${randomBytes(5).toString("hex")}`;
     const pass: RulebookRoomPass = {
       passId,
@@ -423,20 +536,38 @@ export function rulebookStore(
       roomCode,
       packId: rec.packId,
       version: rec.version,
+      format: rec.format,
       maxPlayers: rec.pack.session.maxPlayers,
       paid: orderId !== null,
       createdAt: now,
     };
-    const match = createSeekEngineMatch({
-      code: roomCode,
-      pack: rec.pack,
-      snapshot: rec.snapshot,
-      hostSeatId: "seat-1",
-      hostName,
-      hostCredentialHash: digest(hostCredential),
-    });
-    const deck = createSeekDeckState(rec.pack);
-    const session: LiveSeekSession = { pass, match, deck };
+
+    let session: LiveSession;
+    if (rec.format === "claim-the-city") {
+      const claimPack = rec.pack as ClaimRulebookPack;
+      const match = createClaimEngineMatch({
+        code: roomCode,
+        pack: claimPack,
+        snapshot: rec.snapshot,
+        hostSeatId: "seat-1",
+        hostName,
+        hostCredentialHash: digest(hostCredential),
+      });
+      session = { format: "claim-the-city", pass, match };
+    } else {
+      const seekPack = rec.pack as HideSeekRulebookPack;
+      const match = createSeekEngineMatch({
+        code: roomCode,
+        pack: seekPack,
+        snapshot: rec.snapshot,
+        hostSeatId: "seat-1",
+        hostName,
+        hostCredentialHash: digest(hostCredential),
+      });
+      const deck = createSeekDeckState(seekPack);
+      session = { format: "hide-and-seek", pass, match, deck };
+    }
+
     liveRooms.set(roomCode, session);
     insertPassStmt.run(pass.passId, pass.orderId, pass.roomCode, JSON.stringify(pass));
     return session;
@@ -448,17 +579,18 @@ export function rulebookStore(
     hostCredential: string,
     hostName: string,
     now: number,
-  ): { ok: true; roomCode: string; pass: RulebookRoomPass; room: SeekEngineRoomView } | { ok: false; error: string } {
+  ):
+    | { ok: true; roomCode: string; pass: RulebookRoomPass; room: SeekEngineRoomView | ClaimEngineRoomView }
+    | { ok: false; error: string } {
     const rec = getRecord(packId, version);
     if (!rec || rec.status !== "published") return { ok: false, error: "pack-unavailable" };
     if (rec.pack.meta.priceIdr > 0) return { ok: false, error: "payment-required" };
-    const session = instantiateSeekRoom(rec, hostCredential, hostName, now, null);
-    return {
-      ok: true,
-      roomCode: session.pass.roomCode,
-      pass: session.pass,
-      room: viewSeekEngineMatch(session.match, "seat-1", now),
-    };
+    const session = instantiateRoom(rec, hostCredential, hostName, now, null);
+    const room =
+      session.format === "claim-the-city"
+        ? viewClaimEngineMatch(session.match, "seat-1", now)
+        : viewSeekEngineMatch(session.match, "seat-1", now);
+    return { ok: true, roomCode: session.pass.roomCode, pass: session.pass, room };
   }
 
   async function createOrder(
@@ -494,7 +626,7 @@ export function rulebookStore(
       version: rec.version,
       title: rec.pack.meta.title,
       byline: rec.pack.meta.byline,
-      players: 2,
+      players: rec.pack.session.minPlayers === 1 && rec.pack.session.maxPlayers === 1 ? 1 : 2,
       currency: "IDR",
       grossAmountIdr: gross,
       platformFeeIdr: fee,
@@ -576,11 +708,10 @@ export function rulebookStore(
     const rec = getRecord(order.packId, order.version);
     if (!rec) return { ok: false, error: "pack-not-found" };
 
-    // Idempotent 1:1 pass + earnings reconciliation
     const existingPassRow = getPassByOrderStmt.get(orderId) as { payload: string } | undefined;
     const pass = existingPassRow
       ? (JSON.parse(existingPassRow.payload) as RulebookRoomPass)
-      : instantiateSeekRoom(rec, hostCredential, hostName, now, orderId).pass;
+      : instantiateRoom(rec, hostCredential, hostName, now, orderId).pass;
 
     const existingEarningRow = getEarningByOrderStmt.get(orderId) as { payload: string } | undefined;
     const earning: PackEarningsEntry = existingEarningRow
@@ -618,10 +749,20 @@ export function rulebookStore(
     credential: string,
     name: string,
     now: number,
-  ): { ok: true; seatId: string; room: SeekEngineRoomView } | { ok: false; error: string } {
+  ): { ok: true; seatId: string; room: SeekEngineRoomView | ClaimEngineRoomView } | { ok: false; error: string } {
     const session = liveRooms.get(roomCode);
     if (!session) return { ok: false, error: "room-not-found" };
     const credHash = digest(credential);
+    if (session.format === "claim-the-city") {
+      const existingSeat = findClaimEngineSeat(session.match, credHash);
+      if (existingSeat) {
+        return { ok: true, seatId: existingSeat, room: viewClaimEngineMatch(session.match, existingSeat, now) };
+      }
+      const nextSeatId = `seat-${session.match.seats.length + 1}`;
+      const joined = joinClaimEngineMatch(session.match, { seatId: nextSeatId, name, credentialHash: credHash });
+      if (!joined.ok) return joined;
+      return { ok: true, seatId: nextSeatId, room: viewClaimEngineMatch(session.match, nextSeatId, now) };
+    }
     const existingSeat = findSeekEngineSeat(session.match, credHash);
     if (existingSeat) {
       return { ok: true, seatId: existingSeat, room: viewSeekEngineMatch(session.match, existingSeat, now) };
@@ -635,17 +776,24 @@ export function rulebookStore(
   function actInRoom(
     roomCode: string,
     credential: string,
-    action: SeekEngineAction,
+    action: SeekEngineAction | ClaimEngineAction,
     now: number,
-  ): SeekEngineActionReply | { error: string } {
+  ): SeekEngineActionReply | ClaimEngineActionReply | { error: string } {
     const session = liveRooms.get(roomCode);
     if (!session) return { error: "room-not-found" };
-    const seatId = findSeekEngineSeat(session.match, digest(credential));
+    const credHash = digest(credential);
+    if (session.format === "claim-the-city") {
+      const seatId = findClaimEngineSeat(session.match, credHash);
+      if (!seatId) return { error: "not-a-member" };
+      return applyClaimEngineAction(session.match, seatId, action as ClaimEngineAction, now);
+    }
+    const seatId = findSeekEngineSeat(session.match, credHash);
     if (!seatId) return { error: "not-a-member" };
     expireSeekDeckAndCurses(session.deck, session.match, now);
     const prevTurn = session.match.turnNumber;
-    const reply = applySeekEngineAction(session.match, seatId, action, now);
-    if (!reply.error && action.type === "ask") {
+    const seekAction = action as SeekEngineAction;
+    const reply = applySeekEngineAction(session.match, seatId, seekAction, now);
+    if (!reply.error && seekAction.type === "ask") {
       onSeekerQuestionAskedForCurses(session.deck, session.match, now);
     }
     if (!reply.error && reply.earnedDrawBatches?.length) {
@@ -659,7 +807,7 @@ export function rulebookStore(
 
   function playCardInRoom(roomCode: string, credential: string, params: PlaySeekCardParams, now: number) {
     const session = liveRooms.get(roomCode);
-    if (!session) return { ok: false as const, error: "room-not-found" };
+    if (!session || session.format !== "hide-and-seek") return { ok: false as const, error: "room-not-found" };
     const seatId = findSeekEngineSeat(session.match, digest(credential));
     if (!seatId || seatId !== activeHiderSeatId(session.match)) {
       return { ok: false as const, error: "hider-only" };
@@ -670,16 +818,26 @@ export function rulebookStore(
   function viewRoom(roomCode: string, credential: string, now: number) {
     const session = liveRooms.get(roomCode);
     if (!session) return undefined;
-    const seatId = findSeekEngineSeat(session.match, digest(credential));
+    const credHash = digest(credential);
+    if (session.format === "claim-the-city") {
+      const seatId = findClaimEngineSeat(session.match, credHash);
+      if (!seatId) return undefined;
+      return {
+        format: "claim-the-city" as const,
+        room: viewClaimEngineMatch(session.match, seatId, now),
+        pass: session.pass,
+      };
+    }
+    const seatId = findSeekEngineSeat(session.match, credHash);
     if (!seatId) return undefined;
     expireSeekDeckAndCurses(session.deck, session.match, now);
     const room = viewSeekEngineMatch(session.match, seatId, now);
     const deck = viewSeekDeck(session.deck, room.role === "hider");
-    return { room, deck, pass: session.pass };
+    return { format: "hide-and-seek" as const, room, deck, pass: session.pass };
   }
 
   async function seedGeoFromOfficialFixture(request: GeoSeedRequest): Promise<GeoSnapshot> {
-    const baseSnapshot = officialLoaded[officialLoaded.length - 1]?.snapshot;
+    const baseSnapshot = officialSeekLoaded[officialSeekLoaded.length - 1]?.snapshot;
     if (!baseSnapshot) throw new Error("No official geo fixture loaded");
     const provider = createFixtureGeoSeedProvider(baseSnapshot);
     return seedAndFreezeGeoSnapshot(request, provider);
