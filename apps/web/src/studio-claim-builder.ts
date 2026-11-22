@@ -6,6 +6,11 @@ import type {
   ClaimRulebookPack,
 } from "@kelana-ria/contracts";
 import { escapeText } from "./solo-view";
+import {
+  challengePrimitiveTileMeta,
+  renderGameCardPreviewHtml,
+  type CardPreviewChip,
+} from "./studio-assets";
 
 export type ClaimStep3SubTab = "session" | "challenges" | "deck";
 
@@ -143,7 +148,17 @@ function renderClaimChallenges(
     ${
       editable
         ? `<div class="rb-card" data-testid="claim-challenge-composer">
-            <h4>+ Tambah Tantangan Tersembunyi (6 Primitif)</h4>
+            <h4>+ Tambah Tantangan Tersembunyi</h4>
+            <div class="st-visual-grid" role="group" aria-label="Pilih tipe tantangan">
+              ${CHALLENGE_PRIMITIVES.map((p) => {
+                const meta = challengePrimitiveTileMeta(p.id);
+                return `<button type="button" class="st-visual-tile" data-c3-prim="${p.id}" aria-pressed="${prim === p.id}">
+                  ${meta.svg}
+                  <strong>${escapeText(meta.short)}</strong>
+                  <span class="st-tile-meta">${escapeText(meta.badge)}</span>
+                </button>`;
+              }).join("")}
+            </div>
             <div class="rb-grid-2">
               <label class="rb-field"><span>Primitif Tantangan</span>
                 <select id="ed-chal-prim" ${dis}>
@@ -238,27 +253,25 @@ function renderClaimDeck(
 
     <details class="rb-accordion">
       <summary>Daftar Kartu Taktis (${pack.tacticalDeck.cards.length} jenis)</summary>
-      <ul class="rb-list">
+      <div class="st-card-stack">
         ${pack.tacticalDeck.cards
-          .map(
-            (card, idx) => `<li>
-              <div>
-                <strong>${escapeText(card.title)}</strong>
-                <span class="rb-badge">${card.copies}x</span>
-                <span class="rb-badge">${escapeText(card.effect.primitive)}</span>
-              </div>
-              <small>${escapeText(card.description)}</small>
-              ${editable ? `<button type="button" class="secondary" data-c3-action="delete-claim-card" data-index="${idx}">Hapus</button>` : ""}
-            </li>`,
+          .map((card, idx) =>
+            renderClaimCardTile(
+              card,
+              editable
+                ? `<button type="button" class="secondary" data-c3-action="delete-claim-card" data-index="${idx}">Hapus</button>`
+                : undefined,
+            ),
           )
           .join("")}
-      </ul>
+      </div>
     </details>
 
     ${
       editable
         ? `<div class="rb-card" data-testid="claim-card-composer">
-            <h4>+ Tambah Kartu Taktis (6 Primitif)</h4>
+            <h4>+ Tambah Kartu Taktis</h4>
+            <div data-testid="live-card-preview">${renderClaimCardTile(previewClaimCardFromState(state))}</div>
             <div class="rb-grid-2">
               <label class="rb-field"><span>Primitif Kartu</span>
                 <select id="ed-ccard-prim">
@@ -419,8 +432,72 @@ export function buildClaimChallengeFromForm(root: HTMLElement, state: ClaimStep3
   };
 }
 
-export function buildClaimCardFromForm(root: HTMLElement, state: ClaimStep3State): ClaimCardDefinition | null {
-  const title = root.querySelector<HTMLInputElement>("#ed-ccard-title")?.value.trim();
+function claimCardChips(card: ClaimCardDefinition): CardPreviewChip[] {
+  const ef = card.effect;
+  if (ef.primitive === "shield_claim") {
+    return [
+      { label: "Perisai", tone: "ok" },
+      { label: `${Math.round(ef.durationMs / 60_000)} menit`, tone: "neutral" },
+    ];
+  }
+  if (ef.primitive === "sabotage_curse") {
+    const clearLabel =
+      ef.clearCondition.type === "timer"
+        ? `Hapus: ${Math.round(ef.clearCondition.durationMs / 60_000)}m`
+        : `Hapus: ${ef.clearCondition.type}`;
+    return [
+      { label: `Blokir: ${ef.blockerType}`, tone: "danger" },
+      { label: clearLabel, tone: "warn" },
+    ];
+  }
+  if (ef.primitive === "double_weight") return [{ label: "Bobot 2x", tone: "ok" }];
+  if (ef.primitive === "instant_lock") return [{ label: "Kunci Instan", tone: "ok" }];
+  return [{ label: ef.primitive }];
+}
+
+function renderClaimCardTile(card: ClaimCardDefinition, actionsHtml?: string): string {
+  return renderGameCardPreviewHtml({
+    variant: card.effect.primitive === "sabotage_curse" ? "curse" : "tactical",
+    title: card.title,
+    subtitle: card.description,
+    copies: card.copies,
+    chips: claimCardChips(card),
+    actionsHtml,
+  });
+}
+
+function previewClaimCardFromState(state: ClaimStep3State): ClaimCardDefinition {
+  const meta = CLAIM_CARD_PRIMITIVES.find((p) => p.id === state.cardPrimitive) ?? CLAIM_CARD_PRIMITIVES[0];
+  const effect: ClaimCardEffect =
+    state.cardPrimitive === "shield_claim"
+      ? { primitive: "shield_claim", durationMs: 600_000 }
+      : state.cardPrimitive === "sabotage_curse"
+        ? {
+            primitive: "sabotage_curse",
+            blockerType: "block_steals",
+            clearCondition: { type: "timer", durationMs: 300_000 },
+          }
+        : { primitive: state.cardPrimitive };
+  return {
+    id: "preview",
+    copies: 1,
+    title: "Pratinjau Kartu Taktis",
+    description: meta.label,
+    effect,
+  };
+}
+
+export function renderClaimLiveCardPreview(root: HTMLElement, state: ClaimStep3State): string {
+  const built = buildClaimCardFromForm(root, state, "Pratinjau Kartu Taktis");
+  return renderClaimCardTile(built ?? previewClaimCardFromState(state));
+}
+
+export function buildClaimCardFromForm(
+  root: HTMLElement,
+  state: ClaimStep3State,
+  fallbackTitle?: string,
+): ClaimCardDefinition | null {
+  const title = root.querySelector<HTMLInputElement>("#ed-ccard-title")?.value.trim() || fallbackTitle;
   if (!title) return null;
   const description = root.querySelector<HTMLInputElement>("#ed-ccard-desc")?.value.trim() || "Kartu taktis kustom.";
   const copies = Math.max(1, Number(root.querySelector<HTMLInputElement>("#ed-ccard-copies")?.value ?? 1));

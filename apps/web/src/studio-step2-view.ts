@@ -6,6 +6,7 @@ import type {
   GeoStation,
 } from "@kelana-ria/contracts";
 import { escapeText } from "./solo-view";
+import { mapPinIconSvg } from "./studio-assets";
 import type { StudioMapMode } from "./studio-map-editor";
 import { isClaimStudioPack, type StudioVersionRecord } from "./studio-types";
 
@@ -218,9 +219,9 @@ export function renderStep2Bottom(
     ${renderInspector(record, selected, editable)}
 
     <div class="rb-actions" aria-label="Layer lokasi">
-      <button type="button" class="${state.subTab === "primary" ? "primary" : "secondary"}" data-map-tab="primary">${claimPack ? `Landmark (${claimPack.geography.landmarks.length})` : `Stasiun (${record.snapshot.stations.length})`}</button>
-      <button type="button" class="${state.subTab === "secondary" ? "primary" : "secondary"}" data-map-tab="secondary">${claimPack ? `Zona (${claimPack.geography.zones.length})` : `POI (${record.snapshot.pois.length})`}</button>
-      <button type="button" class="${state.subTab === "start" ? "primary" : "secondary"}" data-map-tab="start">Titik Mulai</button>
+      <button type="button" class="st-pill-icon ${state.subTab === "primary" ? "primary" : "secondary"}" data-map-tab="primary">${mapPinIconSvg(claimPack ? "zone" : "mrt")}<span>${claimPack ? `Landmark (${claimPack.geography.landmarks.length})` : `Stasiun (${record.snapshot.stations.length})`}</span></button>
+      <button type="button" class="st-pill-icon ${state.subTab === "secondary" ? "primary" : "secondary"}" data-map-tab="secondary">${mapPinIconSvg(claimPack ? "zone" : "poi")}<span>${claimPack ? `Zona (${claimPack.geography.zones.length})` : `POI (${record.snapshot.pois.length})`}</span></button>
+      <button type="button" class="st-pill-icon ${state.subTab === "start" ? "primary" : "secondary"}" data-map-tab="start">${mapPinIconSvg("start")}<span>Titik Mulai</span></button>
       <button type="button" class="${state.subTab === "boundary" ? "primary" : "secondary"}" data-map-tab="boundary">Batas (${record.snapshot.boundaryPolygon.length})</button>
       ${!claim && editable ? `<button type="button" class="secondary" data-map-action="seed-geo">Seed Ulang Geo</button>` : ""}
     </div>
