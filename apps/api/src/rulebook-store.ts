@@ -9,6 +9,7 @@ import type {
   ClaimRulebookPack,
   ClaimRulebookValidationResult,
   GeoSnapshot,
+  HideSeekCardCategory,
   HideSeekRulebookPack,
   HideSeekRulebookValidationResult,
   LocationFix,
@@ -100,6 +101,8 @@ export type StoredRulebookRecord = {
   pausedReason: string | null;
 };
 
+type PublicCardExample = { title: string; description: string; kind: HideSeekCardCategory | "tactical" };
+
 export type HideSeekPublicListing = {
   packId: string;
   version: number;
@@ -122,11 +125,13 @@ export type HideSeekPublicListing = {
   searchLimitMs: number;
   objectiveResponseMs: number;
   photoResponseMs: number;
+  drawDecisionMs: number;
   regroupPolicy: HideSeekRulebookPack["session"]["regroupPolicy"];
   stationCount: number;
   startName: string;
   questionFamilies: { family: string; itemCount: number; drawCount: number; keepCount: number }[];
   deckSummary: { totalCards: number; timeBonuses: number; powerups: number; curses: number; baseHandLimit: number };
+  cardExamples: PublicCardExample[];
   publishedAt: number;
 };
 
@@ -155,7 +160,8 @@ export type ClaimPublicListing = {
   zones: { id: string; name: string; label: string; landmarkCount: number }[];
   landmarkCount: number;
   challengePrimitives: string[];
-  tacticalDeckSummary: { enabled: boolean; totalCards: number; maxHandSize: number };
+  tacticalDeckSummary: { enabled: boolean; totalCards: number; maxHandSize: number; drawTriggers: ClaimRulebookPack["tacticalDeck"]["drawTriggers"] };
+  cardExamples: PublicCardExample[];
   publishedAt: number;
 };
 
@@ -230,10 +236,14 @@ export function toPublicSeekListing(record: StoredRulebookRecord): HideSeekPubli
   let timeBonuses = 0;
   let powerups = 0;
   let curses = 0;
+  const cardExamples = new Map<HideSeekCardCategory, PublicCardExample>();
   for (const card of pack.deck.cards) {
     if (card.category === "time_bonus") timeBonuses += card.copies;
     else if (card.category === "powerup") powerups += card.copies;
     else curses += card.copies;
+    if (card.copies > 0 && !cardExamples.has(card.category)) {
+      cardExamples.set(card.category, { title: card.title, description: card.description, kind: card.category });
+    }
   }
   return {
     packId: record.packId,
@@ -257,6 +267,7 @@ export function toPublicSeekListing(record: StoredRulebookRecord): HideSeekPubli
     searchLimitMs: pack.timers.searchLimitMs,
     objectiveResponseMs: pack.timers.objectiveResponseMs,
     photoResponseMs: pack.timers.photoResponseMs,
+    drawDecisionMs: pack.timers.drawDecisionMs,
     regroupPolicy: pack.session.regroupPolicy,
     stationCount: snapshot.stations.filter((s) => s.eligibleHidingAnchor).length,
     startName: snapshot.startPoint.name,
@@ -268,6 +279,7 @@ export function toPublicSeekListing(record: StoredRulebookRecord): HideSeekPubli
       curses,
       baseHandLimit: pack.deck.baseHandLimit,
     },
+    cardExamples: [...cardExamples.values()],
     publishedAt: record.publishedAt ?? record.updatedAt,
   };
 }
@@ -289,6 +301,7 @@ export function toPublicClaimListing(record: StoredRulebookRecord): ClaimPublicL
     landmarkCount: pack.geography.landmarks.filter((lm) => lm.zoneId === z.id).length,
   }));
   const totalCards = pack.tacticalDeck.cards.reduce((sum, c) => sum + c.copies, 0);
+  const example = pack.tacticalDeck.enabled ? pack.tacticalDeck.cards.find(card => card.copies > 0) : undefined;
   return {
     packId: record.packId,
     version: record.version,
@@ -318,7 +331,9 @@ export function toPublicClaimListing(record: StoredRulebookRecord): ClaimPublicL
       enabled: pack.tacticalDeck.enabled,
       totalCards,
       maxHandSize: pack.tacticalDeck.maxHandSize,
+      drawTriggers: pack.tacticalDeck.drawTriggers,
     },
+    cardExamples: example ? [{ title: example.title, description: example.description, kind: "tactical" }] : [],
     publishedAt: record.publishedAt ?? record.updatedAt,
   };
 }
