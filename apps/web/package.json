@@ -13,6 +13,7 @@
     "qa:duo": "node qa/duo.mjs",
     "qa:seek": "node qa/seek.mjs",
     "qa:rulebook-seek": "node qa/rulebook-seek.mjs",
+    "qa:rulebook-claim": "node qa/rulebook-claim.mjs",
     "qa:packs": "node qa/packs.mjs",
     "qa:release": "node qa/release.mjs"
   },

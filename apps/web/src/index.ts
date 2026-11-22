@@ -124,6 +124,7 @@ async function showRoute() {
   const mode = params.get("play");
   const seeking = mode === "hide-and-seek";
   const rulebookSeek = mode === "rulebook-seek";
+  const rulebookClaim = mode === "rulebook-claim";
   const rulebookStudio = mode === "rulebook-studio";
   const playing =
     mode === "solo-claim" ||
@@ -131,6 +132,7 @@ async function showRoute() {
     seeking ||
     mode === "creator-packs" ||
     rulebookSeek ||
+    rulebookClaim ||
     rulebookStudio;
   setup.hidden = playing;
   play.hidden = !playing;
@@ -156,14 +158,17 @@ async function showRoute() {
   const heading = mode === "creator-packs"
     ? '<h1>Paket Kreator Jakarta</h1><p class="intro">Jakarta (Compact) · Claim the City · Tinjauan &amp; Katalog</p>'
     : rulebookStudio
-      ? '<h1>Studio Rulebook</h1><p class="intro">Hide &amp; Seek · Authoring &amp; Tinjauan Paket Komunitas</p>'
+      ? '<h1>Studio Rulebook</h1><p class="intro">Hide &amp; Seek &amp; Claim the City · Authoring &amp; Tinjauan Paket Komunitas</p>'
       : rulebookSeek
         ? '<h1 lang="en">Hide &amp; Seek · Rulebook</h1><p class="intro">2–6 Pemain · Zona Sembunyi, Endgame &amp; Dek Kartu</p>'
-        : `<h1 lang="en">${format}</h1><p class="intro">${boardLabel} · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Gratis</p>`;
+        : rulebookClaim
+          ? '<h1 lang="en">Claim the City · Rulebook</h1><p class="intro">1–6 Pemain · Klaim–Kunci–Rebut &amp; Dek Taktis</p>'
+          : `<h1 lang="en">${format}</h1><p class="intro">${boardLabel} · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Gratis</p>`;
   play.innerHTML = `${heading}<p role="status">Membuka permainan…</p>`;
   try {
     const mount = seeking ? (await import("./seek-play")).mountSeekPlay
       : rulebookSeek ? (await import("./rulebook-seek-play")).mountRulebookSeekPlay
+      : rulebookClaim ? (await import("./rulebook-claim-play")).mountRulebookClaimPlay
       : rulebookStudio ? (await import("./rulebook-studio")).mountRulebookStudio
       : mode === "creator-packs" ? (await import("./pack-play")).mountPackPlay
       : mode === "duo-claim" ? (await import("./duo-play")).mountDuoPlay
