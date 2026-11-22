@@ -136,6 +136,7 @@ export type ClaimPublicListing = {
   priceIdr: number;
   minPlayers: number;
   maxPlayers: number;
+  teamMode: string;
   durationMinutes: number;
   soloTargets: ClaimRulebookPack["session"]["soloTargets"] | null;
   startName: string;
@@ -268,6 +269,7 @@ export function toPublicClaimListing(record: StoredRulebookRecord): ClaimPublicL
     priceIdr: pack.meta.priceIdr,
     minPlayers: pack.session.minPlayers,
     maxPlayers: pack.session.maxPlayers,
+    teamMode: pack.session.teamMode,
     durationMinutes: Math.round(pack.session.durationMs / 60_000),
     soloTargets: pack.session.soloTargets ?? null,
     startName: snapshot.startPoint.name,
@@ -899,6 +901,18 @@ export function rulebookStore(
       return {
         format: "claim-the-city" as const,
         room: viewClaimEngineMatch(session.match, seatId, now),
+        publicBoard: {
+          startPoint: session.match.snapshot.startPoint,
+          landmarks: session.match.pack.geography.landmarks.map((l) => ({
+            id: l.id,
+            name: l.name,
+            zoneId: l.zoneId,
+            latitude: l.latitude,
+            longitude: l.longitude,
+            transitSummary: l.transitSummary,
+            accessNotes: l.accessNotes,
+          })),
+        },
         pass: session.pass,
       };
     }
