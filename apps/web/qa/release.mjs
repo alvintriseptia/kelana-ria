@@ -192,7 +192,7 @@ try {
       await clickAndWaitPost(host.page, 'button[data-action="start-match"]');
       await host.page.waitForFunction(() => document.body.textContent.includes("Waktu Sembunyi"));
 
-      await host.page.click('button[data-map-point="mrt-blok-m"]');
+      await host.page.locator('button[data-map-point="mrt-blok-m"]').press("Enter");
       await clickAndWaitPost(host.page, 'button[data-action="lock-anchor"]');
       now += (board === "jakarta-wide" ? 46 : 26) * 60_000;
       await guest.page.click('button[data-action="refresh"]');
@@ -206,7 +206,7 @@ try {
 
       await guest.page.locator("[data-map-ready=true]").waitFor();
       await guest.page.screenshot({ path: join(results, `release-${board}-seek-map.png`) });
-      await guest.page.click('button[data-map-point="mrt-blok-m"]');
+      await guest.page.locator('button[data-map-point="mrt-blok-m"]').press("Enter");
       await clickAndWaitPost(guest.page, 'button[data-action="trigger-endgame"]');
       await host.page.click('button[data-action="refresh"]');
       const code = (await host.page.locator('[data-testid="hider-found-code"]').textContent()).trim();
@@ -218,7 +218,7 @@ try {
       }
       await guest.page.locator('.sg-game[data-role="hider"]').waitFor();
       const secondStart = guest.page.locator('.board-map-pin-start[data-map-point="mrt-blok-m"]');
-      await secondStart.click();
+      await secondStart.press("Enter");
       await clickAndWaitPost(guest.page, 'button[data-action="lock-anchor"]');
       now += 24 * 60 * 60_000;
       for (const page of [host.page, guest.page]) {
