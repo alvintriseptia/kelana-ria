@@ -123,7 +123,15 @@ async function showRoute() {
   restoreSelection();
   const mode = params.get("play");
   const seeking = mode === "hide-and-seek";
-  const playing = mode === "solo-claim" || mode === "duo-claim" || seeking || mode === "creator-packs";
+  const rulebookSeek = mode === "rulebook-seek";
+  const rulebookStudio = mode === "rulebook-studio";
+  const playing =
+    mode === "solo-claim" ||
+    mode === "duo-claim" ||
+    seeking ||
+    mode === "creator-packs" ||
+    rulebookSeek ||
+    rulebookStudio;
   setup.hidden = playing;
   play.hidden = !playing;
   if (!playing) {
@@ -137,15 +145,26 @@ async function showRoute() {
     return;
   }
   if (summary.open) summary.close();
-  const format = seeking ? "Hide & Seek" : "Claim the City";
+  const format = seeking || rulebookSeek ? "Hide & Seek" : "Claim the City";
   const boardLabel = params.get("board") === "jakarta-wide" ? "Jakarta (Wide)" : "Jakarta (Compact)";
-  document.title = mode === "creator-packs" ? "Paket Kreator · Kelana Ria" : `${format} · Kelana Ria`;
+  document.title =
+    mode === "creator-packs"
+      ? "Paket Kreator · Kelana Ria"
+      : rulebookStudio
+        ? "Studio Rulebook · Kelana Ria"
+        : `${format} · Kelana Ria`;
   const heading = mode === "creator-packs"
     ? '<h1>Paket Kreator Jakarta</h1><p class="intro">Jakarta (Compact) · Claim the City · Tinjauan &amp; Katalog</p>'
-    : `<h1 lang="en">${format}</h1><p class="intro">${boardLabel} · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Gratis</p>`;
+    : rulebookStudio
+      ? '<h1>Studio Rulebook</h1><p class="intro">Hide &amp; Seek · Authoring &amp; Tinjauan Paket Komunitas</p>'
+      : rulebookSeek
+        ? '<h1 lang="en">Hide &amp; Seek · Rulebook</h1><p class="intro">2–6 Pemain · Zona Sembunyi, Endgame &amp; Dek Kartu</p>'
+        : `<h1 lang="en">${format}</h1><p class="intro">${boardLabel} · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Gratis</p>`;
   play.innerHTML = `${heading}<p role="status">Membuka permainan…</p>`;
   try {
     const mount = seeking ? (await import("./seek-play")).mountSeekPlay
+      : rulebookSeek ? (await import("./rulebook-seek-play")).mountRulebookSeekPlay
+      : rulebookStudio ? (await import("./rulebook-studio")).mountRulebookStudio
       : mode === "creator-packs" ? (await import("./pack-play")).mountPackPlay
       : mode === "duo-claim" ? (await import("./duo-play")).mountDuoPlay
       : (await import("./solo-play")).mountSoloPlay;

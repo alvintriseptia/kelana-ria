@@ -22,7 +22,7 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
   function ensureCred(request: IncomingMessage, response: ServerResponse): string {
     const existing = credential(request, cookieName);
     if (existing) return existing;
-    const fresh = randomBytes(16).toString("hex");
+    const fresh = randomBytes(32).toString("base64url");
     setCredential(request, response, cookieName, fresh, "/api/rulebooks", secureCookie);
     return fresh;
   }
@@ -66,7 +66,7 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
       json(response, 415, { error: "invalid-request" });
       return;
     }
-    const raw = await requestBody(request);
+    const raw = await requestBody(request, 512 * 1024);
     if (raw === undefined) return json(response, 413, { error: "invalid-request" });
     let body: unknown;
     try {
@@ -122,6 +122,7 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
           body.pack as HideSeekRulebookPack | ClaimRulebookPack,
           body.snapshot as GeoSnapshot,
           ts,
+          { rehashSnapshot: Boolean(body.rehashSnapshot) },
         );
         json(response, res.ok ? 200 : 400, res);
         return;
@@ -197,6 +198,16 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
       }
       if (type === "play-card") {
         const res = store.playCardInRoom(String(body.roomCode ?? ""), cred, body.params as PlaySeekCardParams, ts);
+        json(response, res.ok ? 200 : 400, res);
+        return;
+      }
+      if (type === "deck-action") {
+        const res = store.deckActionInRoom(
+          String(body.roomCode ?? ""),
+          cred,
+          (isObject(body.action) ? body.action : {}) as Record<string, unknown>,
+          ts,
+        );
         json(response, res.ok ? 200 : 400, res);
         return;
       }

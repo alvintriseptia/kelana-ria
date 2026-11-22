@@ -11,6 +11,7 @@ import type {
   GeoSnapshot,
   HideSeekRulebookPack,
   HideSeekRulebookValidationResult,
+  LocationFix,
   PackEarningsEntry,
   PackOrderSummary,
   PackVersionStatus,
@@ -22,6 +23,7 @@ import type {
 import {
   applyClaimEngineAction,
   createClaimEngineMatch,
+  expireClaimEngineMatch,
   findClaimEngineSeat,
   joinClaimEngineMatch,
   viewClaimEngineMatch,
@@ -37,21 +39,28 @@ import {
 } from "./midtrans-adapter.js";
 import { loadOfficialClaimPacks, loadOfficialSeekPacks } from "./official-packs.js";
 import {
+  buyoutSeekCurse,
+  chooseSeekDrawCards,
+  clearCurseByGpsDetour,
+  clearCurseByHonorTask,
   createSeekDeckState,
   enqueueSeekDrawBatches,
   expireSeekDeckAndCurses,
   onSeekerQuestionAskedForCurses,
   playSeekDeckCard,
+  reviewCursePhotoProof,
+  submitCursePhotoProof,
   viewSeekDeck,
   type PlaySeekCardParams,
   type SeekDeckEngineState,
 } from "./seek-engine/deck-engine.js";
 import { createFixtureGeoSeedProvider, seedAndFreezeGeoSnapshot, type GeoSeedRequest } from "./seek-engine/geo-seeder.js";
-import { validateHideSeekRulebook } from "./seek-engine/rulebook-validator.js";
+import { computeGeoSnapshotHash, validateHideSeekRulebook } from "./seek-engine/rulebook-validator.js";
 import {
   activeHiderSeatId,
   applySeekEngineAction,
   createSeekEngineMatch,
+  expireSeekEngineMatch,
   findSeekEngineSeat,
   joinSeekEngineMatch,
   viewSeekEngineMatch,
@@ -435,6 +444,7 @@ export function rulebookStore(
     pack: AnyRulebookPack,
     snapshot: GeoSnapshot,
     now: number,
+    options?: { rehashSnapshot?: boolean },
   ): { ok: true; record: StoredRulebookRecord; validation: AnyRulebookValidationResult } | { ok: false; error: string } {
     if (!pack?.meta?.packId) return { ok: false, error: "invalid-metadata" };
     if (pack.meta.isOfficial) return { ok: false, error: "cannot-author-official-pack" };
@@ -444,11 +454,17 @@ export function rulebookStore(
       return { ok: false, error: "version-immutable" };
     }
     const version = existing ? existing.version : ((maxVersionStmt.get(pack.meta.packId) as { max_v: number | null } | undefined)?.max_v ?? 0) + 1;
+    const normalizedSnapshot: GeoSnapshot = options?.rehashSnapshot
+      ? { ...snapshot, hash: computeGeoSnapshotHash(snapshot) }
+      : snapshot;
     const normalizedPack = {
       ...pack,
       meta: { ...pack.meta, version, isOfficial: false },
+      geography: options?.rehashSnapshot
+        ? { ...pack.geography, geoSnapshotHash: normalizedSnapshot.hash }
+        : pack.geography,
     } as AnyRulebookPack;
-    const validation = validateAnyPack(normalizedPack, snapshot);
+    const validation = validateAnyPack(normalizedPack, normalizedSnapshot);
     const record: StoredRulebookRecord = {
       packId: normalizedPack.meta.packId,
       version,
@@ -457,7 +473,7 @@ export function rulebookStore(
       status: "draft",
       ownerHash,
       pack: normalizedPack,
-      snapshot,
+      snapshot: normalizedSnapshot,
       updatedAt: now,
       publishedAt: null,
       reviewNote: null,
@@ -815,6 +831,63 @@ export function rulebookStore(
     return playSeekDeckCard(session.deck, session.match, params, now);
   }
 
+  function deckActionInRoom(
+    roomCode: string,
+    credential: string,
+    action: Record<string, unknown>,
+    now: number,
+  ): { ok: boolean; error?: string; [key: string]: unknown } {
+    const session = liveRooms.get(roomCode);
+    if (!session || session.format !== "hide-and-seek") return { ok: false, error: "room-not-found" };
+    const seatId = findSeekEngineSeat(session.match, digest(credential));
+    if (!seatId) return { ok: false, error: "not-a-member" };
+    const isHider = seatId === activeHiderSeatId(session.match);
+    const kind = String(action.kind ?? "");
+    if (kind === "choose-draw") {
+      if (!isHider) return { ok: false, error: "hider-only" };
+      const keepInstanceIds = Array.isArray(action.keepInstanceIds) ? action.keepInstanceIds.map(String) : [];
+      const discardInstanceIds = Array.isArray(action.discardInstanceIds) ? action.discardInstanceIds.map(String) : undefined;
+      return chooseSeekDrawCards(session.deck, session.match, { keepInstanceIds, discardInstanceIds }, now);
+    }
+    if (kind === "review-curse-photo") {
+      if (!isHider) return { ok: false, error: "hider-only" };
+      return reviewCursePhotoProof(
+        session.deck,
+        session.match,
+        { curseInstanceId: String(action.curseInstanceId ?? ""), approve: Boolean(action.approve) },
+        now,
+      );
+    }
+    if (kind === "clear-curse-gps") {
+      if (isHider) return { ok: false, error: "seeker-only" };
+      return clearCurseByGpsDetour(
+        session.deck,
+        session.match,
+        String(action.curseInstanceId ?? ""),
+        action.fix as LocationFix,
+        now,
+      );
+    }
+    if (kind === "submit-curse-photo") {
+      if (isHider) return { ok: false, error: "seeker-only" };
+      return submitCursePhotoProof(
+        session.deck,
+        session.match,
+        { curseInstanceId: String(action.curseInstanceId ?? ""), seatId, photoId: String(action.photoId ?? "") },
+        now,
+      );
+    }
+    if (kind === "clear-curse-honor") {
+      if (isHider) return { ok: false, error: "seeker-only" };
+      return clearCurseByHonorTask(session.deck, session.match, String(action.curseInstanceId ?? ""), now);
+    }
+    if (kind === "buyout-curse") {
+      if (isHider) return { ok: false, error: "seeker-only" };
+      return buyoutSeekCurse(session.deck, session.match, String(action.curseInstanceId ?? ""), now);
+    }
+    return { ok: false, error: "unknown-deck-action" };
+  }
+
   function viewRoom(roomCode: string, credential: string, now: number) {
     const session = liveRooms.get(roomCode);
     if (!session) return undefined;
@@ -822,6 +895,7 @@ export function rulebookStore(
     if (session.format === "claim-the-city") {
       const seatId = findClaimEngineSeat(session.match, credHash);
       if (!seatId) return undefined;
+      expireClaimEngineMatch(session.match, now);
       return {
         format: "claim-the-city" as const,
         room: viewClaimEngineMatch(session.match, seatId, now),
@@ -830,6 +904,7 @@ export function rulebookStore(
     }
     const seatId = findSeekEngineSeat(session.match, credHash);
     if (!seatId) return undefined;
+    expireSeekEngineMatch(session.match, now);
     expireSeekDeckAndCurses(session.deck, session.match, now);
     const room = viewSeekEngineMatch(session.match, seatId, now);
     const deck = viewSeekDeck(session.deck, room.role === "hider");
@@ -862,6 +937,7 @@ export function rulebookStore(
     joinRoom,
     actInRoom,
     playCardInRoom,
+    deckActionInRoom,
     viewRoom,
     seedGeoFromOfficialFixture,
     close: () => db.close(),
