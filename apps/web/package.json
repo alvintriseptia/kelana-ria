@@ -14,6 +14,7 @@
     "qa:seek": "node qa/seek.mjs",
     "qa:rulebook-seek": "node qa/rulebook-seek.mjs",
     "qa:rulebook-claim": "node qa/rulebook-claim.mjs",
+    "qa:rulebook-studio": "node qa/rulebook-studio.mjs",
     "qa:packs": "node qa/packs.mjs",
     "qa:release": "node qa/release.mjs"
   },
