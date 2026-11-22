@@ -1,7 +1,7 @@
 import * as maplibregl from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { MapConfig, SoloPoint } from "@kelana-ria/contracts";
+import type { GeoCoordinate, MapConfig, SeekDeductionOverlay, SoloPoint } from "@kelana-ria/contracts";
 import "./board-map.css";
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
@@ -17,6 +17,8 @@ export type BoardMapPoint = SoloPoint & {
   label?: string;
   claimed?: boolean;
   selectable?: boolean;
+  dimmed?: boolean;
+  statusTag?: "unclaimed" | "claimed" | "locked" | "shielded" | "double";
 };
 
 export type BoardMapOptions = {
@@ -27,12 +29,14 @@ export type BoardMapOptions = {
   checkpoints: BoardMapPoint[];
   selectedId?: string;
   radarCircles?: BoardMapRadarCircle[];
+  deductionOverlays?: SeekDeductionOverlay[];
+  hidingZone?: { center: GeoCoordinate; radiusMeters: number };
   onSelect?: (checkpointId: string) => void;
   onSelectStart?: () => void;
   onError?: (reason: string) => void;
 };
 
-function circlePolygon(center: SoloPoint, radiusMeters: number, steps = 48): [number, number][] {
+function circlePolygon(center: GeoCoordinate, radiusMeters: number, steps = 48): [number, number][] {
   const earthRadius = 6_371_000;
   const latRad = (center.latitude * Math.PI) / 180;
   const ring: [number, number][] = [];
@@ -48,10 +52,24 @@ function circlePolygon(center: SoloPoint, radiusMeters: number, steps = 48): [nu
   return ring;
 }
 
+function bisectorLine(start: GeoCoordinate, end: GeoCoordinate): [number, number][] {
+  const midLat = (start.latitude + end.latitude) / 2;
+  const midLng = (start.longitude + end.longitude) / 2;
+  const dLat = end.latitude - start.latitude;
+  const dLng = end.longitude - start.longitude;
+  const scale = 2.5;
+  return [
+    [midLng - dLat * scale, midLat + dLng * scale],
+    [midLng + dLat * scale, midLat - dLng * scale],
+  ];
+}
+
 function offlineVectorStyle(
   start: SoloPoint,
   checkpoints: BoardMapPoint[],
   radarCircles: BoardMapRadarCircle[],
+  deductionOverlays: SeekDeductionOverlay[],
+  hidingZone?: { center: GeoCoordinate; radiusMeters: number },
 ): maplibregl.StyleSpecification {
   const corridorFeatures = checkpoints.map((point) => ({
     type: "Feature" as const,
@@ -65,14 +83,49 @@ function offlineVectorStyle(
     },
   }));
 
-  const radarFeatures = radarCircles.map((circle) => ({
-    type: "Feature" as const,
-    properties: { id: circle.id, inside: circle.inside },
-    geometry: {
-      type: "Polygon" as const,
-      coordinates: [circlePolygon(circle.center, circle.radiusMeters)],
-    },
-  }));
+  const circleFeatures = [
+    ...radarCircles.map((circle) => ({
+      type: "Feature" as const,
+      properties: { id: circle.id, inside: circle.inside },
+      geometry: {
+        type: "Polygon" as const,
+        coordinates: [circlePolygon(circle.center, circle.radiusMeters)],
+      },
+    })),
+    ...deductionOverlays
+      .filter((o): o is Extract<SeekDeductionOverlay, { type: "circle" | "voronoi" }> => o.type === "circle" || o.type === "voronoi")
+      .map((overlay, idx) => ({
+        type: "Feature" as const,
+        properties: { id: `ded-${idx}`, inside: overlay.type === "circle" ? overlay.inside : !overlay.outside },
+        geometry: {
+          type: "Polygon" as const,
+          coordinates: [circlePolygon(overlay.center, overlay.radiusMeters)],
+        },
+      })),
+    ...(hidingZone
+      ? [
+          {
+            type: "Feature" as const,
+            properties: { id: "hiding-zone", inside: true },
+            geometry: {
+              type: "Polygon" as const,
+              coordinates: [circlePolygon(hidingZone.center, hidingZone.radiusMeters)],
+            },
+          },
+        ]
+      : []),
+  ];
+
+  const bisectorFeatures = deductionOverlays
+    .filter((o): o is Extract<SeekDeductionOverlay, { type: "bisector" }> => o.type === "bisector")
+    .map((overlay, idx) => ({
+      type: "Feature" as const,
+      properties: { id: `bis-${idx}`, result: overlay.result },
+      geometry: {
+        type: "LineString" as const,
+        coordinates: bisectorLine(overlay.start, overlay.end),
+      },
+    }));
 
   return {
     version: 8,
@@ -83,7 +136,11 @@ function offlineVectorStyle(
       },
       radars: {
         type: "geojson",
-        data: { type: "FeatureCollection", features: radarFeatures },
+        data: { type: "FeatureCollection", features: circleFeatures },
+      },
+      bisectors: {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: bisectorFeatures },
       },
     },
     layers: [
@@ -120,6 +177,16 @@ function offlineVectorStyle(
           "line-width": 2,
         },
       },
+      {
+        id: "bisector-lines",
+        type: "line",
+        source: "bisectors",
+        paint: {
+          "line-color": "#7c3aed",
+          "line-width": 2.5,
+          "line-dasharray": [4, 2],
+        },
+      },
     ],
   };
 }
@@ -133,6 +200,8 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
     checkpoints,
     selectedId,
     radarCircles = [],
+    deductionOverlays = [],
+    hidingZone,
     onSelect,
     onSelectStart,
     onError,
@@ -181,7 +250,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
     const style =
       config.mode === "geoapify-vector" && config.styleUrl
         ? config.styleUrl
-        : offlineVectorStyle(start, checkpoints, radarCircles);
+        : offlineVectorStyle(start, checkpoints, radarCircles, deductionOverlays, hidingZone);
 
     map = new maplibregl.Map({
       container: canvasHost,
@@ -265,6 +334,8 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
       el.className = [
         "board-map-pin",
         point.claimed ? "board-map-pin-claimed" : "",
+        point.dimmed ? "board-map-pin-dimmed" : "",
+        point.statusTag ? `board-map-pin-${point.statusTag}` : "",
         point.id === selectedId ? "board-map-pin-selected" : "",
       ]
         .filter(Boolean)

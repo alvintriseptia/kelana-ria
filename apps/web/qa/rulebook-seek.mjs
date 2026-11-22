@@ -1,0 +1,124 @@
+import assert from "node:assert/strict";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { chromium } from "playwright";
+import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
+
+const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const distDir = path.join(root, "dist");
+
+let now = 1_800_000_000_000;
+const server = createSoloServer({
+  databasePath: ":memory:",
+  now: () => now,
+  staticDir: distDir,
+  midtrans: createRecordedMidtransAdapter(),
+  allowSimulatedLocation: true,
+});
+
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+const baseUrl = `http://127.0.0.1:${server.address().port}`;
+const browser = await chromium.launch({
+  channel: "chromium",
+  executablePath: process.env.CHROMIUM_PATH || undefined,
+});
+
+try {
+  // 1. Creator clones Official Jakarta Hide & Seek, adds custom Curse & station override, runs dry-run, publishes, buys & settles paid pass
+  const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const pageCreator = await ctxCreator.newPage();
+  await pageCreator.goto(`${baseUrl}/?play=rulebook-studio`, { waitUntil: "networkidle" });
+  await pageCreator.waitForSelector('button[data-action="clone"]');
+  await pageCreator.click('button[data-action="clone"]');
+  await pageCreator.waitForSelector("#ed-curse-title");
+  await pageCreator.fill("#ed-curse-title", "Kutukan Kopi Senopati");
+  await pageCreator.fill("#ed-station-name", "Stasiun Blok M BCA (Edisi Kopi)");
+  await pageCreator.click('button[data-action="save-draft"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"), null, { timeout: 8000 }).catch(async (err) => {
+    console.error("BODY AFTER SAVE-DRAFT:\n", await pageCreator.locator("body").innerText());
+    throw err;
+  });
+  await pageCreator.click('button[data-action="dry-run"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Dry-Run OK"));
+  await pageCreator.click('button[data-action="submit-draft"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
+  await pageCreator.click('button[data-tab="reviewer"]');
+  await pageCreator.click('button[data-action="publish"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("publish-version"));
+
+  // Navigate to catalog, purchase paid pack via recorded-sandbox Midtrans, and unlock room
+  await pageCreator.click('button[data-nav="catalog"]');
+  await pageCreator.waitForSelector('article[data-pack-id="pack-senopati-seek"]');
+  await pageCreator.click('article[data-pack-id="pack-senopati-seek"] button[data-action="buy-pack"]');
+  await pageCreator.waitForSelector('button[data-action="settle-order"]');
+  await pageCreator.click('button[data-action="settle-order"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+
+  const codeMatch = (await pageCreator.textContent("body")).match(/Kode:\s*(RB-[A-F0-9]+)/);
+  assert.ok(codeMatch, "Paid room code should be displayed after Midtrans settlement");
+  const roomCode = codeMatch[1];
+
+  // 2. Two guests join the paid room in isolated browser contexts (3 players total under 1 pass!)
+  const ctxG2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const pageG2 = await ctxG2.newPage();
+  await pageG2.goto(`${baseUrl}/?play=rulebook-seek`, { waitUntil: "networkidle" });
+  await pageG2.fill("#rb-join-code", roomCode);
+  await pageG2.fill("#rb-join-name", "Pencari 1");
+  await pageG2.click('button[data-action="join-room"]');
+  await pageG2.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+
+  const ctxG3 = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const pageG3 = await ctxG3.newPage();
+  await pageG3.goto(`${baseUrl}/?play=rulebook-seek`, { waitUntil: "networkidle" });
+  await pageG3.fill("#rb-join-code", roomCode);
+  await pageG3.fill("#rb-join-name", "Pencari 2");
+  await pageG3.click('button[data-action="join-room"]');
+  await pageG3.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (3/4)"));
+
+  async function clickAndWaitPost(page, selector) {
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
+      page.click(selector),
+    ]);
+  }
+
+  // All 3 check in and mark ready -> Host starts match
+  for (const p of [pageCreator, pageG2, pageG3]) {
+    await clickAndWaitPost(p, 'button[data-action="sim-start-checkin"]');
+    await clickAndWaitPost(p, 'button[data-action="mark-ready"]');
+  }
+  await clickAndWaitPost(pageCreator, 'button[data-action="start-match"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Waktu Sembunyi"));
+
+  // Hider locks mrt-blok-m; Seeker DOM must NOT contain Hider's private anchor or Found Code!
+  await clickAndWaitPost(pageCreator, 'button[data-action="lock-anchor"]');
+  now += 26 * 60_000;
+  await pageG2.click('button[data-action="refresh"]');
+  await pageG2.waitForFunction(() => document.body.textContent.includes("Perburuan Makro"));
+  const seekerBodyBeforeEndgame = await pageG2.textContent("body");
+  assert.equal(seekerBodyBeforeEndgame.includes("hider-found-code"), false);
+
+  // Seeker asks a Radar clue, Hider answers & picks drawn card, Seeker triggers Endgame, enters Found Code -> Regroup!
+  await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
+  await pageCreator.click('button[data-action="refresh"]');
+  await pageCreator.waitForSelector('button[data-action="answer-pending"]');
+  await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
+  await pageCreator.waitForSelector('button[data-action="choose-draw"]');
+  await clickAndWaitPost(pageCreator, 'button[data-action="choose-draw"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Tangan Penyembunyi (1/"));
+
+  await clickAndWaitPost(pageG2, 'button[data-action="trigger-endgame"]');
+  await pageG2.waitForFunction(() => document.body.textContent.includes("ENDGAME"));
+  await pageCreator.click('button[data-action="refresh"]');
+  const foundCode = (await pageCreator.textContent('[data-testid="hider-found-code"]')).trim();
+  assert.match(foundCode, /^\d{4}$/);
+
+  await pageG2.fill("#rb-found-input", foundCode);
+  await clickAndWaitPost(pageG2, 'button[data-action="submit-found-code"]');
+  await pageG2.waitForFunction(() => document.body.textContent.includes("Berkumpul Kembali"));
+
+  console.log("qa:rulebook-seek passed (3-player paid Hide & Seek RulebookPack + Studio + Endgame Found Code)");
+} finally {
+  await browser.close();
+  await new Promise((resolve) => server.close(resolve));
+}

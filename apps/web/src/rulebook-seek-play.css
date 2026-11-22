@@ -1,0 +1,144 @@
+.rb-shell {
+  display: grid;
+  gap: 1rem;
+  max-width: 720px;
+  margin: 0 auto;
+  padding-bottom: 2rem;
+}
+
+.rb-card {
+  background: #ffffff;
+  border: 1px solid #d5dcd6;
+  border-radius: 14px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.rb-card h2,
+.rb-card h3 {
+  margin: 0;
+}
+
+.rb-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.rb-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: #eef4f0;
+  color: #164e3f;
+  border: 1px solid #c5d9ce;
+}
+
+.rb-badge-warn {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #f59e0b;
+}
+
+.rb-badge-danger {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #ef4444;
+}
+
+.rb-badge-paid {
+  background: #e0e7ff;
+  color: #3730a3;
+  border-color: #a5b4fc;
+}
+
+.rb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.rb-grid-2 {
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.rb-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.rb-list li {
+  border: 1px solid #e2e8e4;
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.rb-list li[data-dimmed="true"] {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.rb-found-code {
+  font-size: 1.75rem;
+  font-weight: 800;
+  letter-spacing: 0.25em;
+  text-align: center;
+  padding: 0.65rem;
+  border-radius: 10px;
+  background: #0f766e;
+  color: #ffffff;
+}
+
+.rb-field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.rb-field input,
+.rb-field select,
+.rb-field textarea {
+  font: inherit;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid #b8c4bc;
+  border-radius: 8px;
+  min-height: 44px;
+}
+
+.rb-map-host {
+  min-height: 280px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid #d5dcd6;
+}
+
+.rb-errors {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: #991b1b;
+  font-size: 0.9rem;
+}
+
+.board-map-pin-dimmed {
+  opacity: 0.45;
+  filter: grayscale(0.85);
+}
+
+.board-map-pin-locked {
+  border: 2px solid #0f766e;
+  font-weight: 700;
+}
+
+.board-map-pin-claimed {
+  border: 2px dashed #b45309;
+}
