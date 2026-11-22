@@ -6,6 +6,18 @@ import { isClaimStudioPack } from "./studio-types";
 
 export type StudioMapMode = "select" | "add" | "move" | "boundary";
 export type StudioMapLayer = "start" | "primary" | "poi" | "zone";
+export type StudioTransitMode = "mrt" | "lrt" | "krl" | "transjakarta";
+
+export type StudioTransitPin = {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  mode: StudioTransitMode;
+  corridor: string;
+  inBoundary: boolean;
+  included: boolean;
+};
 
 export type StudioMapEditorOptions = {
   container: HTMLElement;
@@ -13,6 +25,8 @@ export type StudioMapEditorOptions = {
   record: StudioVersionRecord;
   mode: StudioMapMode;
   selectedTarget: { kind: "start" | "station" | "poi" | "landmark"; id: string } | null;
+  transitStations?: StudioTransitPin[];
+  onToggleTransitStation?: (stationId: string) => void;
   onMapClick: (coord: GeoCoordinate) => void;
   onSelectTarget: (target: { kind: "start" | "station" | "poi" | "landmark"; id: string }) => void;
   onError: () => void;
@@ -20,7 +34,13 @@ export type StudioMapEditorOptions = {
 
 export type StudioMapUpdate = Pick<
   StudioMapEditorOptions,
-  "record" | "mode" | "selectedTarget" | "onMapClick" | "onSelectTarget"
+  | "record"
+  | "mode"
+  | "selectedTarget"
+  | "transitStations"
+  | "onToggleTransitStation"
+  | "onMapClick"
+  | "onSelectTarget"
 >;
 
 export type StudioMapEditorHandle = {
@@ -29,7 +49,11 @@ export type StudioMapEditorHandle = {
   destroy: () => void;
 };
 
-function buildGeoJson(record: StudioVersionRecord, selectedTarget: StudioMapEditorOptions["selectedTarget"]) {
+function buildGeoJson(
+  record: StudioVersionRecord,
+  selectedTarget: StudioMapEditorOptions["selectedTarget"],
+  transitStations: StudioTransitPin[] = [],
+) {
   const boundaryCoords = record.snapshot.boundaryPolygon.map((p) => [p.longitude, p.latitude]);
   if (boundaryCoords.length >= 3) {
     boundaryCoords.push(boundaryCoords[0]);
@@ -78,49 +102,102 @@ function buildGeoJson(record: StudioVersionRecord, selectedTarget: StudioMapEdit
         ]
       : [];
 
-  return { boundaryFeatures, radiusFeatures };
+  const transitFeatures = transitStations.map((st) => ({
+    type: "Feature" as const,
+    properties: {
+      id: st.id,
+      name: st.name,
+      mode: st.mode,
+      corridor: st.corridor,
+      inBoundary: st.inBoundary,
+      included: st.included,
+    },
+    geometry: { type: "Point" as const, coordinates: [st.lng, st.lat] },
+  }));
+
+  return { boundaryFeatures, radiusFeatures, transitFeatures };
 }
 
-function offlineStudioStyle(boundaryFeatures: unknown[], radiusFeatures: unknown[]): maplibregl.StyleSpecification {
+function ensureOverlayLayers(
+  map: maplibregl.Map,
+  geo: ReturnType<typeof buildGeoJson>,
+) {
+  if (!map.getSource("studio-boundary")) {
+    map.addSource("studio-boundary", {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: geo.boundaryFeatures as never },
+    });
+    map.addLayer({
+      id: "studio-boundary-fill",
+      type: "fill",
+      source: "studio-boundary",
+      paint: { "fill-color": "#0f766e", "fill-opacity": 0.06 },
+    });
+    map.addLayer({
+      id: "studio-boundary-line",
+      type: "line",
+      source: "studio-boundary",
+      paint: { "line-color": "#153d34", "line-width": 2, "line-dasharray": [4, 2] },
+    });
+  }
+  if (!map.getSource("studio-radius")) {
+    map.addSource("studio-radius", {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: geo.radiusFeatures as never },
+    });
+    map.addLayer({
+      id: "studio-radius-fill",
+      type: "fill",
+      source: "studio-radius",
+      paint: { "fill-color": "#d97706", "fill-opacity": 0.16 },
+    });
+    map.addLayer({
+      id: "studio-radius-line",
+      type: "line",
+      source: "studio-radius",
+      paint: { "line-color": "#d97706", "line-width": 2 },
+    });
+  }
+  if (!map.getSource("studio-transit")) {
+    map.addSource("studio-transit", {
+      type: "geojson",
+      data: { type: "FeatureCollection", features: geo.transitFeatures as never },
+    });
+    map.addLayer({
+      id: "studio-transit-circles",
+      type: "circle",
+      source: "studio-transit",
+      paint: {
+        "circle-radius": ["case", ["boolean", ["get", "included"], false], 7.5, 5],
+        "circle-color": [
+          "match",
+          ["get", "mode"],
+          "mrt",
+          "#0f766e",
+          "lrt",
+          "#9333ea",
+          "krl",
+          "#dc2626",
+          "#2563eb",
+        ],
+        "circle-opacity": [
+          "case",
+          ["boolean", ["get", "included"], false],
+          0.95,
+          ["case", ["boolean", ["get", "inBoundary"], false], 0.42, 0.18],
+        ],
+        "circle-stroke-width": ["case", ["boolean", ["get", "included"], false], 2, 1],
+        "circle-stroke-color": "#ffffff",
+      },
+    });
+  }
+}
+
+function offlineStudioStyle(): maplibregl.StyleSpecification {
   return {
     version: 8,
-    sources: {
-      "studio-boundary": {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: boundaryFeatures as never },
-      },
-      "studio-radius": {
-        type: "geojson",
-        data: { type: "FeatureCollection", features: radiusFeatures as never },
-      },
-    },
-    layers: [
-      { id: "bg", type: "background", paint: { "background-color": "#f3f4eb" } },
-      {
-        id: "studio-boundary-fill",
-        type: "fill",
-        source: "studio-boundary",
-        paint: { "fill-color": "#0f766e", "fill-opacity": 0.06 },
-      },
-      {
-        id: "studio-boundary-line",
-        type: "line",
-        source: "studio-boundary",
-        paint: { "line-color": "#153d34", "line-width": 2, "line-dasharray": [4, 2] },
-      },
-      {
-        id: "studio-radius-fill",
-        type: "fill",
-        source: "studio-radius",
-        paint: { "fill-color": "#d97706", "fill-opacity": 0.16 },
-      },
-      {
-        id: "studio-radius-line",
-        type: "line",
-        source: "studio-radius",
-        paint: { "line-color": "#d97706", "line-width": 2 },
-      },
-    ],
+    sources: {},
+    layers: [{ id: "bg", type: "background", paint: { "background-color": "#f3f4eb" } }],
   };
 }
 
@@ -162,6 +239,8 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
     record: options.record,
     mode: options.mode,
     selectedTarget: options.selectedTarget,
+    transitStations: options.transitStations,
+    onToggleTransitStation: options.onToggleTransitStation,
     onMapClick: options.onMapClick,
     onSelectTarget: options.onSelectTarget,
   };
@@ -169,7 +248,7 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
   container.innerHTML = `<div class="board-map-shell">
     <div class="board-map-canvas" role="region" aria-label="Editor peta interaktif Studio Kreator"></div>
     <p class="board-map-attribution">
-      Mode peta: <strong data-studio-mode-label></strong> · ${config.mode === "geoapify-vector" ? "Peta vektor langsung" : "Peta vektor luring"} · © Geoapify · © OpenStreetMap contributors
+      Mode peta: <strong data-studio-mode-label></strong> · ${config.mode === "geoapify-vector" ? "Peta vektor langsung" : "Peta vektor luring"} · © Geoapify · © OpenStreetMap contributors · Data Halte Transjakarta
     </p>
   </div>`;
 
@@ -184,7 +263,11 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
 
   function syncSources() {
     if (!map || !styleLoaded || destroyed) return;
-    const { boundaryFeatures, radiusFeatures } = buildGeoJson(current.record, current.selectedTarget);
+    const { boundaryFeatures, radiusFeatures, transitFeatures } = buildGeoJson(
+      current.record,
+      current.selectedTarget,
+      current.transitStations,
+    );
     const boundarySrc = map.getSource<maplibregl.GeoJSONSource>("studio-boundary");
     if (boundarySrc) {
       boundarySrc.setData({ type: "FeatureCollection", features: boundaryFeatures as never });
@@ -192,6 +275,10 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
     const radiusSrc = map.getSource<maplibregl.GeoJSONSource>("studio-radius");
     if (radiusSrc) {
       radiusSrc.setData({ type: "FeatureCollection", features: radiusFeatures as never });
+    }
+    const transitSrc = map.getSource<maplibregl.GeoJSONSource>("studio-transit");
+    if (transitSrc) {
+      transitSrc.setData({ type: "FeatureCollection", features: transitFeatures as never });
     }
   }
 
@@ -298,7 +385,6 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
   function initMap(style: maplibregl.StyleSpecification) {
     if (destroyed) return;
     try {
-      const { boundaryFeatures, radiusFeatures } = buildGeoJson(current.record, current.selectedTarget);
       map = new maplibregl.Map({
         container: canvasHost,
         style,
@@ -312,51 +398,26 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
       map.on("load", () => {
         styleLoaded = true;
         if (!map || destroyed) return;
-        const latestGeo = buildGeoJson(current.record, current.selectedTarget);
-        if (config.mode === "geoapify-vector") {
-          if (!map.getSource("studio-boundary")) {
-            map.addSource("studio-boundary", {
-              type: "geojson",
-              data: { type: "FeatureCollection", features: latestGeo.boundaryFeatures as never },
-            });
-            map.addLayer({
-              id: "studio-boundary-fill",
-              type: "fill",
-              source: "studio-boundary",
-              paint: { "fill-color": "#0f766e", "fill-opacity": 0.06 },
-            });
-            map.addLayer({
-              id: "studio-boundary-line",
-              type: "line",
-              source: "studio-boundary",
-              paint: { "line-color": "#153d34", "line-width": 2, "line-dasharray": [4, 2] },
-            });
-          }
-          if (!map.getSource("studio-radius")) {
-            map.addSource("studio-radius", {
-              type: "geojson",
-              data: { type: "FeatureCollection", features: latestGeo.radiusFeatures as never },
-            });
-            map.addLayer({
-              id: "studio-radius-fill",
-              type: "fill",
-              source: "studio-radius",
-              paint: { "fill-color": "#d97706", "fill-opacity": 0.16 },
-            });
-            map.addLayer({
-              id: "studio-radius-line",
-              type: "line",
-              source: "studio-radius",
-              paint: { "line-color": "#d97706", "line-width": 2 },
-            });
-          }
-        }
+        const latestGeo = buildGeoJson(
+          current.record,
+          current.selectedTarget,
+          current.transitStations,
+        );
+        ensureOverlayLayers(map, latestGeo);
         syncSources();
         syncMarkers();
         map.fitBounds(computeStudioBounds(current.record), { padding: 36, maxZoom: 14.5, duration: 0 });
       });
 
       map.on("click", (ev) => {
+        if (current.mode === "select" && current.onToggleTransitStation && map?.getLayer("studio-transit-circles")) {
+          const hits = map.queryRenderedFeatures(ev.point, { layers: ["studio-transit-circles"] });
+          const hitId = hits[0]?.properties?.id;
+          if (typeof hitId === "string" && hitId) {
+            current.onToggleTransitStation(hitId);
+            return;
+          }
+        }
         current.onMapClick({
           latitude: Number(ev.lngLat.lat.toFixed(5)),
           longitude: Number(ev.lngLat.lng.toFixed(5)),
@@ -384,8 +445,7 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
         if (!destroyed) onError();
       });
   } else {
-    const { boundaryFeatures, radiusFeatures } = buildGeoJson(current.record, current.selectedTarget);
-    initMap(offlineStudioStyle(boundaryFeatures, radiusFeatures));
+    initMap(offlineStudioStyle());
   }
 
   return {

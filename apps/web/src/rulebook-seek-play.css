@@ -776,3 +776,81 @@
 .st-game-card-desc { font-size: 0.78rem; color: #52675c; overflow-wrap: anywhere; }
 .st-card-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .st-chip-ok { background: #dcfce7; color: #166534; }
+
+.st-transit-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.55rem;
+}
+
+.st-transit-chip {
+  min-height: 44px;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  border: 1.5px solid #c5d9ce;
+  background: #f5f8f6;
+  color: #164e3f;
+  font-size: 0.8rem;
+  font-weight: 700;
+  opacity: 0.65;
+}
+.st-transit-chip[aria-pressed="true"] {
+  border-color: #153d34;
+  background: #eef6f1;
+  color: #122f29;
+  opacity: 1;
+}
+
+.st-transit-panel {
+  border: 1px solid #d5e2da;
+  border-radius: 12px;
+  padding: 0.65rem;
+  background: #f9fcfa;
+  display: grid;
+  gap: 0.5rem;
+}
+.st-transit-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.st-attribution { font-size: 0.72rem; color: #52675c; overflow-wrap: anywhere; }
+.st-transit-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  display: grid;
+  gap: 0.35rem;
+}
+.st-transit-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid #e2ebe6;
+  border-radius: 8px;
+  background: #ffffff;
+  min-width: 0;
+}
+.st-toggle-btn {
+  min-width: 56px;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1.5px solid #c5d9ce;
+  background: #f5f8f6;
+  color: #52675c;
+  font-weight: 800;
+  font-size: 0.78rem;
+  flex: none;
+}
+.st-toggle-btn[aria-pressed="true"] {
+  border-color: #0f766e;
+  background: #0f766e;
+  color: #ffffff;
+}

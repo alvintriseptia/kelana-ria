@@ -3,12 +3,35 @@ import type {
   ClaimZoneDefinition,
   GeoCoordinate,
   GeoPoi,
+  GeoSnapshot,
   GeoStation,
+  TransitMode,
 } from "@kelana-ria/contracts";
 import { escapeText } from "./solo-view";
 import { mapPinIconSvg } from "./studio-assets";
-import type { StudioMapMode } from "./studio-map-editor";
-import { isClaimStudioPack, type StudioVersionRecord } from "./studio-types";
+import type {
+  StudioMapMode,
+  StudioTransitMode,
+  StudioTransitPin,
+} from "./studio-map-editor";
+import { isClaimStudioPack, type StudioPack, type StudioVersionRecord } from "./studio-types";
+
+export type JakartaTransitStation = {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  mode: StudioTransitMode;
+  corridor: string;
+};
+
+export type JakartaTransitCatalog = {
+  version: string;
+  generatedAt: string;
+  attribution: string;
+  sources: string[];
+  stations: JakartaTransitStation[];
+};
 
 export type Step2Target = { kind: "start" | "station" | "poi" | "landmark"; id: string };
 export type Step2Tab = "primary" | "secondary" | "start" | "boundary";
@@ -19,7 +42,204 @@ export type Step2State = {
   selected: Step2Target | null;
   mapFailed: boolean;
   lastClickedCoord: GeoCoordinate | null;
+  transitCatalog: JakartaTransitCatalog | null;
+  enabledTransitModes: Record<StudioTransitMode, boolean>;
+  excludedTransitIds: Set<string>;
+  transitQuery: string;
 };
+
+const TRANSIT_MODE_META: { mode: StudioTransitMode; label: string }[] = [
+  { mode: "mrt", label: "MRT" },
+  { mode: "lrt", label: "LRT" },
+  { mode: "krl", label: "KRL" },
+  { mode: "transjakarta", label: "TJ" },
+];
+
+export function pointInBoundary(
+  coord: { latitude: number; longitude: number },
+  polygon: GeoCoordinate[],
+): boolean {
+  if (polygon.length < 3) return false;
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].longitude;
+    const yi = polygon[i].latitude;
+    const xj = polygon[j].longitude;
+    const yj = polygon[j].latitude;
+    const intersect =
+      yi > coord.latitude !== yj > coord.latitude &&
+      coord.longitude < ((xj - xi) * (coord.latitude - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+export function approxMeters(a: GeoCoordinate, b: GeoCoordinate): number {
+  const rad = Math.PI / 180;
+  const dLat = (b.latitude - a.latitude) * rad;
+  const dLng = (b.longitude - a.longitude) * rad;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLng / 2) ** 2;
+  return 12_742_000 * Math.asin(Math.sqrt(Math.min(1, s)));
+}
+
+export function findCatalogStationMatchIndex(
+  stations: GeoStation[],
+  item: JakartaTransitStation,
+): number {
+  const exact = stations.findIndex((s) => s.id === item.id);
+  if (exact >= 0) return exact;
+  return stations.findIndex(
+    (s) => approxMeters(s, { latitude: item.lat, longitude: item.lng }) < 60,
+  );
+}
+
+function buildStationAttributes(
+  item: JakartaTransitStation,
+  pack: StudioPack,
+  existingStations: GeoStation[],
+): Record<string, string> {
+  const attrs: Record<string, string> = {
+    mode: item.mode,
+    corridor: item.corridor,
+    source: "built-in-jakarta",
+  };
+  let nearest: GeoStation | null = null;
+  let bestDist = Infinity;
+  for (const st of existingStations) {
+    const dist = approxMeters(st, { latitude: item.lat, longitude: item.lng });
+    if (dist < bestDist) {
+      bestDist = dist;
+      nearest = st;
+    }
+  }
+  if (!isClaimStudioPack(pack)) {
+    const matchingItems = pack.investigationBook.families.matching?.items ?? [];
+    for (const m of matchingItems) {
+      if (m.matchType === "station_attribute" && m.attributeKey) {
+        attrs[m.attributeKey] =
+          nearest?.attributes?.[m.attributeKey] ?? (m.attributeKey === "corridor" ? item.corridor : "Jakarta");
+      }
+    }
+  }
+  if (!attrs.kecamatan) attrs.kecamatan = nearest?.attributes?.kecamatan ?? "Jakarta";
+  return attrs;
+}
+
+export function createStationFromCatalog(
+  item: JakartaTransitStation,
+  pack: StudioPack,
+  snap: GeoSnapshot,
+): GeoStation {
+  const coord = { latitude: item.lat, longitude: item.lng };
+  const travelMs = Math.round((approxMeters(snap.startPoint, coord) / 5) * 1000 + 300_000);
+  return {
+    id: item.id,
+    name: item.name,
+    latitude: item.lat,
+    longitude: item.lng,
+    transitLines: [item.corridor],
+    attributes: buildStationAttributes(item, pack, snap.stations),
+    eligibleHidingAnchor: true,
+    accessNotes: `Titik transit bawaan Jakarta (${item.mode.toUpperCase()}).`,
+    publicHours: "05:00-24:00",
+    estimatedTravelFromStartMs: Math.min(Math.max(travelMs, 180_000), 3_600_000),
+  };
+}
+
+export function buildTransitOverlayPins(
+  record: StudioVersionRecord,
+  state: Step2State,
+): StudioTransitPin[] {
+  const stations = state.transitCatalog?.stations ?? [];
+  return stations
+    .filter((st) => state.enabledTransitModes[st.mode])
+    .map((st) => {
+      const inBoundary = pointInBoundary(
+        { latitude: st.lat, longitude: st.lng },
+        record.snapshot.boundaryPolygon,
+      );
+      const included = findCatalogStationMatchIndex(record.snapshot.stations, st) >= 0;
+      return { ...st, inBoundary, included };
+    });
+}
+
+function addPackTransitMode(pack: StudioPack, mode: TransitMode) {
+  if (!pack.geography.allowedTransitModes.includes(mode)) {
+    pack.geography.allowedTransitModes.push(mode);
+  }
+}
+
+export function syncModeStationsInDraft(
+  pack: StudioPack,
+  snap: GeoSnapshot,
+  state: Step2State,
+  mode: StudioTransitMode,
+  enabled: boolean,
+): void {
+  const catalog = state.transitCatalog?.stations ?? [];
+  const ofMode = catalog.filter((st) => st.mode === mode);
+  if (enabled) {
+    addPackTransitMode(pack, mode);
+    for (const item of ofMode) {
+      if (state.excludedTransitIds.has(item.id)) continue;
+      if (!pointInBoundary({ latitude: item.lat, longitude: item.lng }, snap.boundaryPolygon)) continue;
+      if (findCatalogStationMatchIndex(snap.stations, item) === -1) {
+        snap.stations.push(createStationFromCatalog(item, pack, snap));
+      }
+    }
+  } else {
+    snap.stations = snap.stations.filter((s) => {
+      if (s.attributes?.source === "built-in-jakarta" && s.attributes?.mode === mode) return false;
+      const matchesMode = ofMode.some((item) => item.id === s.id);
+      return !matchesMode;
+    });
+  }
+}
+
+export function toggleCatalogStationInDraft(
+  pack: StudioPack,
+  snap: GeoSnapshot,
+  state: Step2State,
+  stationId: string,
+): { name: string; included: boolean } | null {
+  const item = state.transitCatalog?.stations.find((s) => s.id === stationId);
+  if (!item) return null;
+  const idx = findCatalogStationMatchIndex(snap.stations, item);
+  if (idx >= 0) {
+    snap.stations.splice(idx, 1);
+    state.excludedTransitIds.add(item.id);
+    return { name: item.name, included: false };
+  }
+  state.excludedTransitIds.delete(item.id);
+  state.enabledTransitModes[item.mode] = true;
+  addPackTransitMode(pack, item.mode);
+  snap.stations.push(createStationFromCatalog(item, pack, snap));
+  return { name: item.name, included: true };
+}
+
+export function syncBoundaryTransitStationsInDraft(
+  pack: StudioPack,
+  snap: GeoSnapshot,
+  state: Step2State,
+): void {
+  const catalog = state.transitCatalog?.stations ?? [];
+  const byId = new Map(catalog.map((s) => [s.id, s]));
+  snap.stations = snap.stations.filter((st) => {
+    if (st.attributes?.source !== "built-in-jakarta") return true;
+    const cat = byId.get(st.id);
+    if (!cat) return true;
+    return state.enabledTransitModes[cat.mode] && pointInBoundary(st, snap.boundaryPolygon);
+  });
+  for (const item of catalog) {
+    if (!state.enabledTransitModes[item.mode] || state.excludedTransitIds.has(item.id)) continue;
+    if (!pointInBoundary({ latitude: item.lat, longitude: item.lng }, snap.boundaryPolygon)) continue;
+    if (findCatalogStationMatchIndex(snap.stations, item) === -1) {
+      snap.stations.push(createStationFromCatalog(item, pack, snap));
+    }
+  }
+}
 
 export function ensureStep2Selection(record: StudioVersionRecord, state: Step2State): Step2Target | null {
   if (state.selected) {
@@ -190,7 +410,27 @@ export function renderStep2Top(
   state: Step2State,
   editable: boolean,
 ): string {
+  const catalogStations = state.transitCatalog?.stations ?? [];
+  const inBoundaryCounts: Record<StudioTransitMode, number> = {
+    mrt: 0,
+    lrt: 0,
+    krl: 0,
+    transjakarta: 0,
+  };
+  for (const st of catalogStations) {
+    if (pointInBoundary({ latitude: st.lat, longitude: st.lng }, record.snapshot.boundaryPolygon)) {
+      inBoundaryCounts[st.mode] += 1;
+    }
+  }
+
   return `<h3>2. Peta &amp; Lokasi · ${escapeText(record.pack.meta.title)}</h3>
+    <div class="st-transit-chips" role="group" aria-label="Moda transit Jakarta bawaan">
+      ${TRANSIT_MODE_META.map(({ mode, label }) => {
+        const pressed = state.enabledTransitModes[mode];
+        const count = inBoundaryCounts[mode];
+        return `<button type="button" class="st-pill-icon st-transit-chip" data-transit-mode="${mode}" aria-pressed="${pressed}">${mapPinIconSvg(mode)}<span>${label} ${count}</span></button>`;
+      }).join("")}
+    </div>
     <div class="rb-actions" aria-label="Mode interaksi peta">
       <button type="button" class="${state.mapMode === "select" ? "primary" : "secondary"}" data-map-mode="select">Pilih Titik</button>
       ${editable ? `<button type="button" class="${state.mapMode === "add" ? "primary" : "secondary"}" data-map-mode="add">+ Tambah di Peta</button>` : ""}
@@ -198,6 +438,61 @@ export function renderStep2Top(
       ${editable ? `<button type="button" class="${state.mapMode === "boundary" ? "primary" : "secondary"}" data-map-mode="boundary">+ Titik Batas</button>` : ""}
       <button type="button" class="secondary" data-map-action="recenter">Pusatkan Peta</button>
     </div>`;
+}
+
+function renderBuiltInTransitPanel(
+  record: StudioVersionRecord,
+  state: Step2State,
+  editable: boolean,
+): string {
+  const stations = state.transitCatalog?.stations ?? [];
+  const q = state.transitQuery.trim().toLowerCase();
+  const inArea = stations.filter(
+    (st) =>
+      state.enabledTransitModes[st.mode] &&
+      pointInBoundary({ latitude: st.lat, longitude: st.lng }, record.snapshot.boundaryPolygon),
+  );
+  const matching = q
+    ? inArea.filter(
+        (st) =>
+          st.name.toLowerCase().includes(q) ||
+          st.corridor.toLowerCase().includes(q) ||
+          st.mode.toLowerCase().includes(q),
+      )
+    : inArea;
+  const activeCount = inArea.filter(
+    (st) => findCatalogStationMatchIndex(record.snapshot.stations, st) >= 0,
+  ).length;
+
+  return `<div class="st-transit-panel" data-testid="jakarta-transit-panel">
+    <div class="st-transit-panel-head">
+      <strong>Transit Jakarta Bawaan · ${activeCount}/${inArea.length} aktif di area</strong>
+      <small class="st-attribution">${escapeText(state.transitCatalog?.attribution ?? "© OpenStreetMap · Transjakarta")}</small>
+    </div>
+    ${
+      stations.length === 0
+        ? `<small role="status">Memuat katalog stasiun MRT/LRT/KRL/Transjakarta…</small>`
+        : `<label class="rb-field"><span>Cari stasiun di area</span><input id="st-transit-search" type="search" placeholder="MRT, KRL, LRT, atau Halte TJ..." value="${escapeText(state.transitQuery)}"></label>
+           <ul class="st-transit-list">
+             ${
+               matching.length === 0
+                 ? "<li><small>Tidak ada stasiun cocok di dalam batas area.</small></li>"
+                 : matching
+                     .map((st) => {
+                       const included = findCatalogStationMatchIndex(record.snapshot.stations, st) >= 0;
+                       return `<li>
+                         <div class="st-pill-icon">
+                           ${mapPinIconSvg(st.mode)}
+                           <div><strong>${escapeText(st.name)}</strong><br><small>${escapeText(st.corridor)}</small></div>
+                         </div>
+                         ${editable ? `<button type="button" class="st-toggle-btn" data-toggle-transit-id="${escapeText(st.id)}" aria-pressed="${included}">${included ? "ON" : "OFF"}</button>` : `<span class="rb-badge">${included ? "ON" : "OFF"}</span>`}
+                       </li>`;
+                     })
+                     .join("")
+             }
+           </ul>`
+    }
+  </div>`;
 }
 
 export function renderStep2Bottom(
@@ -215,6 +510,8 @@ export function renderStep2Bottom(
       ? `<p><small>Koordinat klik terakhir: <code>${state.lastClickedCoord.latitude}, ${state.lastClickedCoord.longitude}</code></small></p>`
       : ""
   }
+
+    ${renderBuiltInTransitPanel(record, state, editable)}
 
     ${renderInspector(record, selected, editable)}
 

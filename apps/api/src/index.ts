@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { GameBoard, SoloAction } from "@kelana-ria/contracts";
@@ -24,6 +25,12 @@ import { rulebookStore } from "./rulebook-store.js";
 import { seekHandler } from "./seek-http.js";
 import { seekStore } from "./seek-store.js";
 import { staticHandler } from "./static-http.js";
+import {
+  filterTransitCatalog,
+  loadJakartaTransitCatalog,
+  TRANSIT_MODES,
+  type TransitMode,
+} from "./transit-catalog.js";
 import {
   buildPublicEditionPrompt,
   createGeoapifyWalkingRouteProvider,
@@ -221,6 +228,17 @@ export {
   type LoadedOfficialSeekPack,
 } from "./official-packs.js";
 export {
+  classifyOverpassElement,
+  dedupeTransitStations,
+  filterTransitCatalog,
+  loadJakartaTransitCatalog,
+  normalizeOverpassTransitPayload,
+  TRANSIT_MODES,
+  type JakartaTransitCatalog,
+  type JakartaTransitStation,
+  type TransitMode,
+} from "./transit-catalog.js";
+export {
   rulebookStore,
   toPublicClaimListing,
   toPublicSeekListing,
@@ -326,6 +344,42 @@ export function createSoloServer({
       }
       if (url.pathname === "/api/map" || url.pathname.startsWith("/api/map/")) {
         return await handleMap(request, response, url);
+      }
+      if (request.method === "GET" && url.pathname === "/api/transit/jakarta") {
+        const modesParam = url.searchParams.get("modes");
+        const modes = modesParam
+          ? modesParam
+              .split(",")
+              .map((m) => m.trim().toLowerCase())
+              .filter((m): m is TransitMode => (TRANSIT_MODES as readonly string[]).includes(m))
+          : undefined;
+        let bbox: [number, number, number, number] | undefined;
+        const bboxParam = url.searchParams.get("bbox");
+        if (bboxParam) {
+          const parts = bboxParam.split(",").map(Number);
+          if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+            return json(response, 400, { error: "invalid-bbox" });
+          }
+          bbox = [parts[0], parts[1], parts[2], parts[3]];
+        }
+        const filtered = filterTransitCatalog(loadJakartaTransitCatalog(), { modes, bbox });
+        const payload = JSON.stringify(filtered);
+        const etag = `"${createHash("sha256").update(payload).digest("hex").slice(0, 16)}"`;
+        const cacheHeaders = {
+          "cache-control": "public, max-age=3600",
+          etag,
+        };
+        if (request.headers["if-none-match"] === etag) {
+          response.writeHead(304, cacheHeaders);
+          response.end();
+          return;
+        }
+        response.writeHead(200, {
+          ...cacheHeaders,
+          "content-type": "application/json; charset=utf-8",
+        });
+        response.end(payload);
+        return;
       }
       if (url.pathname === "/api/duo" || url.pathname.startsWith("/api/duo/")) {
         return await handleDuo(request, response, url);
