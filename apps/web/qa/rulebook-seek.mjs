@@ -37,7 +37,7 @@ try {
   assert.ok(rootInvite && rootInvite.includes("room=RB-"), "Root launch should create Hide & Seek room with invite link");
   await ctxRoot.close();
 
-  // 1. Creator opens Studio from /, selects Hide & Seek, clones Official pack, adds custom Curse & station override, publishes, buys & settles paid pass
+  // 1. Creator opens Studio from /, selects Hide & Seek, clones Official pack, exercises 4-step stepper + JSON export/import + revision note + publish
   const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageCreator = await ctxCreator.newPage();
   await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
@@ -46,21 +46,62 @@ try {
   await pageCreator.click("#chooser-studio");
   await pageCreator.waitForSelector('button[data-action="clone"]');
   await pageCreator.click('button[data-action="clone"]');
-  await pageCreator.waitForSelector("#ed-curse-title");
-  await pageCreator.fill("#ed-curse-title", "Kutukan Kopi Senopati");
+  await pageCreator.waitForSelector("#st-draft-select");
+
+  // Step 2: rename first station & save
+  await pageCreator.click('button[data-step="2"]');
+  await pageCreator.waitForSelector("#ed-station-name");
   await pageCreator.fill("#ed-station-name", "Stasiun Blok M BCA (Edisi Kopi)");
   await pageCreator.click('button[data-action="save-draft"]');
-  await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"), null, { timeout: 8000 }).catch(async (err) => {
-    console.error("BODY AFTER SAVE-DRAFT:\n", await pageCreator.locator("body").innerText());
-    throw err;
-  });
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
+
+  // Step 3: add custom photo curse & save
+  await pageCreator.click('button[data-step="3"]');
+  await pageCreator.waitForSelector("#ed-curse-title");
+  await pageCreator.fill("#ed-curse-title", "Kutukan Kopi Senopati");
+  await pageCreator.click('button[data-action="save-draft"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
+
+  // Step 4: run dry-run, submit -> Reviewer requests changes -> verify revision banner -> re-submit -> publish
+  await pageCreator.click('button[data-step="4"]');
   await pageCreator.click('button[data-action="dry-run"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Dry-Run OK"));
+  await pageCreator.click('button[data-action="submit-draft"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
+
+  await pageCreator.click('button[data-tab="reviewer"]');
+  await pageCreator.click('button[data-action="request-changes"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("request-changes"));
+
+  await pageCreator.click('button[data-tab="writer"]');
+  await pageCreator.click('button[data-step="1"]');
+  await pageCreator.waitForSelector('[data-testid="revision-note-banner"]');
+
+  // Verify JSON export + malformed JSON guard + valid JSON import round-trip
+  await pageCreator.click('button[data-action="toggle-json"]');
+  await pageCreator.waitForSelector("#st-json-text");
+  const exportedJson = await pageCreator.inputValue("#st-json-text");
+  assert.ok(exportedJson.includes("pack-senopati-seek"), "Exported JSON should contain active pack");
+  await pageCreator.fill("#st-json-text", "{broken-json");
+  await pageCreator.click('button[data-action="import-json"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("JSON tidak valid"));
+  await pageCreator.fill("#st-json-text", exportedJson);
+  await pageCreator.click('button[data-action="import-json"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("JSON berhasil diimpor"));
+
+  await pageCreator.click('button[data-step="4"]');
   await pageCreator.click('button[data-action="submit-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
   await pageCreator.click('button[data-tab="reviewer"]');
   await pageCreator.click('button[data-action="publish"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("publish-version"));
+
+  // Verify v2 clone from published pack works without mutating v1
+  await pageCreator.click('button[data-tab="writer"]');
+  await pageCreator.click('button[data-step="1"]');
+  await pageCreator.waitForSelector('button[data-action="clone-next-version"]');
+  await pageCreator.click('button[data-action="clone-next-version"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("pack-senopati-seek v2"));
 
   // Navigate to catalog, purchase paid pack via recorded-sandbox Midtrans, and unlock room
   await pageCreator.click('button[data-nav="catalog"]');
