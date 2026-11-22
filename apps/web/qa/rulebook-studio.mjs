@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -6,6 +7,8 @@ import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
+const results = path.join(root, "qa-results");
+await mkdir(results, { recursive: true });
 
 const server = createSoloServer({
   databasePath: ":memory:",
@@ -177,6 +180,9 @@ try {
   await page.click("#chooser-studio");
   await page.click('button[data-format="hide-and-seek"]');
   await page.waitForSelector('button[data-action="clone"]');
+  assert.equal(await page.locator('button[data-format] svg').count(), 2, "Expected SVG art on format hero cards");
+  assert.equal(await page.locator('button[data-step] svg').count(), 4, "Expected SVG icons on all 4 step buttons");
+  await page.screenshot({ path: path.join(results, "studio-step1-format-cards.png") });
   await assertNoHorizontalOverflow(page, "Step 1 initial clone form");
 
   await page.fill("#st-pack-id", "pack-seek-alpha");
@@ -246,8 +252,16 @@ try {
   await assertNoHorizontalOverflow(page, "Validator errors banner on 390px");
 
   await page.click('button[data-s3-tab="book"]');
+  assert.equal(await page.locator('button[data-s3-family] svg').count(), 6, "Expected 6 Question Family SVG tiles");
   await assertNoHorizontalOverflow(page, "Hide & Seek Step 3 book");
   await page.click('button[data-s3-tab="deck"]');
+  await page.fill("#ed-card-title", "Kutukan Kopi Studio Live");
+  assert.match(
+    await page.textContent('[data-testid="live-card-preview"]'),
+    /Kutukan Kopi Studio Live/,
+    "Expected live game-card preview to update immediately as title is typed",
+  );
+  await page.screenshot({ path: path.join(results, "studio-step3-seek-cards.png") });
   await assertNoHorizontalOverflow(page, "Hide & Seek Step 3 deck composer");
 
   // Navigate away to Step 1, then click Validator Jump Link -> returns to Step 3 #ed-zone!
@@ -318,12 +332,22 @@ try {
   await page.click('button[data-step="3"]');
   await assertNoHorizontalOverflow(page, "Claim Step 3 session");
   await page.click('button[data-c3-tab="challenges"]');
+  assert.equal(await page.locator('button[data-c3-prim] svg').count(), 6, "Expected 6 Challenge Primitive SVG tiles");
+  await page.click('button[data-c3-prim="call_your_shot"]');
+  assert.equal(await page.getAttribute('button[data-c3-prim="call_your_shot"]', "aria-pressed"), "true");
+  assert.equal(await page.inputValue("#ed-chal-prim"), "call_your_shot");
+  await page.screenshot({ path: path.join(results, "studio-step3-claim-primitives.png") });
   await assertNoHorizontalOverflow(page, "Claim Step 3 challenges");
   await page.fill("#ed-chal-title", "Uji Call Your Shot Kemang");
   await clickAndWaitStudioSave(page, 'button[data-c3-action="add-challenge"]');
   await page.click('button[data-c3-tab="deck"]');
   await assertNoHorizontalOverflow(page, "Claim Step 3 deck");
   await page.fill("#ed-ccard-title", "Sabotase Kemang");
+  assert.match(
+    await page.textContent('[data-testid="live-card-preview"]'),
+    /Sabotase Kemang/,
+    "Expected live Claim tactical card preview to update on input",
+  );
   await clickAndWaitStudioSave(page, 'button[data-c3-action="add-claim-card"]');
 
   // Step 4: interactive Claim challenge test modal on m-bloc (observation_input answer = "2")

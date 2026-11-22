@@ -661,3 +661,118 @@
   .sg-game:has(.sg-qa-badge) .sg-timer { min-width: 52px; padding: 4px 6px; font-size: 1.38rem; }
   .sg-game .sg-hud-actions .sg-qa-badge { padding-inline: 6px; }
 }
+
+/* Studio Kreator game-first visual assets & cards */
+.rb-step-btn { position: relative; }
+.st-step-ico { width: 16px; height: 16px; display: block; }
+.st-step-done {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  color: #15803d;
+}
+.rb-step-btn.rb-step-active .st-step-done { color: #c5ee69; }
+
+.st-format-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.st-format-card,
+.st-visual-tile {
+  display: grid;
+  gap: 0.3rem;
+  justify-items: center;
+  align-content: start;
+  text-align: center;
+  padding: 0.55rem 0.45rem;
+  border-radius: 12px;
+  border: 1.5px solid #c5d9ce;
+  background: #f8fbf9;
+  color: #122f29;
+  min-height: 44px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.st-format-card[aria-pressed="true"],
+.st-visual-tile[aria-pressed="true"] {
+  border-color: #153d34;
+  background: #fffbeb;
+  box-shadow: inset 0 0 0 1px #153d34;
+}
+
+.st-hero-svg { width: 100%; max-width: 120px; height: auto; display: block; }
+
+.st-visual-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+@media (max-width: 360px) {
+  .st-visual-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.st-visual-tile svg { width: 100%; max-width: 56px; height: auto; display: block; }
+.st-visual-tile strong { font-size: 0.78rem; line-height: 1.15; }
+.st-tile-meta { font-size: 0.7rem; color: #52675c; overflow-wrap: anywhere; }
+
+.st-pill-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.st-pin-ico { width: 18px; height: 18px; flex: none; display: block; }
+
+.st-card-stack {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.st-game-card {
+  border-radius: 12px;
+  border: 1.5px solid #b9cdc2;
+  background: #ffffff;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.st-game-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.35rem 0.65rem;
+  background: #153d34;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+.st-game-card[data-variant="time_bonus"] .st-game-card-head { background: #0f766e; }
+.st-game-card[data-variant="curse"] .st-game-card-head { background: #9f214b; }
+.st-game-card[data-variant="tactical"] .st-game-card-head { background: #255d9f; }
+
+.st-game-card-kind { display: inline-flex; align-items: center; gap: 0.3rem; }
+.st-card-ico { width: 15px; height: 15px; display: block; }
+.st-copies-pill {
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: #ffce55;
+  color: #153d34;
+  font-weight: 800;
+}
+
+.st-game-card-body {
+  padding: 0.55rem 0.65rem;
+  display: grid;
+  gap: 0.3rem;
+}
+.st-game-card-title { font-size: 0.9rem; overflow-wrap: anywhere; }
+.st-game-card-desc { font-size: 0.78rem; color: #52675c; overflow-wrap: anywhere; }
+.st-card-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.st-chip-ok { background: #dcfce7; color: #166534; }

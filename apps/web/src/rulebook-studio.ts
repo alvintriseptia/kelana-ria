@@ -16,6 +16,7 @@ import { escapeText } from "./solo-view";
 import {
   buildClaimCardFromForm,
   buildClaimChallengeFromForm,
+  renderClaimLiveCardPreview,
   renderClaimStep3,
   type ClaimStep3State,
 } from "./studio-claim-builder";
@@ -26,9 +27,11 @@ import {
 } from "./studio-json";
 import {
   buildSeekCardFromForm,
+  renderSeekLiveCardPreview,
   renderSeekStep3,
   type SeekStep3State,
 } from "./studio-seek-builder";
+import { formatHeroCardSvg, stepIconSvg } from "./studio-assets";
 import {
   evaluateClaimDryRunAnswer,
   evaluateSeekDryRunClue,
@@ -321,11 +324,27 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     return rec.status === "draft" || rec.status === "changes-requested";
   }
 
+  function isStepDone(stepNum: StudioStep, rec: StudioVersionRecord | undefined): boolean {
+    if (!rec) return false;
+    if (stepNum === 1) return true;
+    if (stepNum === 2) {
+      return rec.snapshot.boundaryPolygon.length >= 3 && rec.snapshot.stations.length + rec.snapshot.pois.length > 0;
+    }
+    if (stepNum === 3) {
+      return isClaimStudioPack(rec.pack)
+        ? Object.keys(rec.pack.challenges.landmarkChallenges).length > 0
+        : rec.pack.deck.cards.length > 0;
+    }
+    return validationErrors.length === 0 && rec.status !== "draft";
+  }
+
   function renderStepper(): string {
+    const active = currentDraft();
     return `<nav class="rb-stepper" aria-label="Tahap penyusunan paket">
-      ${STEP_META.map(
-        (item) => `<button type="button" class="rb-step-btn ${step === item.step ? "rb-step-active" : ""}" data-step="${item.step}" aria-current="${step === item.step ? "step" : "false"}">${escapeText(item.short)}</button>`,
-      ).join("")}
+      ${STEP_META.map((item) => {
+        const done = isStepDone(item.step, active);
+        return `<button type="button" class="rb-step-btn ${step === item.step ? "rb-step-active" : ""}" data-step="${item.step}" aria-current="${step === item.step ? "step" : "false"}">${stepIconSvg(item.step)}<span>${escapeText(item.short)}</span>${done ? `<span class="st-step-done" aria-label="Selesai">✓</span>` : ""}</button>`;
+      }).join("")}
     </nav>`;
   }
 
@@ -533,11 +552,23 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     const bodySlot = root.querySelector<HTMLElement>("#st-body-slot")!;
 
     headerSlot.innerHTML = `<div class="rb-card">
-      <h2>Studio Kreator · ${format === "claim-the-city" ? "Claim the City" : "Hide &amp; Seek"} RulebookPack</h2>
-      <p>Buat paket permainan sendiri dalam 4 langkah: kloning templat, atur peta, sesuaikan aturan/kartu, lalu validasi dan ajukan untuk terbit di katalog.</p>
-      <div class="rb-actions">
-        <button type="button" class="${format === "hide-and-seek" ? "primary" : "secondary"}" data-format="hide-and-seek">Format Hide &amp; Seek</button>
-        <button type="button" class="${format === "claim-the-city" ? "primary" : "secondary"}" data-format="claim-the-city">Format Claim the City</button>
+      <h2>Studio Kreator · ${format === "claim-the-city" ? "Claim the City" : "Hide &amp; Seek"}</h2>
+      <div class="rb-badges">
+        <span class="rb-badge">4 Langkah Visual</span>
+        <span class="rb-badge">Peta Interaktif</span>
+        <span class="rb-badge">Uji Coba Langsung</span>
+      </div>
+      <div class="st-format-grid" role="group" aria-label="Pilih format permainan">
+        <button type="button" class="st-format-card" data-format="hide-and-seek" aria-pressed="${format === "hide-and-seek"}">
+          ${formatHeroCardSvg("hide-and-seek")}
+          <strong>Hide &amp; Seek</strong>
+          <span class="st-tile-meta">6 Petunjuk · Dek &amp; Kutukan</span>
+        </button>
+        <button type="button" class="st-format-card" data-format="claim-the-city" aria-pressed="${format === "claim-the-city"}">
+          ${formatHeroCardSvg("claim-the-city")}
+          <strong>Claim the City</strong>
+          <span class="st-tile-meta">Zona · 6 Primitif Tantangan</span>
+        </button>
       </div>
       <div class="rb-actions">
         <button type="button" class="${tab === "writer" ? "primary" : "secondary"}" data-tab="writer">Penulis (Creator)</button>
@@ -758,8 +789,34 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     return { pack: updatedPack, snapshot: updatedSnapshot };
   }
 
+  function updateLiveCardPreview() {
+    const slot = root.querySelector<HTMLElement>('[data-testid="live-card-preview"]');
+    if (!slot) return;
+    slot.innerHTML =
+      format === "claim-the-city"
+        ? renderClaimLiveCardPreview(root, claimStep3)
+        : renderSeekLiveCardPreview(root, seekStep3);
+  }
+
+  root.addEventListener("input", (event) => {
+    const target = event.target as HTMLElement | null;
+    if (!target || !target.id) return;
+    if (target.id.startsWith("ed-card-") || target.id.startsWith("ed-curse-") || target.id.startsWith("ed-ccard-")) {
+      updateLiveCardPreview();
+    }
+  });
+
   root.addEventListener("change", (event) => {
     const target = event.target as HTMLElement | null;
+    if (
+      target instanceof HTMLSelectElement &&
+      (target.id.startsWith("ed-curse-") || target.id.startsWith("ed-ccard-")) &&
+      target.id !== "ed-curse-clear" &&
+      target.id !== "ed-ccard-prim"
+    ) {
+      updateLiveCardPreview();
+      return;
+    }
     if (target instanceof HTMLSelectElement && target.id === "st-draft-select") {
       selectedKey = target.value;
       step2.selected = null;
@@ -951,6 +1008,11 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     if (btn.dataset.c3Tab) {
       claimStep3.subTab = btn.dataset.c3Tab as ClaimStep3State["subTab"];
+      render();
+      return;
+    }
+    if (btn.dataset.c3Prim) {
+      claimStep3.challengePrimitive = btn.dataset.c3Prim as ClaimChallengePrimitive["primitive"];
       render();
       return;
     }

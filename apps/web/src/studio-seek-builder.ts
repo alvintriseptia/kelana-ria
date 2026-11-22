@@ -10,6 +10,12 @@ import type {
   HideSeekRulebookPack,
 } from "@kelana-ria/contracts";
 import { escapeText } from "./solo-view";
+import {
+  questionFamilyTileMeta,
+  renderGameCardPreviewHtml,
+  type CardPreviewChip,
+  type CardPreviewVariant,
+} from "./studio-assets";
 
 export type SeekStep3SubTab = "timers" | "book" | "deck";
 
@@ -103,7 +109,11 @@ function renderSeekTimers(pack: HideSeekRulebookPack, dis: string, editable: boo
       <span>Tambah Cepat Kutukan Foto (Judul)</span>
       <input id="ed-curse-title" placeholder="Mis. Kutukan Kopi Senopati" ${dis}>
     </label>
-    ${editable ? `<p><small>Gunakan sub-tab <strong>Buku Petunjuk</strong> dan <strong>Dek &amp; Kutukan</strong> untuk menyunting setiap petunjuk dan kartu secara rinci.</small></p>` : ""}
+    ${
+      editable
+        ? `<div class="rb-badges"><span class="rb-badge">Tab Petunjuk: 6 Keluarga</span><span class="rb-badge">Tab Dek: Kartu &amp; Kutukan</span></div>`
+        : ""
+    }
   </div>`;
 }
 
@@ -116,10 +126,18 @@ function renderSeekBook(
   const cfg = pack.investigationBook.families[family];
   const items = cfg?.items ?? [];
   return `<div data-testid="seek-book-panel">
-    <div class="rb-actions">
-      ${FAMILY_LIST.map(
-        (f) => `<button type="button" class="${family === f.id ? "primary" : "secondary"}" data-s3-family="${f.id}">${f.label} (${pack.investigationBook.families[f.id]?.items.length ?? 0})</button>`,
-      ).join("")}
+    <div class="st-visual-grid" role="group" aria-label="Pilih keluarga pertanyaan">
+      ${FAMILY_LIST.map((f) => {
+        const famCfg = pack.investigationBook.families[f.id];
+        const meta = questionFamilyTileMeta(f.id);
+        const count = famCfg?.items.length ?? 0;
+        const dk = `${famCfg?.drawCount ?? 2}/${famCfg?.keepCount ?? 1}`;
+        return `<button type="button" class="st-visual-tile" data-s3-family="${f.id}" aria-pressed="${family === f.id}">
+          ${meta.svg}
+          <strong>${escapeText(f.label)}</strong>
+          <span class="st-tile-meta">Tarik ${dk} · ${count} item</span>
+        </button>`;
+      }).join("")}
     </div>
     <div class="rb-grid-2">
       <label class="rb-field"><span>Status Keluarga (${escapeText(family)})</span>
@@ -190,34 +208,26 @@ function renderSeekDeck(
     <p><small>Total kartu: <strong>${pack.deck.cards.reduce((s, c) => s + c.copies, 0)}</strong> · Batas tangan: ${pack.deck.baseHandLimit} · Maks kutukan pemblokir aktif: ${pack.deck.maxActiveBlockingCurses}</small></p>
     <details class="rb-accordion">
       <summary>Daftar Kartu di Dek (${pack.deck.cards.length} jenis)</summary>
-      <ul class="rb-list">
+      <div class="st-card-stack">
         ${pack.deck.cards
-          .map(
-            (card, idx) => `<li>
-              <div>
-                <strong>${escapeText(card.title)}</strong>
-                <span class="rb-badge">${card.copies}x</span>
-                <span class="rb-badge">${escapeText(card.effect.primitive)}</span>
-              </div>
-              <small>${escapeText(card.description)}</small>
-              ${
-                editable
-                  ? `<div class="rb-actions">
-                      <button type="button" class="secondary" data-s3-action="dup-seek-card" data-index="${idx}">Duplikat</button>
-                      <button type="button" class="secondary" data-s3-action="delete-seek-card" data-index="${idx}">Hapus</button>
-                    </div>`
-                  : ""
-              }
-            </li>`,
+          .map((card, idx) =>
+            renderSeekCardTile(
+              card,
+              editable
+                ? `<button type="button" class="secondary" data-s3-action="dup-seek-card" data-index="${idx}">Duplikat</button>
+                   <button type="button" class="secondary" data-s3-action="delete-seek-card" data-index="${idx}">Hapus</button>`
+                : undefined,
+            ),
           )
           .join("")}
-      </ul>
+      </div>
     </details>
 
     ${
       editable
         ? `<div class="rb-card" data-testid="seek-card-composer">
-            <h4>+ Komposer Kartu &amp; Kutukan (9 Primitif)</h4>
+            <h4>+ Komposer Kartu &amp; Kutukan</h4>
+            <div data-testid="live-card-preview">${renderSeekCardTile(previewSeekCardFromState(state))}</div>
             <div class="rb-grid-2">
               <label class="rb-field"><span>Primitif Kartu</span>
                 <select id="ed-card-prim" ${dis}>
@@ -276,8 +286,101 @@ function renderSeekDeck(
   </div>`;
 }
 
-export function buildSeekCardFromForm(root: HTMLElement, state: SeekStep3State): HideSeekCardDefinition | null {
-  const title = root.querySelector<HTMLInputElement>("#ed-card-title")?.value.trim();
+function seekCardChips(card: HideSeekCardDefinition): CardPreviewChip[] {
+  const ef = card.effect;
+  if (ef.primitive === "time_bonus") return [{ label: `+${ef.minutes} menit`, tone: "ok" }];
+  if (ef.primitive === "time_trap") return [{ label: `Perangkap +${ef.bonusMinutes}m`, tone: "warn" }];
+  if (ef.primitive === "expand_hand") return [{ label: `+${ef.extraSlots} Slot`, tone: "ok" }];
+  if (ef.primitive !== "curse") return [{ label: ef.primitive }];
+  const cost = ef.curse.castingCosts[0];
+  const costLabel =
+    cost?.type === "discard_cards"
+      ? `Biaya: Buang ${cost.count}`
+      : cost?.type === "seeker_min_distance"
+        ? `Min ${cost.meters}m`
+        : "Gratis";
+  const blockerLabel =
+    ef.curse.blockerType === "block_questions"
+      ? "Blokir Tanya"
+      : ef.curse.blockerType === "block_transit"
+        ? "Blokir Transit"
+        : "Tanpa Blokir";
+  const clearLabel = `Hapus: ${ef.curse.clearCondition.type}`;
+  const mod = (ef.curse.effectModifiers ?? []).find((m) => m.type === "skip_penalty_minutes");
+  const chips: CardPreviewChip[] = [
+    { label: costLabel },
+    { label: blockerLabel, tone: ef.curse.blockerType === "none" ? "neutral" : "danger" },
+    { label: clearLabel, tone: "warn" },
+  ];
+  if (mod && mod.type === "skip_penalty_minutes") {
+    chips.push({ label: `Buyout +${mod.penaltyMinutes}m` });
+  }
+  return chips;
+}
+
+function renderSeekCardTile(card: HideSeekCardDefinition, actionsHtml?: string): string {
+  const variant: CardPreviewVariant =
+    card.category === "time_bonus" ? "time_bonus" : card.category === "curse" ? "curse" : "powerup";
+  return renderGameCardPreviewHtml({
+    variant,
+    title: card.title,
+    subtitle: card.description,
+    copies: card.copies,
+    chips: seekCardChips(card),
+    actionsHtml,
+  });
+}
+
+function previewSeekCardFromState(state: SeekStep3State): HideSeekCardDefinition {
+  const meta = CARD_PRIMITIVES.find((p) => p.id === state.cardPrimitive) ?? CARD_PRIMITIVES[0];
+  const effect: HideSeekCardEffect =
+    state.cardPrimitive === "curse"
+      ? {
+          primitive: "curse",
+          curse: {
+            castingCosts: [{ type: "none" }],
+            blockerType: "block_questions",
+            effectModifiers: [{ type: "skip_penalty_minutes", penaltyMinutes: 5 }],
+            clearCondition: {
+              type: "photo_challenge",
+              prompt: "Kirim foto ruang publik terdekat.",
+              approvalMode: "opponent_or_timeout",
+              autoApproveMs: 180_000,
+            },
+          },
+        }
+      : state.cardPrimitive === "time_bonus"
+        ? { primitive: "time_bonus", minutes: 5 }
+        : state.cardPrimitive === "time_trap"
+          ? { primitive: "time_trap", bonusMinutes: 5 }
+          : state.cardPrimitive === "expand_hand"
+            ? { primitive: "expand_hand", extraSlots: 1 }
+            : state.cardPrimitive === "discard_draw"
+              ? { primitive: "discard_draw", discardCount: 1, drawCount: 2, keepCount: 1 }
+              : state.cardPrimitive === "move_zone"
+                ? { primitive: "move_zone", travelWindowMs: 600_000, revealOldStation: true, discardHand: true }
+                : { primitive: state.cardPrimitive };
+  return {
+    id: "preview",
+    category: meta.cat,
+    copies: 1,
+    title: "Pratinjau Kartu Baru",
+    description: meta.label,
+    effect,
+  };
+}
+
+export function renderSeekLiveCardPreview(root: HTMLElement, state: SeekStep3State): string {
+  const built = buildSeekCardFromForm(root, state, "Pratinjau Kartu Baru");
+  return renderSeekCardTile(built ?? previewSeekCardFromState(state));
+}
+
+export function buildSeekCardFromForm(
+  root: HTMLElement,
+  state: SeekStep3State,
+  fallbackTitle?: string,
+): HideSeekCardDefinition | null {
+  const title = root.querySelector<HTMLInputElement>("#ed-card-title")?.value.trim() || fallbackTitle;
   if (!title) return null;
   const description = root.querySelector<HTMLInputElement>("#ed-card-desc")?.value.trim() || "Kartu kustom kreator.";
   const copies = Math.max(1, Number(root.querySelector<HTMLInputElement>("#ed-card-copies")?.value ?? 1));
