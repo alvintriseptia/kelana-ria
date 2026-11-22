@@ -1,6 +1,13 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { GeoSnapshot, HideSeekRulebookPack, SeekEngineAction } from "@kelana-ria/contracts";
+import type {
+  ClaimEngineAction,
+  ClaimRulebookPack,
+  GeoSnapshot,
+  HideSeekRulebookPack,
+  RulebookFormat,
+  SeekEngineAction,
+} from "@kelana-ria/contracts";
 import { credential, hasJsonBody, isObject, json, requestBody, setCredential } from "./http.js";
 import type { MidtransNotificationPayload } from "./midtrans-adapter.js";
 import type { PlaySeekCardParams } from "./seek-engine/deck-engine.js";
@@ -24,7 +31,10 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
     const path = url.pathname;
     if (request.method === "GET" && path === "/api/rulebooks") {
       const role = url.searchParams.get("role") ?? "public";
-      const listings = store.listPublicListings();
+      const rawFormat = url.searchParams.get("format");
+      const format: RulebookFormat | undefined =
+        rawFormat === "hide-and-seek" || rawFormat === "claim-the-city" ? rawFormat : undefined;
+      const listings = store.listPublicListings(format);
       if (role === "writer" || role === "reviewer") {
         json(response, 200, {
           role,
@@ -107,7 +117,12 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
         return;
       }
       if (type === "save-draft") {
-        const res = store.saveDraft(cred, body.pack as HideSeekRulebookPack, body.snapshot as GeoSnapshot, ts);
+        const res = store.saveDraft(
+          cred,
+          body.pack as HideSeekRulebookPack | ClaimRulebookPack,
+          body.snapshot as GeoSnapshot,
+          ts,
+        );
         json(response, res.ok ? 200 : 400, res);
         return;
       }
@@ -171,7 +186,12 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
         return;
       }
       if (type === "room-action") {
-        const res = store.actInRoom(String(body.roomCode ?? ""), cred, body.action as SeekEngineAction, ts);
+        const res = store.actInRoom(
+          String(body.roomCode ?? ""),
+          cred,
+          body.action as SeekEngineAction | ClaimEngineAction,
+          ts,
+        );
         json(response, "error" in res && !("room" in res) ? 400 : 200, res);
         return;
       }

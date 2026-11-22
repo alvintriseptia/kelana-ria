@@ -1,0 +1,508 @@
+{
+  "meta": {
+    "packId": "official-jakarta-compact-claim",
+    "version": 1,
+    "schemaVersion": "claim-city-rulebook-v1",
+    "format": "claim-the-city",
+    "isOfficial": true,
+    "title": "Jakarta Selatan Starter · Claim the City",
+    "byline": "Kelana Ria Official",
+    "summary": "Perebutan 4 zona Jakarta Selatan (10 landmark) dengan mekanik Klaim–Kunci–Rebut, tantangan tersembunyi, dan 12 kartu taktis.",
+    "cityLabel": "Jakarta Selatan",
+    "difficulty": "starter",
+    "priceIdr": 0
+  },
+  "session": {
+    "minPlayers": 1,
+    "maxPlayers": 4,
+    "teamMode": "ffa",
+    "requireStartCheckIn": true,
+    "durationMs": 5400000,
+    "soloTargets": {
+      "lockedLandmarks": 4,
+      "distinctZones": 2
+    }
+  },
+  "claiming": {
+    "claimWeight": 1,
+    "lockWeight": 1,
+    "stealLocksImmediately": true,
+    "multiplayerFailPolicy": "cooldown_ms",
+    "soloFailPolicy": "burned_for_player",
+    "failCooldownMs": 300000,
+    "broadcastFailAlert": true
+  },
+  "geography": {
+    "checkInRadiusMeters": 100,
+    "maxGpsAccuracyMeters": 50,
+    "maxGpsFixAgeMs": 30000,
+    "allowedTransitModes": [
+      "walk",
+      "mrt",
+      "krl",
+      "transjakarta"
+    ],
+    "geoSnapshotId": "jakarta-compact-claim-geo-v1",
+    "geoSnapshotHash": "1adfaa62539911067e34692b6b19ab4c55ea6437cb696b40a1fa8702308c56bc",
+    "zones": [
+      {
+        "id": "blok-m",
+        "name": "Blok M",
+        "label": "BM",
+        "icon": "book"
+      },
+      {
+        "id": "mayestik-rawa",
+        "name": "Mayestik–Rawa Barat",
+        "label": "MR",
+        "icon": "park"
+      },
+      {
+        "id": "senayan",
+        "name": "Senayan",
+        "label": "SN",
+        "icon": "stadium"
+      },
+      {
+        "id": "kebayoran",
+        "name": "Kebayoran–Palmerah",
+        "label": "KP",
+        "icon": "train"
+      }
+    ],
+    "landmarks": [
+      {
+        "id": "taman-literasi",
+        "name": "Taman Literasi Blok M",
+        "zoneId": "blok-m",
+        "latitude": -6.24363,
+        "longitude": 106.80074,
+        "transitSummary": "MRT Blok M",
+        "accessNotes": "Balkon utara amfiteater taman, akses publik.",
+        "publicHours": "07:00-22:00",
+        "estimatedTravelFromStartMs": 420000,
+        "estimatedChallengeMs": 240000
+      },
+      {
+        "id": "blok-m-plaza",
+        "name": "Blok M Plaza",
+        "zoneId": "blok-m",
+        "latitude": -6.2446,
+        "longitude": 106.79748,
+        "transitSummary": "MRT Blok M",
+        "accessNotes": "Pelataran pedestrian Jl. Bulungan.",
+        "publicHours": "07:00-22:00",
+        "estimatedTravelFromStartMs": 480000,
+        "estimatedChallengeMs": 240000
+      },
+      {
+        "id": "m-bloc",
+        "name": "M Bloc Space",
+        "zoneId": "blok-m",
+        "latitude": -6.24094,
+        "longitude": 106.79912,
+        "transitSummary": "MRT ASEAN",
+        "accessNotes": "Trotoar depan Jl. Panglima Polim.",
+        "publicHours": "08:00-23:00",
+        "estimatedTravelFromStartMs": 300000,
+        "estimatedChallengeMs": 240000
+      },
+      {
+        "id": "taman-ayodya",
+        "name": "Taman Ayodya",
+        "zoneId": "mayestik-rawa",
+        "latitude": -6.24459,
+        "longitude": 106.79173,
+        "transitSummary": "MRT Blok M / TJ Mayestik",
+        "accessNotes": "Jalur pedestrian sisi timur kolam.",
+        "publicHours": "06:00-22:00",
+        "estimatedTravelFromStartMs": 600000,
+        "estimatedChallengeMs": 240000
+      },
+      {
+        "id": "pasar-mayestik",
+        "name": "Pelataran Pasar Mayestik",
+        "zoneId": "mayestik-rawa",
+        "latitude": -6.24148,
+        "longitude": 106.79021,
+        "transitSummary": "TJ Koridor 13 Mayestik",
+        "accessNotes": "Trotoar depan gerbang utama pasar.",
+        "publicHours": "07:00-20:00",
+        "estimatedTravelFromStartMs": 660000,
+        "estimatedChallengeMs": 240000
+      },
+      {
+        "id": "taman-mataram",
+        "name": "Taman Mataram",
+        "zoneId": "mayestik-rawa",
+        "latitude": -6.23511,
+        "longitude": 106.80492,
+        "transitSummary": "TJ Rawa Barat",
+        "accessNotes": "Gerbang taman sisi Jl. Sisingamangaraja.",
+        "publicHours": "06:00-21:00",
+        "estimatedTravelFromStartMs": 540000,
+        "estimatedChallengeMs": 240000
+      },
+      {
+        "id": "plaza-senayan",
+        "name": "Pelataran Plaza Senayan",
+        "zoneId": "senayan",
+        "latitude": -6.22536,
+        "longitude": 106.79914,
+        "transitSummary": "MRT Senayan / TJ Bundaran Senayan",
+        "accessNotes": "Pelataran pedestrian terbuka arah Asia Afrika.",
+        "publicHours": "07:00-22:00",
+        "estimatedTravelFromStartMs": 660000,
+        "estimatedChallengeMs": 240000
+      },
+      {
+        "id": "stadion-madya",
+        "name": "Gerbang Stadion Madya GBK",
+        "zoneId": "senayan",
+        "latitude": -6.21852,
+        "longitude": 106.80121,
+        "transitSummary": "TJ Gelora Bung Karno",
+        "accessNotes": "Jalur pedestrian luar gerbang barat stadion.",
+        "publicHours": "06:00-22:00",
+        "estimatedTravelFromStartMs": 840000,
+        "estimatedChallengeMs": 240000
+      },
+      {
+        "id": "velbak-kebayoran",
+        "name": "Skywalk Velbak–Kebayoran",
+        "zoneId": "kebayoran",
+        "latitude": -6.23721,
+        "longitude": 106.78249,
+        "transitSummary": "KRL Kebayoran / TJ Koridor 13",
+        "accessNotes": "Akses publik jembatan integrasi skywalk.",
+        "publicHours": "05:00-23:00",
+        "estimatedTravelFromStartMs": 840000,
+        "estimatedChallengeMs": 240000
+      },
+      {
+        "id": "stasiun-palmerah",
+        "name": "Pelataran Stasiun Palmerah",
+        "zoneId": "kebayoran",
+        "latitude": -6.20731,
+        "longitude": 106.79753,
+        "transitSummary": "KRL Palmerah",
+        "accessNotes": "Pelataran timur stasiun arah Jl. Gelora.",
+        "publicHours": "05:00-23:00",
+        "estimatedTravelFromStartMs": 1080000,
+        "estimatedChallengeMs": 240000
+      }
+    ]
+  },
+  "challenges": {
+    "challengeMode": "per_landmark",
+    "landmarkChallenges": {
+      "taman-literasi": [
+        {
+          "id": "c-tl",
+          "title": "Amfiteater Taman Literasi",
+          "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+          "reviewed": true,
+          "reviewedAt": "2026-11-22",
+          "payload": {
+            "primitive": "observation_mcq",
+            "prompt": "Bagaimana bentuk susunan undakan tempat duduk amfiteater Taman Literasi?",
+            "choices": [
+              {
+                "id": "a",
+                "label": "Melengkung setengah lingkaran"
+              },
+              {
+                "id": "b",
+                "label": "Memanjang lurus sejajar jalan"
+              },
+              {
+                "id": "c",
+                "label": "Menara bertingkat tiga"
+              }
+            ],
+            "correctChoiceId": "a"
+          }
+        }
+      ],
+      "blok-m-plaza": [
+        {
+          "id": "c-bmp",
+          "title": "Fasad Blok M Plaza",
+          "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+          "reviewed": true,
+          "reviewedAt": "2026-11-22",
+          "payload": {
+            "primitive": "observation_mcq",
+            "prompt": "Dari pelataran masuk arah MRT, penanda utama fasad Blok M Plaza berbentuk apa?",
+            "choices": [
+              {
+                "id": "a",
+                "label": "Bidang persegi simetris"
+              },
+              {
+                "id": "b",
+                "label": "Kubah bundar berjeruji"
+              },
+              {
+                "id": "c",
+                "label": "Segitiga lancip kembar"
+              }
+            ],
+            "correctChoiceId": "a"
+          }
+        }
+      ],
+      "m-bloc": [
+        {
+          "id": "c-mbloc",
+          "title": "Mural M Bloc Space",
+          "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+          "reviewed": true,
+          "reviewedAt": "2026-11-22",
+          "payload": {
+            "primitive": "observation_input",
+            "prompt": "Berapa jumlah gambar layang-layang utama pada papan mural fasad depan M Bloc?",
+            "inputMode": "number",
+            "numericRange": {
+              "min": 2,
+              "max": 2
+            }
+          }
+        }
+      ],
+      "taman-ayodya": [
+        {
+          "id": "c-ayodya",
+          "title": "Papan Jalur Taman Ayodya",
+          "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+          "reviewed": true,
+          "reviewedAt": "2026-11-22",
+          "payload": {
+            "primitive": "photo_proof",
+            "prompt": "Foto papan nama atau tepi kolam Taman Ayodya dari jalur pejalan kaki.",
+            "verificationMode": "rival_or_timeout",
+            "autoApproveMs": 120000
+          }
+        }
+      ],
+      "pasar-mayestik": [
+        {
+          "id": "c-mayestik",
+          "title": "Gerbang Pasar Mayestik",
+          "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+          "reviewed": true,
+          "reviewedAt": "2026-11-22",
+          "payload": {
+            "primitive": "photo_proof",
+            "prompt": "Foto papan nama depan Pasar Mayestik atau halte TJ Mayestik.",
+            "verificationMode": "rival_or_timeout",
+            "autoApproveMs": 120000
+          }
+        }
+      ],
+      "taman-mataram": [
+        {
+          "id": "c-mataram",
+          "title": "Penanda Taman Mataram",
+          "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+          "reviewed": true,
+          "reviewedAt": "2026-11-22",
+          "payload": {
+            "primitive": "observation_input",
+            "prompt": "Tuliskan kata pertama pada papan nama resmi Taman Mataram.",
+            "inputMode": "text",
+            "acceptedAnswers": [
+              "taman",
+              "taman mataram"
+            ]
+          }
+        }
+      ],
+      "plaza-senayan": [
+        {
+          "id": "c-ps",
+          "title": "Pelataran Plaza Senayan",
+          "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+          "reviewed": true,
+          "reviewedAt": "2026-11-22",
+          "payload": {
+            "primitive": "observation_mcq",
+            "prompt": "Di pelataran terbuka Plaza Senayan, fasilitas transit rel terdekat berada di arah mana?",
+            "choices": [
+              {
+                "id": "a",
+                "label": "MRT Senayan arah Bundaran Senayan"
+              },
+              {
+                "id": "b",
+                "label": "Stasiun KRL Jakarta Kota"
+              },
+              {
+                "id": "c",
+                "label": "Pelabuhan Sunda Kelapa"
+              }
+            ],
+            "correctChoiceId": "a"
+          }
+        }
+      ],
+      "stadion-madya": [
+        {
+          "id": "c-madya",
+          "title": "Gerbang Stadion Madya",
+          "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+          "reviewed": true,
+          "reviewedAt": "2026-11-22",
+          "payload": {
+            "primitive": "photo_proof",
+            "prompt": "Foto papan gerbang luar Stadion Madya GBK dari jalur pedestrian.",
+            "verificationMode": "rival_or_timeout",
+            "autoApproveMs": 120000
+          }
+        }
+      ],
+      "velbak-kebayoran": [
+        {
+          "id": "c-velbak",
+          "title": "Skywalk Velbak–Kebayoran",
+          "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+          "reviewed": true,
+          "reviewedAt": "2026-11-22",
+          "payload": {
+            "primitive": "observation_mcq",
+            "prompt": "Dua moda utama apa yang dihubungkan langsung oleh Skywalk Velbak?",
+            "choices": [
+              {
+                "id": "a",
+                "label": "KRL Commuter Line dan Transjakarta"
+              },
+              {
+                "id": "b",
+                "label": "Kapal feri dan kereta bandara"
+              },
+              {
+                "id": "c",
+                "label": "LRT Jabodebek dan bus antarprovinsi"
+              }
+            ],
+            "correctChoiceId": "a"
+          }
+        }
+      ],
+      "stasiun-palmerah": [
+        {
+          "id": "c-palmerah",
+          "title": "Pelataran Stasiun Palmerah",
+          "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+          "reviewed": true,
+          "reviewedAt": "2026-11-22",
+          "payload": {
+            "primitive": "observation_input",
+            "prompt": "Tuliskan nama lintasan KRL yang melayani Stasiun Palmerah (satu kata tujuan barat).",
+            "inputMode": "text",
+            "acceptedAnswers": [
+              "rangkasbitung",
+              "serpong",
+              "tanah abang"
+            ]
+          }
+        }
+      ]
+    },
+    "backupPool": [
+      {
+        "id": "bak-sign",
+        "title": "Foto Papan Arah Transit",
+        "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+        "reviewed": true,
+        "reviewedAt": "2026-11-22",
+        "payload": {
+          "primitive": "photo_proof",
+          "prompt": "Foto papan penunjuk arah pejalan kaki atau transit terdekat.",
+          "verificationMode": "rival_or_timeout",
+          "autoApproveMs": 120000
+        }
+      },
+      {
+        "id": "bak-tree",
+        "title": "Foto Ruang Hijau Publik",
+        "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+        "reviewed": true,
+        "reviewedAt": "2026-11-22",
+        "payload": {
+          "primitive": "photo_proof",
+          "prompt": "Foto pepohonan atau pot taman publik di sekitar landmark ini.",
+          "verificationMode": "rival_or_timeout",
+          "autoApproveMs": 120000
+        }
+      },
+      {
+        "id": "bak-transit",
+        "title": "Moda Transit Terdekat",
+        "verificationNotes": "Terverifikasi dari area pedestrian publik tanpa tiket masuk.",
+        "reviewed": true,
+        "reviewedAt": "2026-11-22",
+        "payload": {
+          "primitive": "observation_input",
+          "prompt": "Sebutkan salah satu operator transit yang bisa diakses dari sekitar titik ini (MRT/KRL/Transjakarta).",
+          "inputMode": "text",
+          "acceptedAnswers": [
+            "mrt",
+            "krl",
+            "transjakarta",
+            "tj"
+          ]
+        }
+      }
+    ]
+  },
+  "tacticalDeck": {
+    "enabled": true,
+    "maxHandSize": 2,
+    "drawTriggers": {
+      "onLock": true,
+      "onSteal": true,
+      "onBoldChallenge": false
+    },
+    "maxActiveCursesPerTarget": 1,
+    "cards": [
+      {
+        "id": "card-scout",
+        "copies": 4,
+        "title": "Intip Tantangan",
+        "description": "Intip tantangan tersembunyi di 1 landmark sebelum berangkat.",
+        "effect": {
+          "primitive": "scout_challenge"
+        }
+      },
+      {
+        "id": "card-shield",
+        "copies": 3,
+        "title": "Perisai Klaim (15 m)",
+        "description": "Lindungi 1 klaim rentan milikmu dari perebutan selama 15 menit.",
+        "effect": {
+          "primitive": "shield_claim",
+          "durationMs": 900000
+        }
+      },
+      {
+        "id": "card-swap",
+        "copies": 3,
+        "title": "Ganti Tantangan",
+        "description": "Tukar tantangan aktif dari cadangan tanpa memicu gagal.",
+        "effect": {
+          "primitive": "swap_challenge"
+        }
+      },
+      {
+        "id": "card-double",
+        "copies": 2,
+        "title": "Poin Ganda (2x)",
+        "description": "Jadikan 1 landmark terkunci bernilai 2x di zonanya.",
+        "effect": {
+          "primitive": "double_weight"
+        }
+      }
+    ]
+  }
+}
