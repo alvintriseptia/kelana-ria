@@ -82,11 +82,7 @@ try {
   await host.page.goto(origin + explicitUnsupportedBoard);
   await host.page.waitForFunction(() => !new URLSearchParams(location.search).has("play"));
   await heading(host, "Pilih permainan").waitFor();
-  await host.page.goto(origin);
-  await host.page.getByText("Berdua", { exact: true }).click();
-  await host.page.locator('label').filter({ has: host.page.locator('input[value="hide-and-seek"]') }).click();
-  await click(host, "Lihat ringkasan");
-  await click(host, "Main Hide & Seek");
+  await host.page.goto(origin + "/?play=hide-and-seek&players=2&format=hide-and-seek&board=compact");
   const created = (await post(host, "Buat ruang", "create")).room;
   assert.equal(created.phase, "lobby");
   const endpoint = origin + "/api/seek/" + encodeURIComponent(created.code);

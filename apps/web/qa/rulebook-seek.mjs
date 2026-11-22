@@ -24,10 +24,26 @@ const browser = await chromium.launch({
 });
 
 try {
-  // 1. Creator clones Official Jakarta Hide & Seek, adds custom Curse & station override, runs dry-run, publishes, buys & settles paid pass
+  // 0. Quick check: launching Hide & Seek directly from / opens Official Jakarta Compact Hide & Seek room + invite link
+  const ctxRoot = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const pageRoot = await ctxRoot.newPage();
+  await pageRoot.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageRoot.locator("#chooser").getByText("Grup (2–6)", { exact: true }).click();
+  await pageRoot.locator("label").filter({ has: pageRoot.locator('input[value="hide-and-seek"]') }).click();
+  await pageRoot.getByRole("button", { name: "Lihat ringkasan" }).click();
+  await pageRoot.getByRole("button", { name: "Main Hide & Seek", exact: true }).click();
+  await pageRoot.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+  const rootInvite = await pageRoot.getAttribute('[data-testid="invite-link"]', "href");
+  assert.ok(rootInvite && rootInvite.includes("room=RB-"), "Root launch should create Hide & Seek room with invite link");
+  await ctxRoot.close();
+
+  // 1. Creator opens Studio from /, selects Hide & Seek, clones Official pack, adds custom Curse & station override, publishes, buys & settles paid pass
   const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageCreator = await ctxCreator.newPage();
-  await pageCreator.goto(`${baseUrl}/?play=rulebook-studio`, { waitUntil: "networkidle" });
+  await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageCreator.locator("#chooser").getByText("Grup (2–6)", { exact: true }).click();
+  await pageCreator.locator("label").filter({ has: pageCreator.locator('input[value="hide-and-seek"]') }).click();
+  await pageCreator.click("#chooser-studio");
   await pageCreator.waitForSelector('button[data-action="clone"]');
   await pageCreator.click('button[data-action="clone"]');
   await pageCreator.waitForSelector("#ed-curse-title");
