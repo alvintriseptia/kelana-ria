@@ -1,0 +1,943 @@
+{
+  "id": "jakarta-wide-seek-geo-v1",
+  "boundaryPolygon": [
+    {
+      "latitude": -6.31,
+      "longitude": 106.76
+    },
+    {
+      "latitude": -6.31,
+      "longitude": 106.87
+    },
+    {
+      "latitude": -6.12,
+      "longitude": 106.87
+    },
+    {
+      "latitude": -6.12,
+      "longitude": 106.76
+    }
+  ],
+  "startPoint": {
+    "id": "csw-asean",
+    "name": "CSW–ASEAN",
+    "latitude": -6.23831,
+    "longitude": 106.79889,
+    "accessNotes": "Pelataran integrasi CSW–MRT ASEAN, akses pejalan kaki publik."
+  },
+  "stations": [
+    {
+      "id": "mrt-blok-m",
+      "name": "MRT Blok M BCA",
+      "latitude": -6.24438,
+      "longitude": 106.79812,
+      "transitLines": [
+        "MRT Utara-Selatan"
+      ],
+      "attributes": {
+        "kecamatan": "Kebayoran Baru",
+        "corridor": "Selatan"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pintu timur menuju Taman Literasi & Blok M Plaza.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 360000
+    },
+    {
+      "id": "mrt-blok-a",
+      "name": "MRT Blok A",
+      "latitude": -6.25574,
+      "longitude": 106.79711,
+      "transitLines": [
+        "MRT Utara-Selatan"
+      ],
+      "attributes": {
+        "kecamatan": "Kebayoran Baru",
+        "corridor": "Selatan"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar Jl. Panglima Polim sisi timur.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 540000
+    },
+    {
+      "id": "mrt-haji-nawi",
+      "name": "MRT Haji Nawi",
+      "latitude": -6.26668,
+      "longitude": 106.79731,
+      "transitLines": [
+        "MRT Utara-Selatan"
+      ],
+      "attributes": {
+        "kecamatan": "Cilandak",
+        "corridor": "Selatan"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Akses pedestrian Jl. RS Fatmawati.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 780000
+    },
+    {
+      "id": "mrt-cipete-raya",
+      "name": "MRT Cipete Raya",
+      "latitude": -6.27848,
+      "longitude": 106.79735,
+      "transitLines": [
+        "MRT Utara-Selatan"
+      ],
+      "attributes": {
+        "kecamatan": "Cilandak",
+        "corridor": "Selatan"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar umum Jl. RS Fatmawati arah utara.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 960000
+    },
+    {
+      "id": "mrt-fatmawati",
+      "name": "MRT Fatmawati Indomaret",
+      "latitude": -6.29246,
+      "longitude": 106.79248,
+      "transitLines": [
+        "MRT Utara-Selatan"
+      ],
+      "attributes": {
+        "kecamatan": "Cilandak",
+        "corridor": "Selatan"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pelataran pintu keluar Jl. TB Simatupang.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 1140000
+    },
+    {
+      "id": "mrt-senayan",
+      "name": "MRT Senayan Mastercard",
+      "latitude": -6.22674,
+      "longitude": 106.80254,
+      "transitLines": [
+        "MRT Utara-Selatan",
+        "Transjakarta Koridor 1"
+      ],
+      "attributes": {
+        "kecamatan": "Kebayoran Baru",
+        "corridor": "Sudirman"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pintu keluar menuju Ratu Plaza & FX.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 420000
+    },
+    {
+      "id": "mrt-istora",
+      "name": "MRT Istora Mandiri",
+      "latitude": -6.22242,
+      "longitude": 106.80861,
+      "transitLines": [
+        "MRT Utara-Selatan",
+        "Transjakarta Koridor 1"
+      ],
+      "attributes": {
+        "kecamatan": "Kebayoran Baru",
+        "corridor": "Sudirman"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pintu barat pelataran GBK & SCBD.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 600000
+    },
+    {
+      "id": "mrt-bendungan-hilir",
+      "name": "MRT Bendungan Hilir",
+      "latitude": -6.21501,
+      "longitude": 106.81794,
+      "transitLines": [
+        "MRT Utara-Selatan",
+        "Transjakarta Koridor 1"
+      ],
+      "attributes": {
+        "kecamatan": "Tanah Abang",
+        "corridor": "Sudirman"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Akses pedestrian Jl. Jenderal Sudirman.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 840000
+    },
+    {
+      "id": "krl-kebayoran",
+      "name": "KRL Kebayoran / TJ Velbak",
+      "latitude": -6.23721,
+      "longitude": 106.78249,
+      "transitLines": [
+        "KRL Rangkasbitung",
+        "Transjakarta Koridor 13"
+      ],
+      "attributes": {
+        "kecamatan": "Kebayoran Lama",
+        "corridor": "Barat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Skywalk integrasi Velbak-Kebayoran.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 720000
+    },
+    {
+      "id": "krl-palmerah",
+      "name": "KRL Palmerah",
+      "latitude": -6.20731,
+      "longitude": 106.79753,
+      "transitLines": [
+        "KRL Rangkasbitung"
+      ],
+      "attributes": {
+        "kecamatan": "Tanah Abang",
+        "corridor": "Barat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pelataran timur arah Gelora / Jl. Gelora.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 1080000
+    },
+    {
+      "id": "tj-mayestik",
+      "name": "Halte TJ Mayestik",
+      "latitude": -6.24148,
+      "longitude": 106.79021,
+      "transitLines": [
+        "Transjakarta Koridor 13"
+      ],
+      "attributes": {
+        "kecamatan": "Kebayoran Baru",
+        "corridor": "Barat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar depan Pasar Mayestik.",
+      "publicHours": "05:00-22:00",
+      "estimatedTravelFromStartMs": 540000
+    },
+    {
+      "id": "tj-tendean",
+      "name": "Halte TJ Tendean",
+      "latitude": -6.24022,
+      "longitude": 106.83104,
+      "transitLines": [
+        "Transjakarta Koridor 13",
+        "Transjakarta Koridor 9"
+      ],
+      "attributes": {
+        "kecamatan": "Mampang Prapatan",
+        "corridor": "Timur"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Jalur pedestrian Jl. Kapten Tendean.",
+      "publicHours": "05:00-23:00",
+      "estimatedTravelFromStartMs": 900000
+    },
+    {
+      "id": "tj-rawa-barat",
+      "name": "Halte TJ Rawa Barat",
+      "latitude": -6.23892,
+      "longitude": 106.81421,
+      "transitLines": [
+        "Transjakarta Koridor 13"
+      ],
+      "attributes": {
+        "kecamatan": "Kebayoran Baru",
+        "corridor": "Timur"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Jalur pejalan kaki Jl. Wolter Monginsidi.",
+      "publicHours": "05:00-22:00",
+      "estimatedTravelFromStartMs": 660000
+    },
+    {
+      "id": "tj-gbk",
+      "name": "Halte TJ Gelora Bung Karno",
+      "latitude": -6.22414,
+      "longitude": 106.80541,
+      "transitLines": [
+        "Transjakarta Koridor 1"
+      ],
+      "attributes": {
+        "kecamatan": "Tanah Abang",
+        "corridor": "Sudirman"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Gerbang pejalan kaki Pintu 5 GBK.",
+      "publicHours": "05:00-23:00",
+      "estimatedTravelFromStartMs": 540000
+    },
+    {
+      "id": "tj-kejagung",
+      "name": "Halte TJ Kejaksaan Agung",
+      "latitude": -6.24121,
+      "longitude": 106.79855,
+      "transitLines": [
+        "Transjakarta Koridor 1",
+        "Transjakarta Koridor 13"
+      ],
+      "attributes": {
+        "kecamatan": "Kebayoran Baru",
+        "corridor": "Selatan"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar integrasi CSW arah M Bloc.",
+      "publicHours": "05:00-23:00",
+      "estimatedTravelFromStartMs": 300000
+    },
+    {
+      "id": "tj-bundaran-senayan",
+      "name": "Halte TJ Bundaran Senayan",
+      "latitude": -6.22749,
+      "longitude": 106.80102,
+      "transitLines": [
+        "Transjakarta Koridor 1"
+      ],
+      "attributes": {
+        "kecamatan": "Kebayoran Baru",
+        "corridor": "Sudirman"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pelataran pedestrian Bundaran Senayan.",
+      "publicHours": "05:00-23:00",
+      "estimatedTravelFromStartMs": 480000
+    },
+    {
+      "id": "mrt-lebak-bulus",
+      "name": "MRT Lebak Bulus Grab",
+      "latitude": -6.28941,
+      "longitude": 106.77492,
+      "transitLines": [
+        "MRT Utara-Selatan",
+        "Transjakarta Koridor 8"
+      ],
+      "attributes": {
+        "kecamatan": "Cilandak",
+        "corridor": "Selatan"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pintu utama terminal Lebak Bulus.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 1440000
+    },
+    {
+      "id": "mrt-setiabudi",
+      "name": "MRT Setiabudi Astra",
+      "latitude": -6.20899,
+      "longitude": 106.82166,
+      "transitLines": [
+        "MRT Utara-Selatan"
+      ],
+      "attributes": {
+        "kecamatan": "Setiabudi",
+        "corridor": "Sudirman"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar Jl. Jenderal Sudirman sisi timur.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 960000
+    },
+    {
+      "id": "mrt-dukuh-atas",
+      "name": "MRT Dukuh Atas BNI",
+      "latitude": -6.20081,
+      "longitude": 106.82281,
+      "transitLines": [
+        "MRT Utara-Selatan",
+        "KRL Lingkar",
+        "Transjakarta Koridor 1"
+      ],
+      "attributes": {
+        "kecamatan": "Tanah Abang",
+        "corridor": "Sudirman"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Terowongan Kendal & taman pedestrian.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 1080000
+    },
+    {
+      "id": "mrt-bundaran-hi",
+      "name": "MRT Bundaran HI",
+      "latitude": -6.19192,
+      "longitude": 106.82304,
+      "transitLines": [
+        "MRT Utara-Selatan",
+        "Transjakarta Koridor 1"
+      ],
+      "attributes": {
+        "kecamatan": "Menteng",
+        "corridor": "Pusat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pelataran timur Bundaran HI.",
+      "publicHours": "05:00-24:00",
+      "estimatedTravelFromStartMs": 1260000
+    },
+    {
+      "id": "krl-sudirman",
+      "name": "KRL Sudirman",
+      "latitude": -6.20238,
+      "longitude": 106.82348,
+      "transitLines": [
+        "KRL Lingkar"
+      ],
+      "attributes": {
+        "kecamatan": "Menteng",
+        "corridor": "Sudirman"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Akses Jl. Kendal arah Dukuh Atas.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 1200000
+    },
+    {
+      "id": "krl-karet",
+      "name": "KRL Karet",
+      "latitude": -6.20091,
+      "longitude": 106.81611,
+      "transitLines": [
+        "KRL Lingkar"
+      ],
+      "attributes": {
+        "kecamatan": "Tanah Abang",
+        "corridor": "Sudirman"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar Jl. KH Mas Mansyur.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 1320000
+    },
+    {
+      "id": "krl-tanah-abang",
+      "name": "KRL Tanah Abang",
+      "latitude": -6.18565,
+      "longitude": 106.81092,
+      "transitLines": [
+        "KRL Rangkasbitung",
+        "KRL Lingkar"
+      ],
+      "attributes": {
+        "kecamatan": "Tanah Abang",
+        "corridor": "Barat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pintu timur arah Jl. Jatibaru.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 1440000
+    },
+    {
+      "id": "krl-manggarai",
+      "name": "KRL Manggarai",
+      "latitude": -6.20985,
+      "longitude": 106.85028,
+      "transitLines": [
+        "KRL Bogor",
+        "KRL Lingkar",
+        "Transjakarta Koridor 4"
+      ],
+      "attributes": {
+        "kecamatan": "Tebet",
+        "corridor": "Timur"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pelataran pintu timur Stasiun Manggarai.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 1680000
+    },
+    {
+      "id": "krl-tebet",
+      "name": "KRL Tebet",
+      "latitude": -6.22618,
+      "longitude": 106.85828,
+      "transitLines": [
+        "KRL Bogor"
+      ],
+      "attributes": {
+        "kecamatan": "Tebet",
+        "corridor": "Timur"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Akses selatan arah Jl. KH Abdullah Syafei.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 1920000
+    },
+    {
+      "id": "krl-cawang",
+      "name": "KRL Cawang",
+      "latitude": -6.24258,
+      "longitude": 106.85884,
+      "transitLines": [
+        "KRL Bogor",
+        "Transjakarta Koridor 9"
+      ],
+      "attributes": {
+        "kecamatan": "Tebet",
+        "corridor": "Timur"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar integrasi Halte Cikoko.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 1800000
+    },
+    {
+      "id": "krl-pasar-minggu-baru",
+      "name": "KRL Pasar Minggu Baru",
+      "latitude": -6.26279,
+      "longitude": 106.85191,
+      "transitLines": [
+        "KRL Bogor"
+      ],
+      "attributes": {
+        "kecamatan": "Pancoran",
+        "corridor": "Selatan"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pintu barat Jl. Rawajati Timur.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 2100000
+    },
+    {
+      "id": "krl-cikini",
+      "name": "KRL Cikini",
+      "latitude": -6.19844,
+      "longitude": 106.84145,
+      "transitLines": [
+        "KRL Bogor"
+      ],
+      "attributes": {
+        "kecamatan": "Menteng",
+        "corridor": "Pusat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar depan Jl. Pegangsaan Timur.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 1800000
+    },
+    {
+      "id": "krl-gondangdia",
+      "name": "KRL Gondangdia",
+      "latitude": -6.18599,
+      "longitude": 106.83254,
+      "transitLines": [
+        "KRL Bogor"
+      ],
+      "attributes": {
+        "kecamatan": "Menteng",
+        "corridor": "Pusat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pintu utara Jl. Srikaya.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 1860000
+    },
+    {
+      "id": "krl-juanda",
+      "name": "KRL Juanda",
+      "latitude": -6.16655,
+      "longitude": 106.83049,
+      "transitLines": [
+        "KRL Bogor",
+        "Transjakarta Koridor 2"
+      ],
+      "attributes": {
+        "kecamatan": "Sawah Besar",
+        "corridor": "Utara"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "JPO integrasi arah Masjid Istiqlal.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 2100000
+    },
+    {
+      "id": "krl-sawah-besar",
+      "name": "KRL Sawah Besar",
+      "latitude": -6.16058,
+      "longitude": 106.82775,
+      "transitLines": [
+        "KRL Bogor"
+      ],
+      "attributes": {
+        "kecamatan": "Sawah Besar",
+        "corridor": "Utara"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Akses pejalan kaki Jl. Krekot Jaya.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 2220000
+    },
+    {
+      "id": "krl-mangga-besar",
+      "name": "KRL Mangga Besar",
+      "latitude": -6.14975,
+      "longitude": 106.82699,
+      "transitLines": [
+        "KRL Bogor"
+      ],
+      "attributes": {
+        "kecamatan": "Taman Sari",
+        "corridor": "Utara"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pintu barat Jl. Raya Mangga Besar.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 2340000
+    },
+    {
+      "id": "krl-jayakarta",
+      "name": "KRL Jayakarta",
+      "latitude": -6.14122,
+      "longitude": 106.82319,
+      "transitLines": [
+        "KRL Bogor"
+      ],
+      "attributes": {
+        "kecamatan": "Taman Sari",
+        "corridor": "Utara"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pelataran Jl. Pangeran Jayakarta.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 2460000
+    },
+    {
+      "id": "krl-jakarta-kota",
+      "name": "KRL Jakarta Kota",
+      "latitude": -6.13756,
+      "longitude": 106.81461,
+      "transitLines": [
+        "KRL Bogor",
+        "KRL Tanjung Priok",
+        "Transjakarta Koridor 1"
+      ],
+      "attributes": {
+        "kecamatan": "Taman Sari",
+        "corridor": "Kota Tua"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pintu utara menghadap kawasan Kota Tua.",
+      "publicHours": "05:00-23:30",
+      "estimatedTravelFromStartMs": 2580000
+    },
+    {
+      "id": "tj-monas",
+      "name": "Halte TJ Monas",
+      "latitude": -6.17615,
+      "longitude": 106.82292,
+      "transitLines": [
+        "Transjakarta Koridor 1",
+        "Transjakarta Koridor 2"
+      ],
+      "attributes": {
+        "kecamatan": "Gambir",
+        "corridor": "Pusat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pelataran barat Monas Jl. Medan Merdeka Barat.",
+      "publicHours": "05:00-23:00",
+      "estimatedTravelFromStartMs": 1680000
+    },
+    {
+      "id": "tj-harmoni",
+      "name": "Halte TJ Harmoni",
+      "latitude": -6.16692,
+      "longitude": 106.82055,
+      "transitLines": [
+        "Transjakarta Koridor 1",
+        "Transjakarta Koridor 3"
+      ],
+      "attributes": {
+        "kecamatan": "Gambir",
+        "corridor": "Pusat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar Jl. Hayam Wuruk.",
+      "publicHours": "05:00-23:00",
+      "estimatedTravelFromStartMs": 1920000
+    },
+    {
+      "id": "tj-glodok",
+      "name": "Halte TJ Glodok",
+      "latitude": -6.14369,
+      "longitude": 106.81525,
+      "transitLines": [
+        "Transjakarta Koridor 1"
+      ],
+      "attributes": {
+        "kecamatan": "Taman Sari",
+        "corridor": "Kota Tua"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar Pecinan Pancoran Glodok.",
+      "publicHours": "05:00-23:00",
+      "estimatedTravelFromStartMs": 2400000
+    },
+    {
+      "id": "tj-kuningan",
+      "name": "Halte TJ Kuningan",
+      "latitude": -6.22949,
+      "longitude": 106.83295,
+      "transitLines": [
+        "Transjakarta Koridor 6",
+        "Transjakarta Koridor 9"
+      ],
+      "attributes": {
+        "kecamatan": "Setiabudi",
+        "corridor": "Timur"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Trotoar Jl. HR Rasuna Said.",
+      "publicHours": "05:00-23:00",
+      "estimatedTravelFromStartMs": 1200000
+    },
+    {
+      "id": "tj-sarinah",
+      "name": "Halte TJ M.H. Thamrin",
+      "latitude": -6.18731,
+      "longitude": 106.82358,
+      "transitLines": [
+        "Transjakarta Koridor 1"
+      ],
+      "attributes": {
+        "kecamatan": "Menteng",
+        "corridor": "Pusat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pelataran pedestrian depan Sarinah.",
+      "publicHours": "05:00-23:00",
+      "estimatedTravelFromStartMs": 1440000
+    },
+    {
+      "id": "tj-tim",
+      "name": "Halte TJ Taman Ismail Marzuki",
+      "latitude": -6.19002,
+      "longitude": 106.83965,
+      "transitLines": [
+        "Transjakarta Koridor 5"
+      ],
+      "attributes": {
+        "kecamatan": "Menteng",
+        "corridor": "Pusat"
+      },
+      "eligibleHidingAnchor": true,
+      "accessNotes": "Pelataran gerbang depan TIM Jl. Cikini Raya.",
+      "publicHours": "06:00-22:00",
+      "estimatedTravelFromStartMs": 1740000
+    }
+  ],
+  "pois": [
+    {
+      "id": "mall-blok-m-plaza",
+      "name": "Blok M Plaza",
+      "category": "mall",
+      "latitude": -6.2446,
+      "longitude": 106.79748
+    },
+    {
+      "id": "mall-plaza-senayan",
+      "name": "Plaza Senayan",
+      "category": "mall",
+      "latitude": -6.22536,
+      "longitude": 106.79914
+    },
+    {
+      "id": "mall-gandaria-city",
+      "name": "Gandaria City",
+      "category": "mall",
+      "latitude": -6.24419,
+      "longitude": 106.78349
+    },
+    {
+      "id": "mall-pacific-place",
+      "name": "Pacific Place SCBD",
+      "category": "mall",
+      "latitude": -6.22411,
+      "longitude": 106.80972
+    },
+    {
+      "id": "mall-citos",
+      "name": "Cilandak Town Square",
+      "category": "mall",
+      "latitude": -6.29148,
+      "longitude": 106.79964
+    },
+    {
+      "id": "park-taman-literasi",
+      "name": "Taman Literasi Blok M",
+      "category": "park",
+      "latitude": -6.24363,
+      "longitude": 106.80074
+    },
+    {
+      "id": "park-taman-ayodya",
+      "name": "Taman Ayodya",
+      "category": "park",
+      "latitude": -6.24459,
+      "longitude": 106.79173
+    },
+    {
+      "id": "park-taman-mataram",
+      "name": "Taman Mataram",
+      "category": "park",
+      "latitude": -6.23511,
+      "longitude": 106.80492
+    },
+    {
+      "id": "park-hutan-kota-gbk",
+      "name": "Hutan Kota GBK",
+      "category": "park",
+      "latitude": -6.21942,
+      "longitude": 106.80481
+    },
+    {
+      "id": "park-taman-langsat",
+      "name": "Taman Langsat",
+      "category": "park",
+      "latitude": -6.24415,
+      "longitude": 106.78852
+    },
+    {
+      "id": "mrt-ref-asean",
+      "name": "Stasiun MRT ASEAN",
+      "category": "mrt_station",
+      "latitude": -6.23879,
+      "longitude": 106.79846
+    },
+    {
+      "id": "mrt-ref-blok-m",
+      "name": "Stasiun MRT Blok M",
+      "category": "mrt_station",
+      "latitude": -6.24438,
+      "longitude": 106.79812
+    },
+    {
+      "id": "mrt-ref-senayan",
+      "name": "Stasiun MRT Senayan",
+      "category": "mrt_station",
+      "latitude": -6.22674,
+      "longitude": 106.80254
+    },
+    {
+      "id": "mrt-ref-istora",
+      "name": "Stasiun MRT Istora",
+      "category": "mrt_station",
+      "latitude": -6.22242,
+      "longitude": 106.80861
+    },
+    {
+      "id": "mrt-ref-fatmawati",
+      "name": "Stasiun MRT Fatmawati",
+      "category": "mrt_station",
+      "latitude": -6.29246,
+      "longitude": 106.79248
+    },
+    {
+      "id": "monument-bundaran-hi",
+      "name": "Bundaran HI",
+      "category": "monument",
+      "latitude": -6.19496,
+      "longitude": 106.82304
+    },
+    {
+      "id": "monument-monas",
+      "name": "Monumen Nasional (Monas)",
+      "category": "monument",
+      "latitude": -6.17539,
+      "longitude": 106.82715
+    },
+    {
+      "id": "mall-grand-indonesia",
+      "name": "Grand Indonesia",
+      "category": "mall",
+      "latitude": -6.19518,
+      "longitude": 106.82091
+    },
+    {
+      "id": "mall-sarinah",
+      "name": "Sarinah Thamrin",
+      "category": "mall",
+      "latitude": -6.18738,
+      "longitude": 106.82405
+    },
+    {
+      "id": "park-taman-suropati",
+      "name": "Taman Suropati",
+      "category": "park",
+      "latitude": -6.19937,
+      "longitude": 106.83258
+    },
+    {
+      "id": "park-taman-menteng",
+      "name": "Taman Menteng",
+      "category": "park",
+      "latitude": -6.19641,
+      "longitude": 106.82931
+    },
+    {
+      "id": "park-taman-fatahillah",
+      "name": "Taman Fatahillah",
+      "category": "park",
+      "latitude": -6.1352,
+      "longitude": 106.8133
+    },
+    {
+      "id": "museum-nasional",
+      "name": "Museum Nasional Indonesia",
+      "category": "museum",
+      "latitude": -6.1764,
+      "longitude": 106.8216
+    },
+    {
+      "id": "museum-sejarah",
+      "name": "Museum Sejarah Jakarta",
+      "category": "museum",
+      "latitude": -6.13521,
+      "longitude": 106.81331
+    },
+    {
+      "id": "museum-satria-mandala",
+      "name": "Museum Satria Mandala",
+      "category": "museum",
+      "latitude": -6.23168,
+      "longitude": 106.81861
+    },
+    {
+      "id": "hosp-rscm",
+      "name": "RSUPN Dr. Cipto Mangunkusumo",
+      "category": "hospital",
+      "latitude": -6.19722,
+      "longitude": 106.84695
+    },
+    {
+      "id": "hosp-rspp",
+      "name": "RS Pusat Pertamina",
+      "category": "hospital",
+      "latitude": -6.23978,
+      "longitude": 106.79325
+    },
+    {
+      "id": "hosp-siloam-semanggi",
+      "name": "MRCCC Siloam Semanggi",
+      "category": "hospital",
+      "latitude": -6.21942,
+      "longitude": 106.81682
+    }
+  ],
+  "attributions": [
+    {
+      "source": "OpenStreetMap & Geoapify",
+      "license": "ODbL 1.0",
+      "retrievedAt": "2026-11-22T00:00:00Z",
+      "notice": "Map & POI coordinates © OpenStreetMap contributors."
+    },
+    {
+      "source": "Transjakarta Static GTFS",
+      "license": "CC BY 4.0",
+      "retrievedAt": "2026-11-22T00:00:00Z",
+      "notice": "Adapted corridor references from PPID Transjakarta."
+    }
+  ],
+  "hash": "3960a2d2eab2d2e6b31d360257eab41c64107751d4aef1f17de707765bb720ea"
+}

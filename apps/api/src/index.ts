@@ -19,6 +19,8 @@ import { mapHandler, type MapProxyOptions } from "./map-http.js";
 import { defaultCreatorDraft, defaultCreatorTasks } from "./pack-fixture.js";
 import { packHandler } from "./pack-http.js";
 import { packStore, validatePackVersionForPublication } from "./pack-store.js";
+import { rulebookHandler } from "./rulebook-http.js";
+import { rulebookStore } from "./rulebook-store.js";
 import { seekHandler } from "./seek-http.js";
 import { seekStore } from "./seek-store.js";
 import { staticHandler } from "./static-http.js";
@@ -207,6 +209,20 @@ export {
   type SeekDeckEngineState,
 } from "./seek-engine/deck-engine.js";
 export {
+  createFixtureGeoSeedProvider,
+  seedAndFreezeGeoSnapshot,
+  type GeoSeedProvider,
+  type GeoSeedRequest,
+} from "./seek-engine/geo-seeder.js";
+export { loadOfficialSeekPacks, type LoadedOfficialSeekPack } from "./official-packs.js";
+export {
+  rulebookStore,
+  toPublicSeekListing,
+  type RulebookPublicListing,
+  type RulebookRoomPass,
+  type StoredRulebookRecord,
+} from "./rulebook-store.js";
+export {
   isFreshSoloEdition,
   prepareSoloFixture,
   toSoloCandidate,
@@ -278,6 +294,8 @@ export function createSoloServer({
   const seek = seekStore(databasePath, now);
   const handleSeek = seekHandler(seek, now, secureCookie);
   const handlePacks = packHandler(packs, now, secureCookie);
+  const rulebooks = rulebookStore(databasePath, { midtrans });
+  const handleRulebooks = rulebookHandler(rulebooks, now, secureCookie);
   const handleMap = mapHandler(mapProxy);
   const handleStatic = staticDir ? staticHandler(staticDir) : undefined;
   const mapMode = mapProxy?.geoapifyApiKey?.trim() ? "geoapify-vector" : "offline-vector";
@@ -306,6 +324,9 @@ export function createSoloServer({
       }
       if (url.pathname === "/api/packs" || url.pathname.startsWith("/api/packs/")) {
         return await handlePacks(request, response, url);
+      }
+      if (url.pathname === "/api/rulebooks" || url.pathname.startsWith("/api/rulebooks/")) {
+        return await handleRulebooks(request, response, url);
       }
       const token = credential(request, cookieName);
       if (request.method === "GET" && url.pathname === "/api/solo") {
@@ -375,6 +396,7 @@ export function createSoloServer({
     }
   });
   server.on("close", () => {
+    rulebooks.close();
     seek.close();
     packs.close();
     duo.close();

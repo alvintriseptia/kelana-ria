@@ -1,0 +1,816 @@
+{
+  "meta": {
+    "packId": "official-jakarta-wide-seek",
+    "version": 1,
+    "schemaVersion": "hide-seek-rulebook-v1",
+    "format": "hide-and-seek",
+    "isOfficial": true,
+    "title": "Jakarta Transit Hunt · Hide & Seek (Wide)",
+    "byline": "Kelana Ria Official",
+    "summary": "Perburuan lintas Jakarta dari Lebak Bulus hingga Kota Tua dengan 40 stasiun MRT/KRL/TJ, zona 500 m, Move, dan 65 kartu dek.",
+    "cityLabel": "DKI Jakarta",
+    "difficulty": "standard",
+    "priceIdr": 0
+  },
+  "session": {
+    "minPlayers": 2,
+    "maxPlayers": 6,
+    "turnMode": "everyone_hides_once",
+    "requireStartCheckIn": true,
+    "regroupPolicy": "previous_hiding_station",
+    "missedLockPolicy": "void_turn",
+    "endgameFreezeGraceSec": 60,
+    "maxPathOffsetMeters": 5
+  },
+  "timers": {
+    "headStartMs": 2700000,
+    "searchLimitMs": 7200000,
+    "regroupLimitMs": 1200000,
+    "objectiveResponseMs": 240000,
+    "photoResponseMs": 600000,
+    "drawDecisionMs": 60000
+  },
+  "geography": {
+    "hidingZoneRadiusMeters": 500,
+    "checkInRadiusMeters": 100,
+    "maxGpsAccuracyMeters": 50,
+    "maxGpsFixAgeMs": 30000,
+    "allowedTransitModes": [
+      "walk",
+      "mrt",
+      "krl",
+      "transjakarta"
+    ],
+    "geoSnapshotId": "jakarta-wide-seek-geo-v1",
+    "geoSnapshotHash": "3960a2d2eab2d2e6b31d360257eab41c64107751d4aef1f17de707765bb720ea"
+  },
+  "investigationBook": {
+    "repeatCostMode": "escalating_multiplier",
+    "tieToleranceMeters": 100,
+    "families": {
+      "radar": {
+        "enabled": true,
+        "drawCount": 2,
+        "keepCount": 1,
+        "availableInPhases": [
+          "seeking",
+          "endgame"
+        ],
+        "allowCustomRadius": true,
+        "items": [
+          {
+            "id": "rad-500m",
+            "label": "Radar 500 m",
+            "radiusMeters": 500
+          },
+          {
+            "id": "rad-1km",
+            "label": "Radar 1 km",
+            "radiusMeters": 1000
+          },
+          {
+            "id": "rad-2km",
+            "label": "Radar 2 km",
+            "radiusMeters": 2000
+          },
+          {
+            "id": "rad-4km",
+            "label": "Radar 4 km",
+            "radiusMeters": 4000
+          },
+          {
+            "id": "rad-8km",
+            "label": "Radar 8 km",
+            "radiusMeters": 8000
+          }
+        ]
+      },
+      "thermometer": {
+        "enabled": true,
+        "drawCount": 2,
+        "keepCount": 1,
+        "availableInPhases": [
+          "seeking"
+        ],
+        "items": [
+          {
+            "id": "therm-500m",
+            "label": "Termometer 500 m",
+            "minTravelMeters": 500
+          },
+          {
+            "id": "therm-1500m",
+            "label": "Termometer 1,5 km",
+            "minTravelMeters": 1500
+          },
+          {
+            "id": "therm-3km",
+            "label": "Termometer 3 km",
+            "minTravelMeters": 3000
+          },
+          {
+            "id": "therm-6km",
+            "label": "Termometer 6 km",
+            "minTravelMeters": 6000
+          }
+        ]
+      },
+      "matching": {
+        "enabled": true,
+        "drawCount": 3,
+        "keepCount": 1,
+        "availableInPhases": [
+          "seeking"
+        ],
+        "items": [
+          {
+            "id": "match-line",
+            "label": "Jalur transit sama",
+            "matchType": "transit_line"
+          },
+          {
+            "id": "match-kecamatan",
+            "label": "Kecamatan sama",
+            "matchType": "station_attribute",
+            "attributeKey": "kecamatan"
+          },
+          {
+            "id": "match-corridor",
+            "label": "Koridor wilayah sama",
+            "matchType": "station_attribute",
+            "attributeKey": "corridor"
+          },
+          {
+            "id": "match-name-len",
+            "label": "Panjang nama stasiun sama",
+            "matchType": "station_name_length"
+          },
+          {
+            "id": "match-mall",
+            "label": "Mal terdekat sama",
+            "matchType": "nearest_poi",
+            "poiCategory": "mall"
+          },
+          {
+            "id": "match-park",
+            "label": "Taman terdekat sama",
+            "matchType": "nearest_poi",
+            "poiCategory": "park"
+          },
+          {
+            "id": "match-museum",
+            "label": "Museum terdekat sama",
+            "matchType": "nearest_poi",
+            "poiCategory": "museum"
+          },
+          {
+            "id": "match-hospital",
+            "label": "RS terdekat sama",
+            "matchType": "nearest_poi",
+            "poiCategory": "hospital"
+          }
+        ]
+      },
+      "measuring": {
+        "enabled": true,
+        "drawCount": 3,
+        "keepCount": 1,
+        "availableInPhases": [
+          "seeking"
+        ],
+        "items": [
+          {
+            "id": "meas-mrt",
+            "label": "Lebih dekat ke stasiun MRT",
+            "targetType": "poi_category",
+            "poiCategory": "mrt_station"
+          },
+          {
+            "id": "meas-park",
+            "label": "Lebih dekat ke taman",
+            "targetType": "poi_category",
+            "poiCategory": "park"
+          },
+          {
+            "id": "meas-museum",
+            "label": "Lebih dekat ke museum",
+            "targetType": "poi_category",
+            "poiCategory": "museum"
+          },
+          {
+            "id": "meas-hospital",
+            "label": "Lebih dekat ke rumah sakit",
+            "targetType": "poi_category",
+            "poiCategory": "hospital"
+          },
+          {
+            "id": "meas-hi",
+            "label": "Lebih dekat ke Bundaran HI",
+            "targetType": "named_poi",
+            "poiId": "monument-bundaran-hi"
+          },
+          {
+            "id": "meas-monas",
+            "label": "Lebih dekat ke Monas",
+            "targetType": "named_poi",
+            "poiId": "monument-monas"
+          }
+        ]
+      },
+      "tentacles": {
+        "enabled": true,
+        "drawCount": 4,
+        "keepCount": 2,
+        "availableInPhases": [
+          "seeking"
+        ],
+        "items": [
+          {
+            "id": "tent-malls-3km",
+            "label": "Mal terdekat dalam 3 km",
+            "radiusMeters": 3000,
+            "poiCategory": "mall"
+          },
+          {
+            "id": "tent-parks-3km",
+            "label": "Taman terdekat dalam 3 km",
+            "radiusMeters": 3000,
+            "poiCategory": "park"
+          },
+          {
+            "id": "tent-museums-5km",
+            "label": "Museum terdekat dalam 5 km",
+            "radiusMeters": 5000,
+            "poiCategory": "museum"
+          }
+        ]
+      },
+      "photo": {
+        "enabled": true,
+        "drawCount": 1,
+        "keepCount": 1,
+        "availableInPhases": [
+          "seeking",
+          "endgame"
+        ],
+        "items": [
+          {
+            "id": "photo-tallest",
+            "label": "Gedung tertinggi dari stasiun",
+            "prompt": "Foto bangunan tertinggi yang terlihat dari area stasiunmu.",
+            "phase": "seeking"
+          },
+          {
+            "id": "photo-station",
+            "label": "Pintu stasiun / halte",
+            "prompt": "Foto pintu masuk atau papan nama stasiun/halte terdekat tanpa wajah orang.",
+            "phase": "seeking"
+          },
+          {
+            "id": "photo-street",
+            "label": "Jalan terlebar terdekat",
+            "prompt": "Foto tampilan jalan umum terlebar di sekitar zonamu.",
+            "phase": "seeking"
+          },
+          {
+            "id": "photo-sky",
+            "label": "Langit tegak lurus",
+            "prompt": "Arahkan kamera lurus ke atas dari titik persembunyianmu.",
+            "phase": "endgame"
+          },
+          {
+            "id": "photo-tree",
+            "label": "Pohon / tanaman terdekat",
+            "prompt": "Foto pohon atau pot tanaman terdekat yang terlihat dari tempatmu diam.",
+            "phase": "endgame"
+          },
+          {
+            "id": "photo-ground",
+            "label": "Permukaan pijakan",
+            "prompt": "Foto permukaan trotoar atau lantai tepat di dekat kakimu.",
+            "phase": "endgame"
+          },
+          {
+            "id": "photo-platform",
+            "label": "Peron transit",
+            "prompt": "Foto ujung peron atau jalur kedatangan stasiunmu.",
+            "phase": "seeking"
+          },
+          {
+            "id": "photo-coffee",
+            "label": "Fasad kedai / warung",
+            "prompt": "Foto bagian depan kedai kopi atau warung umum di dekatmu.",
+            "phase": "seeking"
+          },
+          {
+            "id": "photo-corner",
+            "label": "Sudut jalan terdekat",
+            "prompt": "Foto papan nama jalan atau tikungan terdekat saat diam.",
+            "phase": "endgame"
+          }
+        ]
+      }
+    }
+  },
+  "deck": {
+    "baseHandLimit": 6,
+    "maxActiveBlockingCurses": 1,
+    "cards": [
+      {
+        "id": "bonus-3m",
+        "category": "time_bonus",
+        "copies": 14,
+        "title": "Bonus +3 Menit",
+        "description": "Simpan di tangan hingga selesai untuk +3 menit.",
+        "effect": {
+          "primitive": "time_bonus",
+          "minutes": 3
+        }
+      },
+      {
+        "id": "bonus-6m",
+        "category": "time_bonus",
+        "copies": 10,
+        "title": "Bonus +6 Menit",
+        "description": "Simpan di tangan hingga selesai untuk +6 menit.",
+        "effect": {
+          "primitive": "time_bonus",
+          "minutes": 6
+        }
+      },
+      {
+        "id": "bonus-10m",
+        "category": "time_bonus",
+        "copies": 7,
+        "title": "Bonus +10 Menit",
+        "description": "Simpan di tangan hingga selesai untuk +10 menit.",
+        "effect": {
+          "primitive": "time_bonus",
+          "minutes": 10
+        }
+      },
+      {
+        "id": "bonus-15m",
+        "category": "time_bonus",
+        "copies": 3,
+        "title": "Bonus +15 Menit",
+        "description": "Simpan di tangan hingga selesai untuk +15 menit.",
+        "effect": {
+          "primitive": "time_bonus",
+          "minutes": 15
+        }
+      },
+      {
+        "id": "bonus-10pct",
+        "category": "time_bonus",
+        "copies": 2,
+        "title": "Bonus +10% Waktu",
+        "description": "Tambahan 10% dari waktu sembunyi murni.",
+        "effect": {
+          "primitive": "time_bonus",
+          "percentOfRawTime": 10
+        }
+      },
+      {
+        "id": "pow-veto",
+        "category": "powerup",
+        "copies": 3,
+        "title": "Veto",
+        "description": "Batalkan pertanyaan masuk tanpa jawaban.",
+        "effect": {
+          "primitive": "veto"
+        }
+      },
+      {
+        "id": "pow-randomize",
+        "category": "powerup",
+        "copies": 3,
+        "title": "Acak Pertanyaan",
+        "description": "Tukar pertanyaan masuk dengan item acak di kategori sama.",
+        "effect": {
+          "primitive": "randomize"
+        }
+      },
+      {
+        "id": "pow-duplicate",
+        "category": "powerup",
+        "copies": 2,
+        "title": "Duplikasi",
+        "description": "Salin kartu lain di tanganmu.",
+        "effect": {
+          "primitive": "duplicate",
+          "allowDuplicateMove": false
+        }
+      },
+      {
+        "id": "pow-cycle",
+        "category": "powerup",
+        "copies": 3,
+        "title": "Buang 1, Ambil 2",
+        "description": "Buang 1 kartu untuk ambil 2 simpan 1.",
+        "effect": {
+          "primitive": "discard_draw",
+          "discardCount": 1,
+          "drawCount": 2,
+          "keepCount": 1
+        }
+      },
+      {
+        "id": "pow-expand",
+        "category": "powerup",
+        "copies": 2,
+        "title": "Perluas Tangan (+1)",
+        "description": "Tambah 1 slot tangan untuk giliran ini.",
+        "effect": {
+          "primitive": "expand_hand",
+          "extraSlots": 1
+        }
+      },
+      {
+        "id": "pow-trap-10",
+        "category": "powerup",
+        "copies": 1,
+        "title": "Perangkap Waktu (+10 m)",
+        "description": "Pasang perangkap +10 menit di stasiun lain.",
+        "effect": {
+          "primitive": "time_trap",
+          "bonusMinutes": 10
+        }
+      },
+      {
+        "id": "pow-move",
+        "category": "powerup",
+        "copies": 1,
+        "title": "Pindah Zona (Move)",
+        "description": "Buang seluruh tangan, ungkap stasiun lama, dan pindah ke stasiun baru dalam 15 menit (nonaktif saat Endgame).",
+        "effect": {
+          "primitive": "move_zone",
+          "travelWindowMs": 900000,
+          "revealOldStation": true,
+          "discardHand": true
+        }
+      },
+      {
+        "id": "curse-jeda-sinyal",
+        "category": "curse",
+        "copies": 1,
+        "title": "Jeda Sinyal",
+        "description": "Buang 1 kartu: blokir pertanyaan pencari selama 5 menit.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "discard_cards",
+                "count": 1
+              }
+            ],
+            "blockerType": "block_questions",
+            "clearCondition": {
+              "type": "timer",
+              "durationMs": 300000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-piala-meluap",
+        "category": "curse",
+        "copies": 1,
+        "title": "Piala Meluap",
+        "description": "Buang 1 kartu: 2 pertanyaan berikutnya memberi +1 tarikan kartu tambahan.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "discard_cards",
+                "count": 1
+              }
+            ],
+            "blockerType": "none",
+            "effectModifiers": [
+              {
+                "type": "inflate_question_draws",
+                "extraDraws": 1
+              }
+            ],
+            "clearCondition": {
+              "type": "next_n_questions",
+              "count": 2
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-radar-macet",
+        "category": "curse",
+        "copies": 1,
+        "title": "Radar Macet",
+        "description": "Buang 1 kartu: nonaktifkan kategori Radar selama 15 menit.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "discard_cards",
+                "count": 1
+              }
+            ],
+            "blockerType": "none",
+            "effectModifiers": [
+              {
+                "type": "ban_question_family",
+                "family": "radar"
+              }
+            ],
+            "clearCondition": {
+              "type": "timer",
+              "durationMs": 900000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-gerobak",
+        "category": "curse",
+        "copies": 1,
+        "title": "Kutukan Gerobak Kaki Lima",
+        "description": "Pencari > 500 m: blokir pertanyaan hingga kirim foto gerobak/kios jajanan.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "seeker_min_distance",
+                "meters": 500
+              }
+            ],
+            "blockerType": "block_questions",
+            "clearCondition": {
+              "type": "photo_challenge",
+              "prompt": "Kirim foto gerobak atau kios jajanan kaki lima di sekitarmu.",
+              "approvalMode": "opponent_or_timeout",
+              "autoApproveMs": 180000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-mampir-taman",
+        "category": "curse",
+        "copies": 1,
+        "title": "Mampir Taman",
+        "description": "Buang 1 kartu: blokir transit hingga check-in di taman terdekat atau tunggu 10 menit.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "discard_cards",
+                "count": 1
+              }
+            ],
+            "blockerType": "block_transit",
+            "clearCondition": {
+              "type": "gps_detour",
+              "poiCategory": "park",
+              "radiusMeters": 120,
+              "fallbackTimerMs": 600000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-armada",
+        "category": "curse",
+        "copies": 1,
+        "title": "Tantangan Halte/Armada",
+        "description": "Gratis: blokir pertanyaan hingga kirim foto papan halte atau armada transit.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "none"
+              }
+            ],
+            "blockerType": "block_questions",
+            "clearCondition": {
+              "type": "photo_challenge",
+              "prompt": "Kirim foto papan rute halte atau armada transit umum.",
+              "approvalMode": "opponent_or_timeout",
+              "autoApproveMs": 180000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-pintu-macet",
+        "category": "curse",
+        "copies": 1,
+        "title": "Pintu Stasiun Macet",
+        "description": "Pencari > 800 m: pencari tidak boleh naik transit selama 8 menit.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "seeker_min_distance",
+                "meters": 800
+              }
+            ],
+            "blockerType": "block_transit",
+            "clearCondition": {
+              "type": "timer",
+              "durationMs": 480000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-tebak-sudut",
+        "category": "curse",
+        "copies": 1,
+        "title": "Tebak Sudut",
+        "description": "Kirim 1 foto sudut jalan zonamu: blokir pertanyaan 10 menit (bisa ditebus +4 menit).",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "reveal_clue",
+                "clueType": "photo_prompt",
+                "detail": "Kirim foto close-up sudut jalan di dalam zonamu."
+              }
+            ],
+            "blockerType": "block_questions",
+            "effectModifiers": [
+              {
+                "type": "skip_penalty_minutes",
+                "penaltyMinutes": 4
+              }
+            ],
+            "clearCondition": {
+              "type": "timer",
+              "durationMs": 600000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-matching-macet",
+        "category": "curse",
+        "copies": 1,
+        "title": "Peta Kabur",
+        "description": "Buang 1 kartu: nonaktifkan kategori Matching selama 20 menit.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "discard_cards",
+                "count": 1
+              }
+            ],
+            "blockerType": "none",
+            "effectModifiers": [
+              {
+                "type": "ban_question_family",
+                "family": "matching"
+              }
+            ],
+            "clearCondition": {
+              "type": "timer",
+              "durationMs": 1200000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-mampir-museum",
+        "category": "curse",
+        "copies": 1,
+        "title": "Kunjungan Budaya",
+        "description": "Pencari > 2 km: blokir pertanyaan hingga check-in di dekat museum atau tunggu 15 menit.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "seeker_min_distance",
+                "meters": 2000
+              }
+            ],
+            "blockerType": "block_questions",
+            "clearCondition": {
+              "type": "gps_detour",
+              "poiCategory": "museum",
+              "radiusMeters": 150,
+              "fallbackTimerMs": 900000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-jalan-diam",
+        "category": "curse",
+        "copies": 1,
+        "title": "Langkah Tanpa Peta",
+        "description": "Gratis: pencari berjalan 2 menit tanpa membuka pertanyaan.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "none"
+              }
+            ],
+            "blockerType": "block_questions",
+            "clearCondition": {
+              "type": "honor_task",
+              "instruction": "Berjalan kaki 2 menit sambil menutup panel petunjuk.",
+              "minDurationMs": 120000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-transit-beku",
+        "category": "curse",
+        "copies": 1,
+        "title": "Gangguan Sinyal Rel",
+        "description": "Buang 2 kartu: blokir transit selama 12 menit.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "discard_cards",
+                "count": 2
+              }
+            ],
+            "blockerType": "block_transit",
+            "clearCondition": {
+              "type": "timer",
+              "durationMs": 720000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-foto-kopi",
+        "category": "curse",
+        "copies": 1,
+        "title": "Jeda Kopi Susu",
+        "description": "Gratis: kirim foto papan nama kedai kopi sebelum bertanya lagi.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "none"
+              }
+            ],
+            "blockerType": "block_questions",
+            "clearCondition": {
+              "type": "photo_challenge",
+              "prompt": "Foto papan nama kedai kopi di dekatmu.",
+              "approvalMode": "opponent_or_timeout",
+              "autoApproveMs": 180000
+            }
+          }
+        }
+      },
+      {
+        "id": "curse-piala-besar",
+        "category": "curse",
+        "copies": 1,
+        "title": "Piala Ganda",
+        "description": "Buang 1 kartu: 3 pertanyaan berikutnya memberi +1 tarikan ekstra.",
+        "effect": {
+          "primitive": "curse",
+          "curse": {
+            "castingCosts": [
+              {
+                "type": "discard_cards",
+                "count": 1
+              }
+            ],
+            "blockerType": "none",
+            "effectModifiers": [
+              {
+                "type": "inflate_question_draws",
+                "extraDraws": 1
+              }
+            ],
+            "clearCondition": {
+              "type": "next_n_questions",
+              "count": 3
+            }
+          }
+        }
+      }
+    ]
+  }
+}
