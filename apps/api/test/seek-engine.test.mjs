@@ -499,3 +499,60 @@ test("missedLockPolicy supports void_turn and auto_lock_nearest_station, plus si
   const qRepeat = autoCase.act("p2", { type: "ask", family: "radar", itemId: "rad-1km", fix: fixAt(east, releaseAt + 3000) }, releaseAt + 3000);
   assert.equal(qRepeat.error, "question-already-used");
 });
+
+test("published clues narrow stations and a timed-out round resumes at the last verified checkpoint", () => {
+  const { match, snapshot, act, headStartStartedAt } = setupStartedMatch(2, {
+    session: { regroupPolicy: "last_play_checkpoint" },
+  });
+  const [north, harbor, east] = snapshot.stations;
+  assert.equal(act("p1", { type: "lock-anchor", stationId: north.id, fix: fixAt(north, headStartStartedAt) }, headStartStartedAt).error, undefined);
+  const released = match.releaseAt;
+
+  const asked = act("p2", { type: "ask", family: "radar", itemId: "rad-2500m", fix: fixAt(snapshot.startPoint, released) }, released);
+  const radar = asked.room.questions[0];
+  assert.equal(radar.privateComputedAnswer, undefined);
+  assert.equal(asked.room.candidateStationIds, undefined);
+  assert.equal(asked.room.seekerPosition.stationId, snapshot.startPoint.id);
+  const wrong = act("p1", { type: "answer-question", questionId: radar.id, answerCode: "no" }, released + 1000);
+  assert.equal(wrong.error, "incorrect-clue-answer");
+  assert.equal(wrong.room.questions[0].status, "pending");
+  assert.equal(act("p1", { type: "answer-question", questionId: radar.id, answerCode: "yes" }, released + 2000).error, undefined);
+  const afterRadar = api.viewSeekEngineMatch(match, "p2", released + 2000);
+  assert.ok(afterRadar.candidateStationIds.includes(north.id));
+  assert.ok(!afterRadar.candidateStationIds.includes(harbor.id));
+
+  const atA = released + 3000;
+  assert.equal(act("p2", { type: "start-thermometer", fix: fixAt(east, atA) }, atA).error, undefined);
+  const atB = released + 4000;
+  const thermal = act("p2", { type: "ask", family: "thermometer", itemId: "therm-1km", fix: fixAt(north, atB) }, atB);
+  assert.equal(thermal.error, undefined);
+  const question = thermal.room.questions.at(-1);
+  assert.deepEqual(question.thermometerStart, { latitude: east.latitude, longitude: east.longitude });
+  assert.equal(question.privateComputedAnswer, undefined);
+  assert.equal(act("p1", { type: "answer-question", questionId: question.id, answerCode: "hotter" }, atB + 1000).error, undefined);
+  const narrowed = api.viewSeekEngineMatch(match, "p2", atB + 1000);
+  assert.ok(narrowed.candidateStationIds.length < afterRadar.candidateStationIds.length);
+  assert.ok(narrowed.candidateStationIds.includes(north.id));
+  assert.deepEqual(narrowed.questions[0].overlay.center, radar.referencePoint);
+
+  const checkInAt = released + 6000;
+  assert.equal(act("p2", { type: "seeker-check-in", offTransit: false, fix: fixAt(east, checkInAt) }, checkInAt).error, undefined);
+  const betweenStations = { latitude: east.latitude + 0.01, longitude: east.longitude };
+  const later = checkInAt + 1000;
+  assert.equal(act("p2", { type: "seeker-check-in", offTransit: false, fix: fixAt(betweenStations, later) }, later).error, undefined);
+  const deadline = match.phaseEndsAt;
+  api.expireSeekEngineMatch(match, deadline);
+  const regroup = api.viewSeekEngineMatch(match, "p2", deadline);
+  assert.equal(regroup.phase, "regroup");
+  assert.equal(regroup.regroupPoint.id, east.id);
+  assert.equal(regroup.turns[0].anchorStationId, null);
+
+  act("p1", { type: "regroup-check-in", fix: fixAt(east, deadline + 1000) }, deadline + 1000);
+  const second = act("p2", { type: "regroup-check-in", fix: fixAt(east, deadline + 2000) }, deadline + 2000);
+  assert.equal(second.room.phase, "head_start");
+  assert.equal(second.room.role, "hider");
+  assert.equal(second.room.turnStartPoint.id, east.id);
+  assert.equal(second.room.releaseAt - second.room.now, match.pack.timers.headStartMs);
+  assert.equal(second.room.seekerPosition, undefined);
+  assert.equal(second.room.candidateStationIds, undefined);
+});

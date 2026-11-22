@@ -37,6 +37,7 @@ try {
   browser = await chromium.launch({
     channel: "chromium",
     executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
   });
 
   async function openDevice() {
@@ -50,6 +51,7 @@ try {
       page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
       page.click(selector),
     ]);
+    await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
   }
 
   async function launchFromRoot(page, { players, format, board }) {
@@ -190,6 +192,7 @@ try {
       await clickAndWaitPost(host.page, 'button[data-action="start-match"]');
       await host.page.waitForFunction(() => document.body.textContent.includes("Waktu Sembunyi"));
 
+      await host.page.click('button[data-map-point="mrt-blok-m"]');
       await clickAndWaitPost(host.page, 'button[data-action="lock-anchor"]');
       now += (board === "jakarta-wide" ? 46 : 26) * 60_000;
       await guest.page.click('button[data-action="refresh"]');

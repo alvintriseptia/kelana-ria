@@ -37,6 +37,7 @@ import {
   type MidtransNotificationPayload,
   type RecordedMidtransAdapter,
 } from "./midtrans-adapter.js";
+import { sanitizeSeekPhoto } from "./seek-photo.js";
 import { loadOfficialClaimPacks, loadOfficialSeekPacks } from "./official-packs.js";
 import {
   buyoutSeekCurse,
@@ -165,6 +166,7 @@ type LiveSeekSession = {
   format: "hide-and-seek";
   pass: RulebookRoomPass;
   match: SeekEngineMatch;
+  photos: Map<string, Buffer>;
   deck: SeekDeckEngineState;
 };
 
@@ -393,8 +395,15 @@ export function rulebookStore(
   }
 
   function listPublicListings(format?: RulebookFormat): RulebookPublicListing[] {
+    const officialSeekIds = new Set<string>();
     return allRecords()
       .filter((r) => r.status === "published" && (!format || r.format === format))
+      .filter((r) => {
+        if (!r.isOfficial || r.format !== "hide-and-seek") return true;
+        if (officialSeekIds.has(r.packId)) return false;
+        officialSeekIds.add(r.packId);
+        return true;
+      })
       .map((r) => (r.format === "claim-the-city" ? toPublicClaimListing(r) : toPublicSeekListing(r)));
   }
 
@@ -583,7 +592,7 @@ export function rulebookStore(
         hostCredentialHash: digest(hostCredential),
       });
       const deck = createSeekDeckState(seekPack);
-      session = { format: "hide-and-seek", pass, match, deck };
+      session = { format: "hide-and-seek", pass, match, deck, photos: new Map() };
     }
 
     liveRooms.set(roomCode, session);
@@ -796,6 +805,7 @@ export function rulebookStore(
     credential: string,
     action: SeekEngineAction | ClaimEngineAction,
     now: number,
+    photo?: { id: string; bytes: Buffer },
   ): SeekEngineActionReply | ClaimEngineActionReply | { error: string } {
     const session = liveRooms.get(roomCode);
     if (!session) return { error: "room-not-found" };
@@ -810,7 +820,15 @@ export function rulebookStore(
     expireSeekDeckAndCurses(session.deck, session.match, now);
     const prevTurn = session.match.turnNumber;
     const seekAction = action as SeekEngineAction;
+    const replay = session.match.appliedActions.has(`${seatId}:${seekAction.actionId}`);
+    if (!replay && seekAction.type === "answer-question" && seekAction.photoId && seekAction.photoId !== photo?.id) {
+      return { error: "photo-required" };
+    }
+    expireRoomPhotos(session, now);
     const reply = applySeekEngineAction(session.match, seatId, seekAction, now);
+    if (replay) return reply;
+    for (const id of reply.purgedPhotoIds ?? []) session.photos.delete(id);
+    if (!reply.error && photo) session.photos.set(photo.id, photo.bytes);
     if (!reply.error && seekAction.type === "ask") {
       onSeekerQuestionAskedForCurses(session.deck, session.match, now);
     }
@@ -821,6 +839,43 @@ export function rulebookStore(
       session.deck = createSeekDeckState(session.match.pack);
     }
     return reply;
+  }
+
+  function expireRoomPhotos(session: LiveSeekSession, now: number) {
+    const { purgedPhotoIds } = expireSeekEngineMatch(session.match, now);
+    for (const id of purgedPhotoIds) session.photos.delete(id);
+  }
+
+  async function answerSeekPhoto(
+    roomCode: string, credential: string, questionId: string, actionId: string, encoded: string, now: () => number,
+  ) {
+    const session = liveRooms.get(roomCode);
+    if (!session || session.format !== "hide-and-seek") return { error: "room-not-found" };
+    const seatId = findSeekEngineSeat(session.match, digest(credential));
+    if (!seatId || seatId !== activeHiderSeatId(session.match)) return { error: "hider-only" };
+    const question = session.match.questions.find(q => q.id === questionId && q.family === "photo");
+    if (!question) return { error: "question-closed" };
+    const action: SeekEngineAction = { type: "answer-question", actionId, questionId, photoId: questionId };
+    if (session.match.appliedActions.has(`${seatId}:${actionId}`)) return actInRoom(roomCode, credential, action, now());
+    if (question.status !== "pending" || question.deadline <= now()) return { error: "question-closed" };
+    let bytes: Buffer;
+    try {
+      bytes = await sanitizeSeekPhoto(encoded);
+    } catch {
+      return { error: "invalid-photo" };
+    }
+    if (session.match.questions.find(q => q.id === questionId) !== question || question.status !== "pending") {
+      if (session.match.appliedActions.has(`${seatId}:${actionId}`)) return actInRoom(roomCode, credential, action, now());
+      return { error: "question-closed" };
+    }
+    return actInRoom(roomCode, credential, action, now(), { id: questionId, bytes });
+  }
+
+  function viewSeekPhoto(roomCode: string, credential: string, photoId: string, now: number) {
+    const session = liveRooms.get(roomCode);
+    if (!session || session.format !== "hide-and-seek" || !findSeekEngineSeat(session.match, digest(credential))) return undefined;
+    expireRoomPhotos(session, now);
+    return session.photos.get(photoId);
   }
 
   function playCardInRoom(roomCode: string, credential: string, params: PlaySeekCardParams, now: number) {
@@ -918,7 +973,7 @@ export function rulebookStore(
     }
     const seatId = findSeekEngineSeat(session.match, credHash);
     if (!seatId) return undefined;
-    expireSeekEngineMatch(session.match, now);
+    expireRoomPhotos(session, now);
     expireSeekDeckAndCurses(session.deck, session.match, now);
     const room = viewSeekEngineMatch(session.match, seatId, now);
     const deck = viewSeekDeck(session.deck, room.role === "hider");
@@ -928,6 +983,8 @@ export function rulebookStore(
       deck,
       publicBoard: {
         startPoint: session.match.snapshot.startPoint,
+        boundaryPolygon: session.match.snapshot.boundaryPolygon,
+        pois: session.match.snapshot.pois.map(({ id, name }) => ({ id, name })),
         stations: session.match.snapshot.stations
           .filter((s) => s.eligibleHidingAnchor)
           .map((s) => ({
@@ -967,6 +1024,8 @@ export function rulebookStore(
     settleVerifiedOrder,
     joinRoom,
     actInRoom,
+    answerSeekPhoto,
+    viewSeekPhoto,
     playCardInRoom,
     deckActionInRoom,
     viewRoom,

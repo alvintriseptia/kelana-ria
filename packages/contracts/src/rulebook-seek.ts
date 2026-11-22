@@ -100,6 +100,7 @@ export type SeekEngineQuestion = {
   referenceStationId?: string;
   thermometerStart?: GeoCoordinate;
   customRadiusMeters?: number;
+  radarRadiusMeters?: number;
   askedBySeatId: string;
   askedAt: number;
   deadline: number;
@@ -146,6 +147,17 @@ export type SeekEngineMenuEntry = {
   availableInCurrentPhase: boolean;
   responseMs: number;
   isCustomRadius?: boolean;
+  minTravelMeters?: number;
+  radiusMeters?: number;
+};
+
+export type SeekBoardPoint = GeoCoordinate & { id: string; name: string };
+
+export type SeekPublicBoard = {
+  startPoint: SeekBoardPoint;
+  stations: (SeekBoardPoint & { transitLines: string[] })[];
+  boundaryPolygon: GeoCoordinate[];
+  pois: { id: string; name: string }[];
 };
 
 export type SeekEngineRoomView = {
@@ -167,6 +179,11 @@ export type SeekEngineRoomView = {
   hiderFrozen: boolean;
   canMoveZone: boolean;
   regroupPoint: { id: string; name: string; latitude: number; longitude: number } | null;
+  turnStartPoint: SeekBoardPoint;
+  seekerPosition?: GeoCoordinate & { at: number; seatId: string; stationId?: string };
+  candidateStationIds?: string[];
+  deductionResetAt?: number;
+  moveZoneUntil?: number;
   seats: SeekEngineSeat[];
   thermometerStart: GeoCoordinate | null;
   questionUseCounts: Record<string, number>;
@@ -200,7 +217,7 @@ export type SeekEngineAction = { actionId: string } & (
       fix: LocationFix;
       customRadiusMeters?: number;
     }
-  | { type: "answer-question"; questionId: string; photoId?: string }
+  | { type: "answer-question"; questionId: string; photoId?: string; answerCode?: string }
   | { type: "cannot-answer-endgame"; questionId: string }
   | { type: "submit-found-code"; code: string }
   | { type: "confirm-found" }

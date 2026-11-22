@@ -79,7 +79,7 @@ export type HideSeekQuestionFamily =
 export type HideSeekPlayPhase = "seeking" | "endgame";
 
 export type HideSeekTurnMode = "everyone_hides_once" | "fixed_turns";
-export type HideSeekRegroupPolicy = "previous_hiding_station" | "shared_start" | "anywhere_ready";
+export type HideSeekRegroupPolicy = "previous_hiding_station" | "last_play_checkpoint" | "shared_start" | "anywhere_ready";
 export type HideSeekMissedLockPolicy = "void_turn" | "auto_lock_nearest_station" | "forfeit_turn";
 export type HideSeekRepeatCostMode = "escalating_multiplier" | "single_use_locked" | "flat";
 

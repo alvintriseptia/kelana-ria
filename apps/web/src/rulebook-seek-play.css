@@ -195,3 +195,187 @@
   padding-top: 0.5rem;
   border-top: 1px dashed #d5dcd6;
 }
+/* Kota Ramai Alam · the deck is the active-turn surface. */
+.sg-game {
+  --sg-ink: #122f29;
+  --sg-teal: #075c54;
+  --sg-sky: #bce7f0;
+  --sg-cloud: #f6fbf7;
+  --sg-leaf: #c5ee69;
+  --sg-edge: #8cab9d;
+  position: fixed;
+  z-index: 5;
+  inset: 0;
+  overflow: hidden;
+  isolation: isolate;
+  color: var(--sg-ink);
+  background: var(--sg-sky);
+}
+.sg-board, .sg-board .board-map-shell, .sg-board .board-map-canvas { position: absolute; inset: 0; }
+.sg-board { z-index: 0; }
+#sg-controls { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.sg-dock { pointer-events: auto; }
+.sg-board .board-map-shell { border: 0; border-radius: 0; display: block; }
+.sg-board .board-map-canvas { height: 100%; }
+.sg-board .maplibregl-ctrl-top-right { top: calc(66px + env(safe-area-inset-top)); }
+.sg-board .board-map-attribution {
+  position: absolute; right: 4px; bottom: 0; z-index: 1;
+  max-width: calc(100% - 8px); padding: 1px 5px; margin: 0;
+  background: #fffffff2; border-radius: 5px; font-size: .65rem;
+}
+.sg-hud {
+  position: absolute;
+  inset: max(12px, env(safe-area-inset-top)) 12px auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+.sg-hud > * { pointer-events: auto; }
+.sg-role, .sg-timer, .sg-location {
+  border: 1px solid var(--sg-ink); border-radius: 14px;
+  box-shadow: 0 3px 0 #122f2939;
+  background: var(--sg-cloud);
+}
+.sg-role { display: grid; grid-template-columns: 35px auto; column-gap: 9px; align-items: center; padding: 6px 12px 7px 7px; }
+.sg-role-mark {
+  grid-row: span 2; width: 35px; height: 35px; border-radius: 10px; display: grid; place-items: center;
+  background: var(--sg-leaf); color: var(--sg-ink); font-size: 1.35rem; line-height: 1;
+}
+.sg-game[data-role="hider"] .sg-role-mark { background: var(--sg-teal); color: white; }
+.sg-role h1 { font-size: 1.66rem; letter-spacing: .005em; }
+.sg-role p { font-size: .72rem; line-height: 1.15; font-weight: 720; }
+.sg-timer { padding: 4px 11px; min-width: 63px; text-align: center; font: 700 1.65rem/1.25 "Barlow Condensed", sans-serif; font-variant-numeric: tabular-nums; }
+.sg-hud-actions { display: flex; gap: 8px; }
+.sg-location {
+  position: absolute; top: calc(max(12px, env(safe-area-inset-top)) + 64px); left: 12px;
+  margin: 0; padding: 5px 9px; font-size: .78rem; font-weight: 750;
+  max-width: calc(100% - 68px);
+}
+.sg-dock {
+  position: absolute;
+  inset: auto 10px max(40px, calc(env(safe-area-inset-bottom) + 33px));
+  width: min(480px, calc(100% - 20px));
+  margin-inline: auto;
+  max-height: calc(100% - 130px);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 2px solid var(--sg-ink);
+  border-radius: 23px;
+  background: var(--sg-cloud);
+  box-shadow: 0 6px 0 #123b34a0, 0 14px 35px #153a3838;
+}
+.sg-sheet { overflow: auto; overscroll-behavior: contain; min-height: 0; display: grid; gap: 10px; padding: 12px; }
+.sg-sheet > h2, .sg-detail-title h2 { font-size: clamp(1.7rem, 6vw, 2.1rem); }
+.sg-sheet p { line-height: 1.35; }
+.sg-sheet > .rb-card { border: 0; padding: 0; background: transparent; }
+.sg-nav { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 5px; padding: 6px; border-top: 1px solid var(--sg-edge); }
+.sg-game button:focus-visible { outline: 3px solid #b24b12; outline-offset: 2px; }
+.sg-game button:disabled { opacity: .52; cursor: default; }
+.sg-nav button, .sg-quiet, .sg-pick, .sg-main {
+  border: 1px solid var(--sg-edge); border-radius: 11px; min-height: 44px; padding: 5px 10px;
+  background: #e7f3ec; color: var(--sg-ink); line-height: 1.2;
+}
+.sg-nav button { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.sg-nav button[aria-pressed="true"], .sg-pick[aria-pressed="true"] {
+  color: #102b22; background: var(--sg-leaf); border-color: var(--sg-ink); box-shadow: inset 0 -2px 0 #183f3440;
+}
+.sg-nav-icon { font-size: 1.15rem; }
+.sg-quiet { background: var(--sg-cloud); font-size: .82rem; }
+.sg-main {
+  width: 100%; min-height: 48px;
+  background: var(--sg-teal); color: white; font-weight: 800; border-color: var(--sg-ink);
+  box-shadow: inset 0 -3px 0 #072c29;
+}
+.sg-main:active, .sg-question-card:active, .sg-reward-card:is(button):active { transform: translateY(2px); }
+.sg-detail-title { display: grid; grid-template-columns: 57px 1fr auto; gap: 9px; align-items: center; }
+.sg-detail-title .sg-art { width: 57px; height: 57px; border: 1px solid var(--sg-ink); border-radius: 11px; }
+.sg-detail-title p, .sg-reward-note, .sg-kicker { font-size: .85rem; }
+.sg-kicker { font-weight: 750; }
+.sg-reward-note { color: var(--sg-teal); font-weight: 780; }
+.sg-question-grid, .sg-reward-grid { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sg-question-card, .sg-reward-card {
+  min-width: 0; min-height: 44px; padding: 0; overflow: hidden; text-align: left;
+  display: flex; flex-direction: column; border-radius: 12px;
+  background: white; border: 1px solid var(--sg-ink); box-shadow: 0 2px 0 var(--sg-edge);
+}
+.sg-art, .sg-reward-art {
+  display: block; flex: none; width: 100%; aspect-ratio: 1.45; background-image: url("./assets/seek-questions.webp");
+  background-repeat: no-repeat; background-size: 300% auto; background-position-x: var(--sg-art-x, 0%);
+  background-position-y: var(--sg-art-y, 0%); background-color: var(--sg-sky);
+}
+.sg-art-photo, .sg-art-measuring, .sg-reward-powerup { --sg-art-x: 50%; }
+.sg-art-thermometer, .sg-art-tentacles, .sg-reward-swap { --sg-art-x: 100%; }
+.sg-art-matching, .sg-art-measuring, .sg-art-tentacles, .sg-reward-curse { --sg-art-y: 100%; }
+.sg-detail-title .sg-art { background-size: 300% 200%; }
+.sg-question-text, .sg-reward-copy { display: grid; gap: 2px; padding: 6px 7px 7px; }
+.sg-question-text strong { font: 700 1.19rem/1 "Barlow Condensed", sans-serif; }
+.sg-question-text small { font: 740 .69rem/1.22 "DM Sans", sans-serif; }
+.sg-picks { display: flex; flex-wrap: wrap; gap: 7px; }
+.sg-pick, .sg-picks .sg-main { flex: 1 1 94px; }
+.sg-reward-grid[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.sg-reward-art { background-image: url("./assets/seek-rewards.webp"); }
+.sg-reward-card[aria-pressed="true"] { outline: 2px solid var(--sg-teal); outline-offset: -2px; background: #e7f8bf; }
+.sg-reward-copy strong { font: 700 1.35rem/1.03 "Barlow Condensed", sans-serif; }
+.sg-reward-copy small { font-size: .71rem; text-transform: uppercase; letter-spacing: .03em; font-weight: 800; color: var(--sg-teal); }
+.sg-reward-copy > span { font-size: .82rem; line-height: 1.2; }
+.sg-deal .sg-reward-card { animation: sg-deal-in 270ms ease-out both; }
+.sg-deal .sg-reward-card:nth-child(2) { animation-delay: 50ms; }
+.sg-deal .sg-reward-card:nth-child(3) { animation-delay: 100ms; }
+@keyframes sg-deal-in { from { opacity: 0; transform: translateY(14px) rotate(-2deg) scale(.96); } }
+@media (min-width: 650px) {
+  .sg-dock { inset-inline: 18px auto; margin-inline: 0; }
+}
+@media (max-height: 680px) {
+  .sg-question-card .sg-art { aspect-ratio: 1.85; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sg-deal .sg-reward-card { animation: none; }
+  .sg-main:active, .sg-question-card:active, .sg-reward-card:is(button):active { transform: none; }
+}
+
+.sg-board .board-map-pin-thermometer,
+.sg-board .board-map-pin-seeker {
+  min-width: 32px;
+  min-height: 32px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  border: 2px solid #fff;
+  font-weight: 800;
+  box-shadow: 0 1px 4px #20202585;
+}
+.sg-board .board-map-pin-thermometer { background: #9f214b; border-radius: 9px; z-index: 3; }
+.sg-board .board-map-pin-seeker { background: #075c54; border-radius: 100%; z-index: 2; }
+.sg-answer-check { font-weight: 750; color: #a62326; }
+.sg-answer-check[data-correct="true"] { color: #07644c; }
+.sg-clue-photo { display: block; max-width: 100%; max-height: 220px; border-radius: 10px; object-fit: contain; }
+
+.sg-map-result {
+  position: absolute;
+  top: calc(max(12px, env(safe-area-inset-top)) + 100px);
+  left: 12px;
+  max-width: calc(100% - 68px);
+  margin: 0;
+  padding: 5px 9px;
+  border: 1px solid #085747;
+  border-radius: 10px;
+  background: #e6f5df;
+  color: #174a3d;
+  font-weight: 750;
+  font-size: .78rem;
+}
+
+.sg-board .board-map-pin-station {
+  display: grid;
+  place-items: center;
+  min-width: 27px;
+  min-height: 27px;
+  padding: 2px;
+  font-size: 1rem;
+  line-height: 1;
+  border-radius: 100%;
+}
+.sg-board .board-map-pin-station:focus-visible { z-index: 4; }

@@ -1,3 +1,4 @@
+import polygonClipping, { type MultiPolygon, type Polygon } from "polygon-clipping";
 import * as maplibregl from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -11,21 +12,32 @@ export type BoardMapRadarCircle = {
   center: SoloPoint;
   radiusMeters: number;
   inside: boolean;
+  preview?: "pending" | "correct" | "incorrect";
 };
 
 export type BoardMapPoint = SoloPoint & {
   label?: string;
+  markerText?: string;
+  markerKind?: "thermometer" | "seeker" | "station";
   claimed?: boolean;
   selectable?: boolean;
   dimmed?: boolean;
   statusTag?: "unclaimed" | "claimed" | "locked" | "shielded" | "double";
 };
 
+type BoardCamera = Pick<maplibregl.CameraOptions, "center" | "zoom" | "bearing" | "pitch">;
+
 export type BoardMapOptions = {
   container: HTMLElement;
   config: MapConfig;
   start: SoloPoint;
   startSelectable?: boolean;
+  startLabel?: string;
+  camera?: BoardCamera;
+  fitPadding?: maplibregl.PaddingOptions;
+  focusPoints?: GeoCoordinate[];
+  deductionBoundary?: GeoCoordinate[];
+  thermometer?: { start: GeoCoordinate; end?: GeoCoordinate };
   checkpoints: BoardMapPoint[];
   selectedId?: string;
   radarCircles?: BoardMapRadarCircle[];
@@ -49,6 +61,7 @@ export function circlePolygon(center: GeoCoordinate, radiusMeters: number, steps
       center.latitude + (dLat * 180) / Math.PI,
     ]);
   }
+  ring[ring.length - 1] = ring[0];
   return ring;
 }
 
@@ -92,9 +105,9 @@ function buildOverlayFeatures(
   hidingZone?: { center: GeoCoordinate; radiusMeters: number },
 ) {
   const circleFeatures = [
-    ...radarCircles.map((circle) => ({
+    ...radarCircles.filter(circle => !circle.preview).map((circle) => ({
       type: "Feature" as const,
-      properties: { id: circle.id, inside: circle.inside },
+      properties: { id: circle.id, inside: circle.inside, preview: circle.preview ?? "" },
       geometry: {
         type: "Polygon" as const,
         coordinates: [circlePolygon(circle.center, circle.radiusMeters)],
@@ -144,6 +157,7 @@ function offlineVectorStyle(
   radarCircles: BoardMapRadarCircle[],
   deductionOverlays: SeekDeductionOverlay[],
   hidingZone?: { center: GeoCoordinate; radiusMeters: number },
+  showRadarFills = true,
 ): maplibregl.StyleSpecification {
   const corridorFeatures = checkpoints.map((point) => ({
     type: "Feature" as const,
@@ -197,7 +211,7 @@ function offlineVectorStyle(
         source: "radars",
         paint: {
           "fill-color": ["case", ["get", "inside"], "#0f766e", "#b45309"],
-          "fill-opacity": 0.14,
+          "fill-opacity": showRadarFills ? 0.14 : 0,
         },
       },
       {
@@ -223,12 +237,39 @@ function offlineVectorStyle(
   };
 }
 
-export function mountBoardMap(options: BoardMapOptions): { destroy: () => void } {
+function searchArea(boundary: GeoCoordinate[], circles: BoardMapRadarCircle[]): GeoJSON.FeatureCollection {
+  if (boundary.length < 3 || circles.length === 0) return { type: "FeatureCollection", features: [] };
+  const ring: Polygon[0] = boundary.map(point => [point.longitude, point.latitude]);
+  ring.push(ring[0]);
+  const board: Polygon = [ring];
+  let possible: MultiPolygon = [board];
+  for (const circle of circles) {
+    if (!possible.length) break;
+    const radar: Polygon = [circlePolygon(circle.center, circle.radiusMeters, 96)];
+    possible = circle.inside ? polygonClipping.intersection(possible, radar) : polygonClipping.difference(possible, radar);
+  }
+  const excluded = possible.length ? polygonClipping.difference(board, possible) : [board];
+  return {
+    type: "FeatureCollection",
+    features: [
+      { type: "Feature", properties: { possible: true }, geometry: { type: "MultiPolygon", coordinates: possible } },
+      { type: "Feature", properties: { possible: false }, geometry: { type: "MultiPolygon", coordinates: excluded } },
+    ].filter(feature => feature.geometry.coordinates.length > 0) as GeoJSON.Feature[],
+  };
+}
+
+export function mountBoardMap(options: BoardMapOptions): { destroy: () => void; getCamera: () => BoardCamera | undefined } {
   const {
     container,
     config,
     start,
     startSelectable = false,
+    startLabel,
+    camera,
+    fitPadding,
+    focusPoints,
+    deductionBoundary,
+    thermometer,
     checkpoints,
     selectedId,
     radarCircles = [],
@@ -252,7 +293,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
 
   const shell = container.querySelector<HTMLElement>(".board-map-shell")!;
   const attribution = shell.querySelector<HTMLElement>(".board-map-attribution")!;
-  if (radarCircles.length > 0) {
+  if (!deductionBoundary && radarCircles.length > 0) {
     const radarList = document.createElement("ul");
     radarList.className = "board-map-radars";
     radarList.setAttribute("aria-label", "Lingkaran radar terkirim");
@@ -273,7 +314,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
   const canvasHost = container.querySelector<HTMLElement>(".board-map-canvas")!;
   const allPoints: SoloPoint[] = [start, ...checkpoints, ...radarCircles.map((circle) => circle.center)];
   const bounds = new maplibregl.LngLatBounds();
-  for (const p of allPoints) bounds.extend([p.longitude, p.latitude]);
+  for (const p of focusPoints ?? allPoints) bounds.extend([p.longitude, p.latitude]);
 
   let map: maplibregl.Map | undefined;
   let destroyed = false;
@@ -288,6 +329,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
         style,
         center: [start.longitude, start.latitude],
         zoom: 12.5,
+        ...camera,
         attributionControl: false,
         transformRequest: (url) => ({ url: absolutizeMapUrl(url) }),
       });
@@ -298,6 +340,29 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
         styleLoaded = true;
         if (!map || destroyed) return;
         const { circleFeatures, bisectorFeatures } = buildOverlayFeatures(radarCircles, deductionOverlays, hidingZone);
+        if (deductionBoundary) {
+          const data = searchArea(deductionBoundary, radarCircles.filter(circle => !circle.preview));
+          if (data.features.length) {
+            map.addSource("radar-search-area", { type: "geojson", data });
+            map.addLayer({
+              id: "radar-search-shading", type: "fill", source: "radar-search-area",
+              paint: {
+                "fill-color": ["case", ["get", "possible"], "#28a981", "#26384e"],
+                "fill-opacity": ["case", ["get", "possible"], 0.27, 0.34],
+              },
+            }, map.getLayer("radar-outline") ? "radar-outline" : undefined);
+          }
+        }
+        const preview = radarCircles.find(circle => circle.preview);
+        if (preview) {
+          const color = preview.preview === "correct" ? "#087b61" : preview.preview === "incorrect" ? "#bc2e29" : "#295c8d";
+          map.addSource("radar-preview", {
+            type: "geojson",
+            data: { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [circlePolygon(preview.center, preview.radiusMeters)] } },
+          });
+          map.addLayer({ id: "radar-preview-fill", type: "fill", source: "radar-preview", paint: { "fill-color": color, "fill-opacity": 0.12 } });
+          map.addLayer({ id: "radar-preview-outline", type: "line", source: "radar-preview", paint: { "line-color": color, "line-width": 3, "line-dasharray": [2, 2] } });
+        }
         if (config.mode === "geoapify-vector" && circleFeatures.length > 0 && !map.getSource("radars")) {
           map.addSource("radars", {
             type: "geojson",
@@ -309,7 +374,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
             source: "radars",
             paint: {
               "fill-color": ["case", ["get", "inside"], "#0f766e", "#b45309"],
-              "fill-opacity": 0.16,
+              "fill-opacity": deductionBoundary ? 0 : 0.16,
             },
           });
           map.addLayer({
@@ -338,8 +403,24 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
             },
           });
         }
-        if (allPoints.length > 1) {
-          map.fitBounds(bounds, { padding: 36, maxZoom: 14.5, duration: 0 });
+        if (thermometer?.end) {
+          map.addSource("thermometer-track", {
+            type: "geojson",
+            data: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [
+              [thermometer.start.longitude, thermometer.start.latitude],
+              [thermometer.end.longitude, thermometer.end.latitude],
+            ] } },
+          });
+          map.addLayer({
+            id: "thermometer-track-line", type: "line", source: "thermometer-track",
+            paint: { "line-color": "#9f214b", "line-width": 4, "line-dasharray": [2, 2] },
+          });
+        }
+        if (hidingZone && deductionBoundary && map.getLayer("radar-fill")) {
+          map.setPaintProperty("radar-fill", "fill-opacity", ["case", ["==", ["get", "id"], "hiding-zone"], 0.16, 0]);
+        }
+        if (!camera && (focusPoints?.length ?? allPoints.length) > 1) {
+          map.fitBounds(bounds, { padding: fitPadding ?? 36, maxZoom: 14.5, duration: 0 });
         }
       });
 
@@ -360,7 +441,8 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
       ]
         .filter(Boolean)
         .join(" ");
-      startEl.textContent = `A · ${start.name}`;
+      startEl.textContent = startLabel ? `${startLabel} · ${start.name}` : `A · ${start.name}`;
+      startEl.dataset.mapPoint = start.id;
       startEl.setAttribute("aria-label", `${start.name} (Titik awal)`);
       markers.push(new maplibregl.Marker({ element: startEl }).setLngLat([start.longitude, start.latitude]).addTo(map));
 
@@ -375,12 +457,15 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
           "board-map-pin",
           point.claimed ? "board-map-pin-claimed" : "",
           point.dimmed ? "board-map-pin-dimmed" : "",
+          point.markerKind ? `board-map-pin-${point.markerKind}` : "",
           point.statusTag ? `board-map-pin-${point.statusTag}` : "",
           point.id === selectedId ? "board-map-pin-selected" : "",
         ]
           .filter(Boolean)
           .join(" ");
-        el.textContent = point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`;
+        if (point.markerKind === "station") el.title = point.name;
+        el.dataset.mapPoint = point.id;
+        el.textContent = point.markerText ?? (point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`);
         el.setAttribute(
           "aria-label",
           point.label ? `${point.name} (${point.label})` : point.name,
@@ -403,10 +488,11 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
         if (!destroyed) onError?.("tile-load-failed");
       });
   } else {
-    initMap(offlineVectorStyle(start, checkpoints, radarCircles, deductionOverlays, hidingZone));
+    initMap(offlineVectorStyle(start, checkpoints, radarCircles, deductionOverlays, hidingZone, !deductionBoundary));
   }
 
   return {
+    getCamera: () => map && styleLoaded ? { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() } : undefined,
     destroy() {
       destroyed = true;
       for (const m of markers) m.remove();
