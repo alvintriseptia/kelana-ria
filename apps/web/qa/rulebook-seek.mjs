@@ -66,12 +66,23 @@ try {
   await pageCreator.click('button[data-map-action="add-poi"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("POI Publik"));
 
-  // Step 3: add custom photo curse & save
+  // Step 3: add custom photo curse + custom Radar item in Buku Petunjuk + composed Curse in Dek & Kutukan
   await pageCreator.click('button[data-step="3"]');
   await pageCreator.waitForSelector("#ed-curse-title");
   await pageCreator.fill("#ed-curse-title", "Kutukan Kopi Senopati");
   await pageCreator.click('button[data-action="save-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
+
+  await pageCreator.click('button[data-s3-tab="book"]');
+  await pageCreator.fill("#ed-item-label", "Radar 750 m Kustom");
+  await pageCreator.click('button[data-s3-action="add-book-item"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Radar 750 m Kustom"));
+
+  await pageCreator.click('button[data-s3-tab="deck"]');
+  await pageCreator.fill("#ed-card-title", "Kutukan Barista Buyout");
+  await pageCreator.selectOption("#ed-curse-cost", "discard_cards");
+  await pageCreator.click('button[data-s3-action="add-seek-card"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Kutukan Barista Buyout"));
 
   // Step 4: run dry-run, submit -> Reviewer requests changes -> verify revision banner -> re-submit -> publish
   await pageCreator.click('button[data-step="4"]');
