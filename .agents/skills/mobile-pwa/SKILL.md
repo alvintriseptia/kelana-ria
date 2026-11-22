@@ -1,9 +1,11 @@
 ---
 name: mobile-pwa
-description: Use for installability, mobile screens, map and list interactions, performance budgets, or first-time-player usability checks.
+description: Use for designing mobile game flows, card and map interactions, installability, performance budgets, or first-time-player usability checks.
 ---
 
 # Verify the phone experience
+
+Use the [game UI workflow](game-ui.md) to design and prototype player and Creator Studio interactions. It includes the card draw sequence, a 2D motion default, and checks for city-independent layouts.
 
 Start with the decision a player must make on this screen. Show the objective before requesting location. Use the initial Jakarta copy conventions from PRD section 8. Give each active screen a clear primary action and name the checkpoint for check-in. Keep a text action for each map action and distinguish ownership and ties with words or shapes.
 
