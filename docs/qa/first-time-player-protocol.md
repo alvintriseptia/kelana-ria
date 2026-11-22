@@ -1,22 +1,16 @@
-# First-time player observation protocol (Issue #7)
+# First-time player observation protocol
 
-Use this 15-minute uncoached protocol to collect real comprehension evidence for [issue #7](https://github.com/alvintriseptia/kelana-ria/issues/7) (`§§8–10`, `A11`, `A16`, `A27`).
+Use this protocol to collect real comprehension evidence for [issue #7](https://github.com/alvintriseptia/kelana-ria/issues/7) and the edition tutorial in [issue #84](https://github.com/alvintriseptia/kelana-ria/issues/84).
 
-## Setup (before handing over the phone)
-1. Start the API and web build (`npm start --workspace @kelana-ria/api` + `npm run preview --workspace @kelana-ria/web`).
-2. Confirm the participant has not seen the app before. Tell them: *"Think aloud as you go. I won't guide you unless you ask to stop."*
-3. Record device model, OS, browser version, and whether movement is **simulated**.
+Start the API and the production web build. Record the phone, browser, edition version, selected mode, and whether movement is physical or simulated. Ask someone who has never used the app to think aloud. Record the first attempt before offering any guidance. Read objectives and timers from the edition shown on the phone.
 
-## Uncoached task script
+| Task | What to observe |
+| --- | --- |
+| Find Compact Claim the City and choose Solo. | Can they explain where to start and the selected version’s two goals before providing location? The current official Compact edition requires four locked landmarks across at least two zones in 90 minutes. |
+| Try **Coba Panduan**. | Can they recover when the practice position is too far away and explain what unlocks the challenge? Can they point out the change after a correct answer? |
+| Open the real lobby and deny location on the first check-in. | Do they understand the message and find the retry? Verify the room and exact selected edition are still open. |
+| During play, interrupt the map or use a fixture with a locked landmark. | Can they find the fallback landmark list when the map is unavailable and explain what a locked pin or a zone score means? Record fixture use. |
+| In Compact Claim Solo, use a prepared round with three landmarks locked in one zone, then complete a fourth landmark in a second zone. | Can they explain the change in the zone counter, why the round finished, and the outcome shown on the result screen? |
+| Open the Compact Hide & Seek guide in a fresh session. | Can they say when the seeker can start, preview and send Radar, confirm an answer as the hider, and explain when the search area changes? |
 
-| # | Prompt to participant | What to observe before offering help | Pass / Confusion notes |
-| --- | --- | --- | --- |
-| 1 | Open the link and explore the setup screen (`Pilih permainan` -> `Lihat ringkasan`). Do not grant location yet. | Can they state the goal (`4 landmark` across `2 zona` in `60 menit`) and start point (`CSW–ASEAN`) before any location prompt? | |
-| 2 | Open `Coba simulasi`, tap `Check-in di titik awal`, tap `Check-in`, and **Deny** the browser location permission. | Do they understand why check-in failed, see that progress is preserved, and recover using `Simulasikan lokasi di sini` or retrying after granting permission (`A11`)? | |
-| 3 | Start the round, then block map requests (DevTools Network block on `solo-schematic` / `/api/map/*`) and tap `Lihat peta`. | Do they recognize the map fallback notice and continue choosing checkpoints from the equivalent text list (`A16`)? | |
-| 4 | Claim 4 landmarks in `Blok M`, then observe the score before claiming a 5th landmark in `Senayan`. | Do they understand why 4 claims in 1 zone stayed active and why the 5th won (`A27`), and can they explain the final result screen? | |
-
-## Post-session capture
-- Post device details, task outcomes, and exact quotes/screens of confusion on [issue #7](https://github.com/alvintriseptia/kelana-ria/issues/7).
-- File a separate follow-up issue for each observed usability bug (naming the screen and task).
-- Remove the `blocked` label on `#7` once evidence is recorded.
+Post device details, task outcomes, and exact quotes or screenshots of confusion on [issue #7](https://github.com/alvintriseptia/kelana-ria/issues/7). Keep simulated browser checks and physical field observations labeled. Use [issue #14](https://github.com/alvintriseptia/kelana-ria/issues/14) for on-site movement and GPS evidence.

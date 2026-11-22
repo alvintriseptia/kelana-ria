@@ -1,4 +1,3 @@
-import type { RulebookFormat } from "@kelana-ria/contracts";
 import copy from "./locales/id.json" with { type: "json" };
 import { mountRulebookCatalog } from "./rulebook-catalog";
 
@@ -10,18 +9,7 @@ const play = document.getElementById("play")!;
 let unmountPlay: (() => void) | undefined;
 let navigation = 0;
 let routeEvents = new AbortController();
-let guideHandle: { setTrack: (track: RulebookFormat | "safety") => void } | undefined;
-
-function openGuide(format: RulebookFormat) {
-  guide.showModal();
-  if (guideHandle) {
-    guideHandle.setTrack(format);
-  } else {
-    void import("./interactive-guide").then(({ mountInteractiveGuide }) => {
-      guideHandle = mountInteractiveGuide(guide, format);
-    });
-  }
-}
+const practice = document.querySelector<HTMLDialogElement>("#edition-practice")!;
 
 function navigateCatalog(href: string) {
   history.pushState(null, "", href);
@@ -43,6 +31,7 @@ async function showRoute(focusCatalog = false) {
   routeEvents = new AbortController();
   unmountPlay?.();
   unmountPlay = undefined;
+  if (practice.open) practice.close();
   const url = new URL(location.href);
   const params = url.searchParams;
   const requestedSeek = params.get("play") === "hide-and-seek";
@@ -90,7 +79,10 @@ async function showRoute(focusCatalog = false) {
         history.pushState({ fromCatalog: true }, "", `/?${query}`);
         void showRoute();
       },
-      openGuide,
+      async openPractice(edition, mode) {
+        const { mountEditionPractice } = await import("./edition-practice");
+        if (currentNavigation === navigation && !practice.open) mountEditionPractice(practice, edition, mode);
+      },
       openStudio: () => {
         history.pushState({ fromChooser: true }, "", "/?play=rulebook-studio&format=claim-the-city");
         void showRoute();
@@ -143,11 +135,7 @@ async function showRoute(focusCatalog = false) {
 for (const [key, value] of Object.entries(copy)) {
   document.querySelectorAll<HTMLElement>(`[data-copy="${key}"]`).forEach(el => { el.textContent = value; });
 }
-document.getElementById("guide-open")!.addEventListener("click", () => {
-  const { play: current, format } = Object.fromEntries(new URLSearchParams(location.search));
-  openGuide(current === "hide-and-seek" || current === "rulebook-seek" || format === "hide-and-seek"
-    ? "hide-and-seek" : "claim-the-city");
-});
+document.getElementById("guide-open")!.addEventListener("click", () => guide.showModal());
 window.addEventListener("popstate", () => void showRoute());
 void showRoute();
 if (import.meta.env.PROD && "serviceWorker" in navigator) {

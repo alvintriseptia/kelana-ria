@@ -11,22 +11,85 @@ async function tabTo(page, locator) {
   assert.fail(`Keyboard could not reach ${locator}`);
 }
 
-async function confirmGuide(page, results, format, label = 'Panduan') {
-  const guide = page.getByRole('button', { name: label, exact: true });
-  await tabTo(page, guide);
+async function confirmCredits(page, results) {
+  const about = page.getByRole('button', { name: 'Tentang', exact: true });
+  await tabTo(page, about);
   await page.keyboard.press('Enter');
-  const dialog = page.getByRole('dialog');
+  const dialog = page.getByRole('dialog', { name: 'Tentang Kelana Ria' });
   await dialog.waitFor();
   const link = dialog.locator('a[href="https://nebula.tv/jetlag"]');
   assert.ok(await link.isVisible());
+  assert.ok(await dialog.locator('a[href="https://jetlagoxford.co.uk/"]').isVisible());
   const credit = await dialog.innerText();
   for (const creator of ['Adam Chase', 'Sam Denby', 'Ben Doyle']) assert.ok(credit.includes(creator));
   await tabTo(page, link);
-  await writeFile(join(results, `guide-${format}.aria.txt`), await dialog.ariaSnapshot());
-  if (format === 'claim') await page.screenshot({ path: join(results, 'guide.png') });
+  await writeFile(join(results, 'credits.aria.txt'), await dialog.ariaSnapshot());
   await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'hidden' });
-  assert.ok(await guide.evaluate(el => el === document.activeElement), 'Guide should restore keyboard focus');
+  assert.ok(await about.evaluate(el => el === document.activeElement), 'Credits should restore keyboard focus');
+}
+
+async function verifySeekPractice(page, results, family, timing, responseTime) {
+  const practice = page.getByRole('button', { name: 'Coba Panduan', exact: true });
+  await tabTo(page, practice);
+  await page.keyboard.press('Enter');
+  const dialog = page.locator('#edition-practice[open]');
+  await dialog.getByRole('heading', { name: 'Waktunya bersembunyi' }).waitFor();
+  assert.match(await dialog.innerText(), timing);
+  const noOverflow = () => dialog.evaluate(el => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= innerWidth);
+  assert.ok(await noOverflow());
+  await dialog.getByRole('button', { name: 'Mulai pencarian latihan' }).click();
+  const preview = dialog.getByRole('button', { name: 'Pratinjau ' + family });
+  await preview.click();
+  assert.ok(await dialog.locator('[data-practice-map="preview"]').isVisible());
+  await dialog.getByRole('button', { name: 'Kirim pertanyaan' }).click();
+  await dialog.getByRole('heading', { name: 'Menunggu jawaban' }).waitFor();
+  assert.match(await dialog.innerText(), responseTime);
+  assert.equal(await dialog.locator('[data-practice-map="deduced"]').count(), 0);
+  await dialog.getByRole('button', { name: 'Mainkan sisi penyembunyi' }).click();
+  const submit = dialog.getByRole('button', { name: 'Kirim jawaban' });
+  assert.equal(await submit.isDisabled(), true);
+  await dialog.getByRole('group', { name: 'Pilihan jawaban' }).getByRole('button').first().click();
+  await submit.click();
+  await dialog.getByRole('heading', { name: 'Area pencarian menyempit' }).waitFor();
+  assert.ok(await dialog.locator('[data-practice-map="deduced"]').isVisible());
+  assert.ok(await noOverflow());
+  await page.screenshot({ path: join(results, 'practice-' + family.toLowerCase() + '.png') });
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({ state: 'hidden' });
+  assert.ok(await practice.evaluate(el => el === document.activeElement), 'Practice should restore keyboard focus');
+  assert.equal(new URL(page.url()).searchParams.get('room'), null);
+}
+
+async function verifyClaimPractice(page, results, mode) {
+  const practice = page.getByRole('button', { name: 'Coba Panduan', exact: true });
+  await practice.click();
+  const dialog = page.locator('#edition-practice[open]');
+  assert.match(await dialog.innerText(), mode === 'solo' ? /1 pemain · Solo/ : /2–4 pemain/);
+  assert.match(await dialog.innerText(), /90 menit/);
+  await dialog.getByRole('button', { name: 'Pilih landmark latihan' }).click();
+  assert.match(await dialog.innerText(), /radius 100 meter/);
+  const check = dialog.getByRole('button', { name: 'Check-in latihan' });
+  await check.click();
+  const toast = dialog.getByRole('alert');
+  assert.match(await toast.innerText(), /Kamu masih terlalu jauh dari titik ini/);
+  assert.ok(await check.evaluate(el => el === document.activeElement));
+  if (mode === 'solo') await page.screenshot({ path: join(results, 'practice-claim-retry.png') });
+  await dialog.getByRole('button', { name: 'Dekati titik latihan' }).click();
+  await check.click();
+  await dialog.getByRole('button', { name: 'Tiga arah' }).click();
+  await dialog.getByRole('button', { name: 'Kirim jawaban' }).click();
+  assert.match(await toast.innerText(), /Hitung kembali panah/);
+  await dialog.getByRole('button', { name: 'Dua arah' }).click();
+  await dialog.getByRole('button', { name: 'Kirim jawaban' }).click();
+  await dialog.getByRole('heading', { name: 'Landmark terkunci!' }).waitFor();
+  assert.match(await dialog.getByRole('status').innerText(), mode === 'solo'
+    ? /1\/4 landmark terkunci · 1\/2 zona/ : /1 zona dikuasai · 1 landmark terkunci/);
+  if (mode === 'group') assert.match(await dialog.innerText(), /Klaim berbobot 1 dan kunci berbobot 1/);
+  await dialog.getByRole('button', { name: 'Ulangi latihan' }).click();
+  await dialog.getByRole('heading', { name: 'Pilih landmark' }).waitFor();
+  await dialog.getByRole('button', { name: 'Lewati latihan' }).click();
+  await dialog.waitFor({ state: 'hidden' });
 }
 
 async function checkPwa(page, cdp, origin) {
@@ -79,7 +142,7 @@ export async function exerciseChooser(context, origin, dist, results) {
       'Edition links expose their title and price');
     assert.ok(await page.getByRole('button', { name: 'Studio Kreator', exact: true }).isVisible());
     await writeFile(join(results, 'chooser.aria.txt'), await page.locator('body').ariaSnapshot());
-    await confirmGuide(page, results, 'claim');
+    await confirmCredits(page, results);
 
     await tabTo(page, seekEdition);
     await page.keyboard.press('Enter');
@@ -90,8 +153,27 @@ export async function exerciseChooser(context, origin, dist, results) {
     assert.ok(await noOverflow());
     assert.equal(await detail.getByRole('button', { name: 'Solo', exact: true }).count(), 0);
     await writeFile(join(results, 'edition.aria.txt'), await detail.ariaSnapshot());
-    await confirmGuide(page, results, 'hide', 'Lihat panduan');
-    await page.goBack();
+    await verifySeekPractice(page, results, 'Radar', /45 menit.*120 menit/, /hingga 4 menit/);
+    const versionedUrl = new URL(page.url());
+    versionedUrl.searchParams.set('version', '32');
+    // Public catalog fixture for a different edition version with Radar disabled.
+    const alternate = '**/api/rulebooks/catalog';
+    await page.route(alternate, async route => {
+      const response = await route.fetch();
+      const payload = await response.json();
+      const original = payload.editions.find(edition => edition.packId === 'official-jakarta-wide-seek');
+      payload.editions.push({
+        ...original, version: 32, headStartMinutes: 15, searchLimitMinutes: 70,
+        headStartMs: 930_000, searchLimitMs: 4_200_000, objectiveResponseMs: 75_000,
+        title: 'Edisi Latihan Termometer', questionFamilies: [{ family: 'thermometer' }],
+      });
+      await route.fulfill({ response, json: payload });
+    });
+    await page.goto(versionedUrl.href);
+    await page.getByRole('heading', { name: 'Edisi Latihan Termometer' }).waitFor();
+    await verifySeekPractice(page, results, 'Termometer', /15 menit 30 detik.*70 menit/, /hingga 1 menit 15 detik/);
+    await page.unroute(alternate);
+    await page.goto(origin);
     await soloEdition.waitFor();
     await soloEdition.click();
     const group = page.getByRole('button', { name: 'Grup', exact: true });
@@ -100,9 +182,11 @@ export async function exerciseChooser(context, origin, dist, results) {
     await page.keyboard.press('Enter');
     assert.equal(await group.getAttribute('aria-pressed'), 'true');
     assert.match(await detail.innerText(), /2–4 pemain/);
+    await verifyClaimPractice(page, results, 'group');
     await tabTo(page, solo);
     await page.keyboard.press('Enter');
     assert.equal(await solo.getAttribute('aria-pressed'), 'true');
+    await verifyClaimPractice(page, results, 'solo');
     const pwa = await checkPwa(page, cdp, origin);
     await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
     await page.getByRole('link', { name: /Katalog/ }).click();

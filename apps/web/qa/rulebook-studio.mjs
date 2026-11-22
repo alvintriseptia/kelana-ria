@@ -72,110 +72,11 @@ async function assertNoHorizontalOverflow(page, label) {
   );
 }
 
-async function assertGuideFits(page, label) {
-  const report = await page.evaluate(() => {
-    const dialog = document.getElementById("guide");
-    const dialogRect = dialog ? dialog.getBoundingClientRect() : null;
-    const offenders = [];
-    for (const el of document.querySelectorAll("#guide *")) {
-      const rect = el.getBoundingClientRect();
-      if (rect.width > 0 && rect.right > window.innerWidth + 1) {
-        offenders.push({
-          tag: el.tagName,
-          cls: typeof el.className === "string" ? el.className : "",
-          right: Math.round(rect.right),
-          vw: window.innerWidth,
-        });
-        if (offenders.length >= 5) break;
-      }
-    }
-    return {
-      scrollWidth: document.documentElement.scrollWidth,
-      innerWidth: window.innerWidth,
-      dialogRight: dialogRect ? Math.round(dialogRect.right) : 0,
-      offenders,
-    };
-  });
-  assert.ok(
-    report.scrollWidth <= report.innerWidth && report.dialogRight <= report.innerWidth + 1 && report.offenders.length === 0,
-    `Panduan overflow on ${label} (${report.scrollWidth}/${report.dialogRight} > ${report.innerWidth}): ${JSON.stringify(report.offenders)}`,
-  );
-}
-
-async function verifyInteractiveGuide(page) {
-  await page.click("#guide-open");
-  await page.waitForSelector('#guide[open] [data-testid="ig-slide"]');
-  assert.match(await page.textContent('[data-testid="ig-step-label"]'), /Langkah 1\/4/);
-  await page.click('button[data-ig-track="hide-and-seek"]');
-  assert.match(await page.textContent('[data-testid="ig-step-label"]'), /Langkah 1\/6/);
-  await assertGuideFits(page, "Hide & Seek 1/6");
-
-  await page.click('button[data-ig-scale="medium"]');
-  assert.match(await page.textContent('[data-testid="ig-slide"]'), /Medium \(M\)/);
-
-  await page.click('button[data-ig-nav="next"]');
-  await page.click('button[data-ig-phase="2"]');
-  assert.match(await page.textContent('[data-testid="ig-slide"]'), /Endgame/);
-  await assertGuideFits(page, "Hide & Seek 2/6");
-
-  await page.click('button[data-ig-nav="next"]');
-  await page.click('button[data-ig-quiz="no"]');
-  const feedback = await page.textContent('[data-testid="ig-quiz-feedback"]');
-  assert.match(feedback, /Benar!.*Lift/);
-  await assertGuideFits(page, "Hide & Seek 3/6");
-
-  await page.click('button[data-ig-nav="next"]');
-  await page.click('button[data-ig-fam="tentacles"]');
-  assert.match(await page.textContent('[data-testid="ig-slide"]'), /Draw 4, Keep 2/);
-  await assertGuideFits(page, "Hide & Seek 4/6");
-
-  await page.click('button[data-ig-nav="next"]');
-  await assertGuideFits(page, "Hide & Seek 5/6");
-  await page.click('button[data-ig-nav="next"]');
-  assert.match(await page.textContent('[data-testid="ig-step-label"]'), /Langkah 6\/6/);
-  await assertGuideFits(page, "Hide & Seek 6/6");
-
-  await page.click('button[data-ig-track="claim-the-city"]');
-  assert.match(await page.textContent('[data-testid="ig-step-label"]'), /Langkah 1\/4/);
-  await assertGuideFits(page, "Claim 1/4");
-
-  const states = [];
-  for (let i = 0; i < 4; i += 1) {
-    states.push(await page.getAttribute('[data-testid="ig-zone-cycle-btn"]', "data-state"));
-    await page.click('[data-testid="ig-zone-cycle-btn"]');
-  }
-  assert.deepEqual(states, ["neutral", "unclaimed", "claimed", "locked"]);
-  await page.click('button[data-ig-nav="next"]');
-  await assertGuideFits(page, "Claim 2/4");
-  await page.click('button[data-ig-nav="next"]');
-  await assertGuideFits(page, "Claim 3/4");
-  await page.click('button[data-ig-nav="next"]');
-  await assertGuideFits(page, "Claim 4/4");
-
-  await page.click('button[data-ig-track="safety"]');
-  assert.match(await page.textContent('[data-testid="ig-step-label"]'), /Langkah 1\/2/);
-  await assertGuideFits(page, "Safety 1/2");
-  await page.click('button[data-ig-nav="next"]');
-  await assertGuideFits(page, "Safety 2/2");
-
-  const linksOk = await page.evaluate(
-    () =>
-      Boolean(document.querySelector('#guide a[href="https://nebula.tv/jetlag"]')) &&
-      Boolean(document.querySelector('#guide a[href="https://jetlagoxford.co.uk/"]')),
-  );
-  assert.equal(linksOk, true, "Expected Jet Lag and jetlagoxford.co.uk attribution links in Panduan");
-
-  await page.click("#guide .ig-close-x");
-  await page.waitForFunction(() => !document.getElementById("guide")?.hasAttribute("open"));
-}
-
 try {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await ctx.newPage();
 
-  // 0. Interactive Panduan tutorial modal on 390x844 mobile viewport
   await page.goto(baseUrl, { waitUntil: "networkidle" });
-  await verifyInteractiveGuide(page);
 
   // 1. Hide & Seek Studio: multi-draft switcher, intentional validator error -> jump link -> fix -> interactive clue dry-run
   await page.click("#chooser-studio");

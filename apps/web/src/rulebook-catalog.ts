@@ -7,7 +7,7 @@ const endpoint = "/api/rulebooks/catalog";
 const cacheKey = "kelana-rulebook-catalog";
 const formatNames = { "claim-the-city": "Claim the City", "hide-and-seek": "Hide & Seek" } as const;
 
-type Edition = {
+export type CatalogEdition = {
   packId: string;
   version: number;
   title: string;
@@ -21,13 +21,23 @@ type Edition = {
 } & ({
   format: "claim-the-city";
   durationMinutes: number;
+  durationMs?: number;
+  checkInRadiusMeters: number;
+  claimWeight?: number;
+  lockWeight?: number;
   soloTargets: { lockedLandmarks: number; distinctZones: number } | null;
 } | {
   format: "hide-and-seek";
   headStartMinutes: number;
   searchLimitMinutes: number;
   regroupMinutes: number;
+  headStartMs?: number;
+  searchLimitMs?: number;
+  objectiveResponseMs: number;
+  photoResponseMs: number;
+  questionFamilies: { family: string }[];
 });
+type Edition = CatalogEdition;
 
 type Catalog = { editions: Edition[]; allowSandboxCheckout: boolean };
 type Attempt = { id: string; order?: PackOrderSummary };
@@ -35,7 +45,7 @@ type CheckoutReply = { error?: string; roomCode?: string; order?: PackOrderSumma
 type Options = {
   navigate: (href: string) => void;
   openRoom: (format: RulebookFormat, code: string) => void;
-  openGuide: (format: RulebookFormat) => void;
+  openPractice: (edition: Edition, mode: RulebookPlayMode) => Promise<void>;
   openStudio: () => void;
 };
 
@@ -80,7 +90,7 @@ function price(item: Edition) {
   return item.priceIdr === 0 ? "Gratis" : `Rp${item.priceIdr.toLocaleString("id-ID")}`;
 }
 
-function playerRange(minimum: number, maximum: number) {
+export function playerRange(minimum: number, maximum: number) {
   return `${minimum === maximum ? minimum : `${minimum}–${maximum}`} pemain`;
 }
 
@@ -219,7 +229,7 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
         <dl class="cat-facts">${facts(item, mode)}</dl>
         ${offline}${status}
         <div class="cat-actions" aria-busy="${busy}">
-          ${action("guide", "Lihat panduan")}
+          ${action("practice", "Coba Panduan")}
           ${item.priceIdr === 0
             ? action("play", mode === "solo" ? "Main Solo" : "Main Grup", "primary", busy || !fresh)
             : payment(item)}
@@ -343,7 +353,16 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     }
     const item = selected();
     if (!item || !type || control.disabled || busy) return;
-    if (type === "guide") return options.openGuide(item.format);
+    if (type === "practice") {
+      void options.openPractice(item, mode).catch(() => {
+        if (signal.aborted) return;
+        message = "Panduan belum bisa dibuka. Periksa koneksi lalu coba lagi.";
+        toast = true;
+        render();
+        root.querySelector<HTMLElement>('[data-cat-action="practice"]')?.focus();
+      });
+      return;
+    }
     if (type === "solo" || type === "group") {
       mode = type;
       const url = new URL(location.href);
