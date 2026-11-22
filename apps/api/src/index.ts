@@ -279,6 +279,7 @@ export function createSoloServer({
   staticDir,
   healthMeta,
   allowSimulatedLocation = false,
+  allowHideSeekQa = false,
   ...storeOptions
 }: {
   databasePath?: string;
@@ -289,6 +290,7 @@ export function createSoloServer({
   staticDir?: string;
   healthMeta?: { aiMode: string; routeMode: string };
   allowSimulatedLocation?: boolean;
+  allowHideSeekQa?: boolean;
 } & SoloStoreOptions = {}) {
   const store = soloStore(databasePath, { now, ...storeOptions });
   const duo = duoStore(databasePath);
@@ -304,7 +306,7 @@ export function createSoloServer({
   const handleSeek = seekHandler(seek, now, secureCookie);
   const handlePacks = packHandler(packs, now, secureCookie);
   const rulebooks = rulebookStore(databasePath, { midtrans });
-  const handleRulebooks = rulebookHandler(rulebooks, now, secureCookie);
+  const handleRulebooks = rulebookHandler(rulebooks, now, secureCookie, allowHideSeekQa);
   const handleMap = mapHandler(mapProxy);
   const handleStatic = staticDir ? staticHandler(staticDir) : undefined;
   const mapMode = mapProxy?.geoapifyApiKey?.trim() ? "geoapify-vector" : "offline-vector";
@@ -429,6 +431,7 @@ if (import.meta.main) {
     routeProvider: providers.routeProvider,
     staticDir,
     allowSimulatedLocation,
+    allowHideSeekQa: process.env.ALLOW_HIDE_SEEK_QA === "1",
     healthMeta: { aiMode: providers.aiMode, routeMode: providers.routeMode },
     mapProxy: {
       geoapifyApiKey: process.env.GEOAPIFY_API_KEY,

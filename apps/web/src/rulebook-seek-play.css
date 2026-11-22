@@ -379,3 +379,24 @@
   border-radius: 100%;
 }
 .sg-board .board-map-pin-station:focus-visible { z-index: 4; }
+
+.sg-qa-badge {
+  background: #fae1a7;
+  color: #533509;
+  font-weight: 800;
+}
+
+.sg-qa-note {
+  font-size: .84rem;
+}
+
+.sg-qa-clock {
+  display: grid;
+  gap: 7px;
+}
+
+@media (max-width: 360px) {
+  .sg-game:has(.sg-qa-badge) .sg-hud-actions { gap: 4px; }
+  .sg-game:has(.sg-qa-badge) .sg-role { column-gap: 5px; padding-inline-end: 6px; }
+  .sg-game:has(.sg-qa-badge) .sg-role h1 { font-size: 1.42rem; }
+}

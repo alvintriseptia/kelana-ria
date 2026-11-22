@@ -168,6 +168,7 @@ type LiveSeekSession = {
   match: SeekEngineMatch;
   photos: Map<string, Buffer>;
   deck: SeekDeckEngineState;
+  qa?: { offsetMs: number; advances: Set<string> };
 };
 
 type LiveClaimSession = {
@@ -553,6 +554,7 @@ export function rulebookStore(
     hostName: string,
     now: number,
     orderId: string | null = null,
+    qa = false,
   ): LiveSession {
     const prefix = rec.format === "claim-the-city" ? "RC" : "RB";
     const roomCode = `${prefix}-${randomBytes(3).toString("hex").toUpperCase()}`;
@@ -592,11 +594,14 @@ export function rulebookStore(
         hostCredentialHash: digest(hostCredential),
       });
       const deck = createSeekDeckState(seekPack);
-      session = { format: "hide-and-seek", pass, match, deck, photos: new Map() };
+      session = {
+        format: "hide-and-seek", pass, match, deck, photos: new Map(),
+        ...(qa ? { qa: { offsetMs: 0, advances: new Set<string>() } } : {}),
+      };
     }
 
     liveRooms.set(roomCode, session);
-    insertPassStmt.run(pass.passId, pass.orderId, pass.roomCode, JSON.stringify(pass));
+    if (!qa) insertPassStmt.run(pass.passId, pass.orderId, pass.roomCode, JSON.stringify(pass));
     return session;
   }
 
@@ -606,13 +611,15 @@ export function rulebookStore(
     hostCredential: string,
     hostName: string,
     now: number,
+    qa = false,
   ):
     | { ok: true; roomCode: string; pass: RulebookRoomPass; room: SeekEngineRoomView | ClaimEngineRoomView }
     | { ok: false; error: string } {
     const rec = getRecord(packId, version);
     if (!rec || rec.status !== "published") return { ok: false, error: "pack-unavailable" };
     if (rec.pack.meta.priceIdr > 0) return { ok: false, error: "payment-required" };
-    const session = instantiateRoom(rec, hostCredential, hostName, now, null);
+    if (qa && rec.format !== "hide-and-seek") return { ok: false, error: "seek-qa-only" };
+    const session = instantiateRoom(rec, hostCredential, hostName, now, null, qa);
     const room =
       session.format === "claim-the-city"
         ? viewClaimEngineMatch(session.match, "seat-1", now)
@@ -841,6 +848,51 @@ export function rulebookStore(
     return reply;
   }
 
+  function roomTime(roomCode: string, now: number): number {
+    const session = liveRooms.get(roomCode);
+    return now + (session?.format === "hide-and-seek" ? session.qa?.offsetMs ?? 0 : 0);
+  }
+
+  function qaLocation(roomCode: string, credential: string, locationId: string, now: number): LocationFix | undefined {
+    const session = liveRooms.get(roomCode);
+    if (session?.format !== "hide-and-seek" || !session.qa || !findSeekEngineSeat(session.match, digest(credential))) {
+      return undefined;
+    }
+    const { match } = session;
+    const point = [match.regroupPoint, match.turnStartPoint, match.snapshot.startPoint, ...match.snapshot.stations]
+      .find(checkpoint => checkpoint?.id === locationId);
+    return point ? { latitude: point.latitude, longitude: point.longitude, accuracy: 10, timestamp: now } : undefined;
+  }
+
+  function advanceQaClock(
+    roomCode: string,
+    credential: string,
+    actionId: string,
+    step: "minute" | "five-minutes" | "phase-end",
+    expectedDeadline: unknown,
+    now: number,
+  ) {
+    const session = liveRooms.get(roomCode);
+    if (session?.format !== "hide-and-seek" || !session.qa) return { error: "qa-room-required" };
+    const { match, qa } = session;
+    const seatId = findSeekEngineSeat(match, digest(credential));
+    if (!match.seats.some(seat => seat.isHost && seat.seatId === seatId)) return { error: "qa-host-only" };
+    if (qa.advances.has(actionId)) return { ok: true };
+
+    const current = now + qa.offsetMs;
+    expireRoomPhotos(session, current);
+    expireSeekDeckAndCurses(session.deck, match, current);
+    if (match.phaseEndsAt === null) return { error: "qa-no-active-clock" };
+    if (step === "phase-end" && expectedDeadline !== match.phaseEndsAt) return { error: "qa-deadline-changed" };
+    const delta = step === "phase-end" ? match.phaseEndsAt - current : step === "minute" ? 60_000 : 300_000;
+    qa.offsetMs += delta;
+    qa.advances.add(actionId);
+    const advanced = now + qa.offsetMs;
+    expireRoomPhotos(session, advanced);
+    expireSeekDeckAndCurses(session.deck, match, advanced);
+    return { ok: true };
+  }
+
   function expireRoomPhotos(session: LiveSeekSession, now: number) {
     const { purgedPhotoIds } = expireSeekEngineMatch(session.match, now);
     for (const id of purgedPhotoIds) session.photos.delete(id);
@@ -979,6 +1031,7 @@ export function rulebookStore(
     const deck = viewSeekDeck(session.deck, room.role === "hider");
     return {
       format: "hide-and-seek" as const,
+      ...(session.qa ? { qa: true as const } : {}),
       room,
       deck,
       publicBoard: {
@@ -1029,6 +1082,9 @@ export function rulebookStore(
     playCardInRoom,
     deckActionInRoom,
     viewRoom,
+    roomTime,
+    qaLocation,
+    advanceQaClock,
     seedGeoFromOfficialFixture,
     close: () => db.close(),
   };
