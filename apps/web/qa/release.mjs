@@ -78,8 +78,8 @@ try {
   const creditCheck = await openDevice();
   try {
     await creditCheck.page.goto(origin);
-    await creditCheck.page.getByRole("button", { name: "Panduan", exact: true }).click();
-    const guide = creditCheck.page.getByRole("dialog", { name: "Panduan bermain" });
+    await creditCheck.page.getByRole("button", { name: "Tentang", exact: true }).click();
+    const guide = creditCheck.page.getByRole("dialog", { name: "Tentang Kelana Ria" });
     await guide.waitFor();
     const guideText = await guide.innerText();
     assert.match(guideText, /Jet Lag: The Game/);

@@ -118,6 +118,8 @@ export type HideSeekPublicListing = {
   headStartMinutes: number;
   searchLimitMinutes: number;
   regroupMinutes: number;
+  objectiveResponseMs: number;
+  photoResponseMs: number;
   regroupPolicy: HideSeekRulebookPack["session"]["regroupPolicy"];
   stationCount: number;
   startName: string;
@@ -142,6 +144,7 @@ export type ClaimPublicListing = {
   maxPlayers: number;
   teamMode: string;
   durationMinutes: number;
+  checkInRadiusMeters: number;
   soloTargets: ClaimRulebookPack["session"]["soloTargets"] | null;
   startName: string;
   zones: { id: string; name: string; label: string; landmarkCount: number }[];
@@ -245,6 +248,8 @@ export function toPublicSeekListing(record: StoredRulebookRecord): HideSeekPubli
     headStartMinutes: Math.round(pack.timers.headStartMs / 60_000),
     searchLimitMinutes: Math.round(pack.timers.searchLimitMs / 60_000),
     regroupMinutes: Math.round(pack.timers.regroupLimitMs / 60_000),
+    objectiveResponseMs: pack.timers.objectiveResponseMs,
+    photoResponseMs: pack.timers.photoResponseMs,
     regroupPolicy: pack.session.regroupPolicy,
     stationCount: snapshot.stations.filter((s) => s.eligibleHidingAnchor).length,
     startName: snapshot.startPoint.name,
@@ -293,6 +298,7 @@ export function toPublicClaimListing(record: StoredRulebookRecord): ClaimPublicL
     maxPlayers: pack.session.maxPlayers,
     teamMode: pack.session.teamMode,
     durationMinutes: Math.round(pack.session.durationMs / 60_000),
+    checkInRadiusMeters: pack.geography.checkInRadiusMeters,
     soloTargets: pack.session.soloTargets ?? null,
     startName: snapshot.startPoint.name,
     zones,
