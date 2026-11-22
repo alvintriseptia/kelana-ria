@@ -125,10 +125,7 @@ try {
     return (await afterAction("Kirim jawaban")).session;
   }
 
-  await page.goto(origin);
-  await click("Lihat ringkasan");
-  await page.getByRole("button", { name: "Main Solo", exact: true })
-    .or(page.getByRole("link", { name: "Main Solo", exact: true })).click();
+  await page.goto(origin + "/?play=solo-claim&board=compact");
   await page.getByRole("button", { name: "Check-in di titik awal", exact: true }).waitFor();
   const briefingText = await page.locator("main").innerText();
   assert.match(briefingText, /Mode QA|Gratis/i);

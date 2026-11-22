@@ -31,15 +31,12 @@ async function clickAndWaitPost(page, selector) {
 }
 
 try {
-  // 1. Solo Official Jakarta Compact Claim run (observation_input, photo_proof, burn-on-fail, reload persistence, zero answer leak)
+  // 1. Solo Official Jakarta Compact Claim launched directly from /
   const ctxSolo = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageSolo = await ctxSolo.newPage();
-  await pageSolo.goto(`${baseUrl}/?play=rulebook-claim`, { waitUntil: "networkidle" });
-  await pageSolo.waitForSelector('article[data-pack-id="official-jakarta-compact-claim"]');
-  await clickAndWaitPost(
-    pageSolo,
-    'article[data-pack-id="official-jakarta-compact-claim"] button[data-action="start-free"]',
-  );
+  await pageSolo.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageSolo.getByRole("button", { name: "Lihat ringkasan" }).click();
+  await pageSolo.getByRole("button", { name: "Main Solo", exact: true }).click();
   await pageSolo.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
 
   await clickAndWaitPost(pageSolo, 'button[data-action="sim-start-checkin"]');
@@ -76,24 +73,25 @@ try {
   await pageSolo.waitForFunction(() => document.body.textContent.includes("2/4 landmark terkunci"));
   await ctxSolo.close();
 
-  // 2. 3-player Claim the City FFA: vulnerable claim -> Bail -> "Open to steal!" -> rival steal-lock
+  // 2. 3-player Claim the City FFA launched directly from / + invite link join
   const ctxP1 = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageP1 = await ctxP1.newPage();
-  await pageP1.goto(`${baseUrl}/?play=rulebook-claim`, { waitUntil: "networkidle" });
-  await pageP1.waitForSelector('article[data-pack-id="official-jakarta-compact-claim"]');
-  await clickAndWaitPost(
-    pageP1,
-    'article[data-pack-id="official-jakarta-compact-claim"] button[data-action="start-free"]',
-  );
+  await pageP1.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageP1.locator("#chooser").getByText("Grup (2–6)", { exact: true }).click();
+  await pageP1.getByRole("button", { name: "Lihat ringkasan" }).click();
+  await pageP1.getByRole("button", { name: "Main Grup (2–6)", exact: true }).click();
   await pageP1.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+  const inviteHref = await pageP1.getAttribute('[data-testid="invite-link"]', "href");
+  assert.ok(inviteHref && inviteHref.includes("room=RC-"), "Shareable invite link should be visible in lobby");
   const codeMatch = (await pageP1.textContent("body")).match(/Kode:\s*(RC-[A-F0-9]+)/);
   assert.ok(codeMatch, "Claim room code should be visible");
   const roomCode = codeMatch[1];
 
   const ctxP2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageP2 = await ctxP2.newPage();
-  await pageP2.goto(`${baseUrl}/?play=rulebook-claim`, { waitUntil: "networkidle" });
-  await pageP2.fill("#rb-claim-join-code", roomCode);
+  await pageP2.goto(inviteHref, { waitUntil: "networkidle" });
+  await pageP2.waitForSelector("#rb-claim-join-code");
+  assert.equal(await pageP2.inputValue("#rb-claim-join-code"), roomCode, "Invite URL should prefill room code");
   await pageP2.fill("#rb-claim-join-name", "Penantang 2");
   await clickAndWaitPost(pageP2, 'button[data-action="join-room"]');
   await pageP2.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
@@ -131,10 +129,11 @@ try {
   await ctxP2.close();
   await ctxP3.close();
 
-  // 3. Creator clones Official Claim pack in unified Studio, adds custom photo_proof, publishes, buys via Midtrans
+  // 3. Creator opens unified Studio directly from /, clones Official Claim pack, publishes, buys via Midtrans
   const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageCreator = await ctxCreator.newPage();
-  await pageCreator.goto(`${baseUrl}/?play=rulebook-studio&format=claim-the-city`, { waitUntil: "networkidle" });
+  await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageCreator.click("#chooser-studio");
   await pageCreator.waitForSelector('button[data-action="clone"]');
   await clickAndWaitPost(pageCreator, 'button[data-action="clone"]');
   await pageCreator.waitForSelector("#ed-claim-photo-title");

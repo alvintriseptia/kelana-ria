@@ -99,6 +99,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   function syncRoomUrl(code: string) {
     const url = new URL(location.href);
     url.searchParams.set("play", "rulebook-claim");
+    url.searchParams.delete("pack");
+    url.searchParams.delete("launch");
     if (code) url.searchParams.set("room", code);
     else url.searchParams.delete("room");
     history.replaceState(history.state, "", url);
@@ -107,14 +109,34 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   async function loadCatalog() {
     const data = await apiJson<{ listings?: ClaimPublicListing[] }>("/api/rulebooks?format=claim-the-city");
     listings = (data.listings ?? []).filter((l) => l.format === "claim-the-city");
+    const params = new URLSearchParams(location.search);
+    const launchPackId = params.get("pack");
+    const shouldLaunch = params.get("launch") === "1";
+    if (!roomCode && shouldLaunch && launchPackId) {
+      const target = listings.find((l) => l.packId === launchPackId && l.priceIdr === 0);
+      if (target) {
+        const res = await apiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
+          type: "create-free-room",
+          packId: target.packId,
+          version: target.version,
+          hostName: "Tuan Rumah",
+        });
+        if (res.ok && res.roomCode) {
+          roomCode = res.roomCode;
+          statusMsg = `Ruang ${roomCode} siap dimainkan.`;
+          await refreshRoom();
+          return;
+        }
+      }
+    }
     if (roomCode) {
-      await refreshRoom();
+      await refreshRoom(true);
     } else {
       render();
     }
   }
 
-  async function refreshRoom() {
+  async function refreshRoom(allowInvitePrompt = false) {
     if (!roomCode) return;
     const data = await apiJson<ClaimRoomPayload & { error?: string }>(
       `/api/rulebooks/rooms/${encodeURIComponent(roomCode)}`,
@@ -123,6 +145,9 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       live = data;
       errorMsg = "";
       syncRoomUrl(roomCode);
+    } else if (allowInvitePrompt) {
+      statusMsg = `Undangan ruang ${roomCode} terdeteksi. Masukkan namamu lalu tekan Gabung Ruang.`;
+      errorMsg = "";
     } else {
       errorMsg = data.error ?? "Ruang tidak ditemukan.";
     }
@@ -410,6 +435,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         room.phase === "lobby"
           ? `<div class="rb-card">
               <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
+              <p><small>Tautan undangan: <a href="${escapeText(`${location.origin}/?play=rulebook-claim&room=${encodeURIComponent(room.code)}`)}" data-testid="invite-link">${escapeText(`${location.origin}/?play=rulebook-claim&room=${room.code}`)}</a></small></p>
               <ul class="rb-list">
                 ${room.seats
                   .map(

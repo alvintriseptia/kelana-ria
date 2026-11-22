@@ -86,21 +86,55 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     return (await res.json()) as T;
   }
 
+  function syncRoomUrl(code: string) {
+    const url = new URL(location.href);
+    url.searchParams.set("play", "rulebook-seek");
+    url.searchParams.delete("pack");
+    url.searchParams.delete("launch");
+    if (code) url.searchParams.set("room", code);
+    else url.searchParams.delete("room");
+    history.replaceState(history.state, "", url);
+  }
+
   async function loadCatalog() {
     const data = await apiJson<{ listings?: PublicListing[] }>("/api/rulebooks?format=hide-and-seek");
     listings = (data.listings ?? []).filter((l) => l.format === "hide-and-seek");
+    const params = new URLSearchParams(location.search);
+    const launchPackId = params.get("pack");
+    const shouldLaunch = params.get("launch") === "1";
+    if (!roomCode && shouldLaunch && launchPackId) {
+      const target = listings.find((l) => l.packId === launchPackId && l.priceIdr === 0);
+      if (target) {
+        const res = await apiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
+          type: "create-free-room",
+          packId: target.packId,
+          version: target.version,
+          hostName: "Tuan Rumah",
+        });
+        if (res.ok && res.roomCode) {
+          roomCode = res.roomCode;
+          statusMsg = `Ruang ${roomCode} siap dimainkan.`;
+          await refreshRoom();
+          return;
+        }
+      }
+    }
     if (roomCode) {
-      await refreshRoom();
+      await refreshRoom(true);
     } else {
       render();
     }
   }
 
-  async function refreshRoom() {
+  async function refreshRoom(allowInvitePrompt = false) {
     if (!roomCode) return;
     const data = await apiJson<RoomPayload & { error?: string }>(`/api/rulebooks/rooms/${encodeURIComponent(roomCode)}`);
     if ("room" in data && data.room) {
       live = data;
+      errorMsg = "";
+      syncRoomUrl(roomCode);
+    } else if (allowInvitePrompt) {
+      statusMsg = `Undangan ruang ${roomCode} terdeteksi. Masukkan namamu lalu tekan Gabung Ruang.`;
       errorMsg = "";
     } else {
       errorMsg = data.error ?? "Ruang tidak ditemukan.";
@@ -293,6 +327,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         room.phase === "lobby"
           ? `<div class="rb-card">
               <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
+              <p><small>Tautan undangan: <a href="${escapeText(`${location.origin}/?play=rulebook-seek&room=${encodeURIComponent(room.code)}`)}" data-testid="invite-link">${escapeText(`${location.origin}/?play=rulebook-seek&room=${room.code}`)}</a></small></p>
               <ul class="rb-list">
                 ${room.seats
                   .map(
@@ -556,6 +591,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     if (nav === "catalog") {
       live = null;
       roomCode = "";
+      syncRoomUrl("");
       render();
       return;
     }

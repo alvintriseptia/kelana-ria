@@ -68,10 +68,7 @@ try {
   const guest = await device();
   const third = await device();
 
-  await host.page.goto(origin);
-  await host.page.getByText("Berdua", { exact: true }).click();
-  await click(host, "Lihat ringkasan");
-  await click(host, "Main berdua");
+  await host.page.goto(origin + "/?play=duo-claim&players=2&format=claim-the-city&board=compact");
   const createIds = [];
   let createdCode;
   const interceptCreate = async route => {

@@ -85,18 +85,8 @@ try {
   const reviewer = await device();
   const buyer = await device();
 
-  // 1. Writer opens Creator Pack studio from chooser summary, saves v1 draft, and submits v1.
-  await writer.page.goto(origin);
-  await click(writer, "Lihat ringkasan");
-  await Promise.all([
-    writer.page.waitForResponse(
-      (res) =>
-        res.url().startsWith(origin + "/api/packs") &&
-        res.url().includes("role=writer") &&
-        res.request().method() === "GET",
-    ),
-    click(writer, "Paket kreator Jakarta"),
-  ]);
+  // 1. Writer opens legacy Creator Pack studio route, saves v1 draft, and submits v1.
+  await openPacksAs(writer, "writer");
   await writer.page.getByRole("heading", { name: "Paket Kreator Jakarta", level: 1 }).waitFor();
 
   const savedV1 = await postPack(writer, "Simpan draf", "save-draft");
