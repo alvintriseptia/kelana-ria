@@ -1,4 +1,4 @@
-import type { PackOrderSummary, RulebookFormat, RulebookPlayMode } from "@kelana-ria/contracts";
+import type { HideSeekCardCategory, HideSeekQuestionFamily, PackOrderSummary, RulebookFormat, RulebookPlayMode } from "@kelana-ria/contracts";
 import { escapeText } from "./escape-text";
 import jakartaCover from "./assets/jakarta.webp";
 import "./rulebook-catalog.css";
@@ -6,6 +6,18 @@ import "./rulebook-catalog.css";
 const endpoint = "/api/rulebooks/catalog";
 const cacheKey = "kelana-rulebook-catalog";
 const formatNames = { "claim-the-city": "Claim the City", "hide-and-seek": "Hide & Seek" } as const;
+const gameOverviews = {
+  "claim-the-city": "Jelajahi landmark di peta. Check-in di lokasi, lalu selesaikan tantangan untuk mengunci landmark.",
+  "hide-and-seek": "Bergantian jadi penyembunyi dan pencari. Ajukan pertanyaan untuk mempersempit area pencarian.",
+} satisfies Record<RulebookFormat, string>;
+export const clueNames: Record<HideSeekQuestionFamily, string> = {
+  radar: "Radar", thermometer: "Termometer", matching: "Pencocokan", measuring: "Pengukuran", tentacles: "Tentakel", photo: "Foto",
+};
+
+export type PracticeCardExample = { title: string; description: string; kind: HideSeekCardCategory | "tactical" };
+export const cardKindNames: Record<PracticeCardExample["kind"], string> = {
+  time_bonus: "Bonus Waktu", powerup: "Powerup", curse: "Kutukan", tactical: "Kartu Taktis",
+};
 
 export type CatalogEdition = {
   packId: string;
@@ -18,6 +30,7 @@ export type CatalogEdition = {
   minPlayers: number;
   maxPlayers: number;
   startName: string;
+  cardExamples?: PracticeCardExample[];
 } & ({
   format: "claim-the-city";
   durationMinutes: number;
@@ -26,6 +39,12 @@ export type CatalogEdition = {
   claimWeight?: number;
   lockWeight?: number;
   soloTargets: { lockedLandmarks: number; distinctZones: number } | null;
+  tacticalDeckSummary?: {
+    enabled: boolean;
+    totalCards: number;
+    maxHandSize: number;
+    drawTriggers?: { onLock: boolean; onSteal: boolean; onBoldChallenge: boolean };
+  };
 } | {
   format: "hide-and-seek";
   headStartMinutes: number;
@@ -35,7 +54,9 @@ export type CatalogEdition = {
   searchLimitMs?: number;
   objectiveResponseMs: number;
   photoResponseMs: number;
-  questionFamilies: { family: string }[];
+  drawDecisionMs?: number;
+  questionFamilies: { family: HideSeekQuestionFamily; drawCount: number; keepCount: number }[];
+  deckSummary?: { totalCards: number; baseHandLimit: number };
 });
 type Edition = CatalogEdition;
 
@@ -136,16 +157,27 @@ function facts(item: Edition, mode: RulebookPlayMode) {
         ["Batas mencari", `${item.searchLimitMinutes} menit`],
         ["Waktu berkumpul", `${item.regroupMinutes} menit`],
       ];
-  return [["Titik awal", item.startName], ["Pemain", players], ...durations, ["Harga per sesi", price(item)]]
+  const deck = item.format === "claim-the-city"
+    ? (item.tacticalDeckSummary?.enabled ? item.tacticalDeckSummary.totalCards : 0)
+    : item.deckSummary?.totalCards;
+  const mechanics: string[][] = [];
+  if (deck) mechanics.push(["Dek", `${deck} kartu`]);
+  if (deck && item.cardExamples?.length) {
+    mechanics.push(["Jenis kartu", item.cardExamples.map(card => cardKindNames[card.kind]).join(", ")]);
+  }
+  if (item.format === "hide-and-seek" && item.questionFamilies?.length) {
+    mechanics.push(["Petunjuk", item.questionFamilies.map(({ family }) => clueNames[family]).filter(Boolean).join(", ")]);
+  }
+  return [["Titik awal", item.startName], ["Pemain", players], ...durations, ...mechanics, ["Harga per sesi", price(item)]]
     .map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeText(value)}</dd></div>`).join("");
 }
 
 function objective(item: Edition, mode: RulebookPlayMode) {
-  if (item.format === "hide-and-seek") return "Bergantian sembunyi dan mencari. Waktu sembunyi terlama menang.";
+  if (item.format === "hide-and-seek") return "Waktu sembunyi akhir terlama menang.";
   if (mode === "solo" && item.soloTargets) {
     return `Kunci ${item.soloTargets.lockedLandmarks} landmark di setidaknya ${item.soloTargets.distinctZones} zona sebelum waktu habis.`;
   }
-  return "Kuasai zona terbanyak dengan mengklaim dan mengunci landmark.";
+  return "Kuasai zona terbanyak.";
 }
 
 function action(type: string, label: string, style = "secondary", disabled = false) {
@@ -223,10 +255,13 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
           ${(["solo", "group"] as const).map(choice => `<button type="button" class="secondary" data-cat-action="${choice}"
             aria-pressed="${mode === choice}" ${busy ? "disabled" : ""}>${choice === "solo" ? "Solo" : "Grup"}</button>`).join("")}
         </div>` : ""}
-        <div class="cat-box"><h2>Misi</h2><p>${objective(item, mode)}</p></div>
+        <section class="cat-box"><h2>Cara bermain</h2><p>${gameOverviews[item.format]}</p></section>
         ${item.summary ? `<p class="cat-description">${escapeText(item.summary)}</p>` : ""}
         ${item.byline ? `<p class="cat-byline">Oleh ${escapeText(item.byline)}</p>` : ""}
-        <dl class="cat-facts">${facts(item, mode)}</dl>
+        <section class="cat-rules" aria-label="Aturan edisi">
+          <h2>Aturan edisi</h2><p>${objective(item, mode)}</p>
+          <dl class="cat-facts">${facts(item, mode)}</dl>
+        </section>
         ${offline}${status}
         <div class="cat-actions" aria-busy="${busy}">
           ${action("practice", "Coba Panduan")}

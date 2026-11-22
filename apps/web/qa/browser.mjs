@@ -55,13 +55,43 @@ async function verifySeekPractice(page, results, family, timing, responseTime) {
   assert.ok(await dialog.locator('[data-practice-map="deduced"]').isVisible());
   assert.ok(await noOverflow());
   await page.screenshot({ path: join(results, 'practice-' + family.toLowerCase() + '.png') });
+  const offer = dialog.getByRole('button', { name: 'Lihat kartu latihan' });
+  await offer.click();
+  if (family === 'Radar') {
+    const confirm = dialog.getByRole('button', { name: 'Simpan 1 kartu' });
+    const first = dialog.getByRole('button', { name: 'Balik kartu 1' });
+    assert.match(await dialog.innerText(), /Penyembunyi mendapat kartu.*Tarik 2 kartu, simpan 1.*hingga 1 menit/s);
+    assert.equal(await confirm.isDisabled(), true);
+    await tabTo(page, first);
+    await page.keyboard.press('Enter');
+    await dialog.getByRole('button', { name: 'Balik kartu 2' }).click();
+    const pick = dialog.getByRole('button', { name: /^Pilih / });
+    await pick.first().click();
+    assert.ok(await pick.first().isDisabled(), 'Selection cannot exceed the keep count');
+    await dialog.getByRole('button', { name: /^Lepas / }).click();
+    assert.equal(await confirm.isDisabled(), true);
+    const title = await dialog.locator('.ep-card-slot strong').last().innerText();
+    await pick.last().click();
+    assert.match(await dialog.getByRole('status').innerText(), /1\/1 kartu dipilih/);
+    assert.ok(await noOverflow());
+    await page.screenshot({ path: join(results, 'practice-card-choice.png') });
+    await confirm.click();
+    const hand = dialog.getByRole('region', { name: 'Tangan latihan' });
+    assert.deepEqual(await hand.locator('strong').allTextContents(), [title]);
+  } else {
+    const hand = dialog.getByRole('region', { name: 'Tangan latihan' });
+    await hand.waitFor();
+    assert.equal(await dialog.getByRole('button', { name: /Simpan.*kartu/ }).count(), 0);
+    assert.equal(await hand.locator('strong').count(), 1);
+    assert.equal(await hand.locator('.ep-card-face').evaluate(el => getComputedStyle(el).animationName), 'none');
+  }
   await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'hidden' });
   assert.ok(await practice.evaluate(el => el === document.activeElement), 'Practice should restore keyboard focus');
   assert.equal(new URL(page.url()).searchParams.get('room'), null);
 }
 
-async function verifyClaimPractice(page, results, mode) {
+async function verifyClaimPractice(page, results, mode, hasDeck = true) {
   const practice = page.getByRole('button', { name: 'Coba Panduan', exact: true });
   await practice.click();
   const dialog = page.locator('#edition-practice[open]');
@@ -74,7 +104,7 @@ async function verifyClaimPractice(page, results, mode) {
   const toast = dialog.getByRole('alert');
   assert.match(await toast.innerText(), /Kamu masih terlalu jauh dari titik ini/);
   assert.ok(await check.evaluate(el => el === document.activeElement));
-  if (mode === 'solo') await page.screenshot({ path: join(results, 'practice-claim-retry.png') });
+  if (mode === 'solo' && hasDeck) await page.screenshot({ path: join(results, 'practice-claim-retry.png') });
   await dialog.getByRole('button', { name: 'Dekati titik latihan' }).click();
   await check.click();
   await dialog.getByRole('button', { name: 'Tiga arah' }).click();
@@ -86,6 +116,16 @@ async function verifyClaimPractice(page, results, mode) {
   assert.match(await dialog.getByRole('status').innerText(), mode === 'solo'
     ? /1\/4 landmark terkunci · 1\/2 zona/ : /1 zona dikuasai · 1 landmark terkunci/);
   if (mode === 'group') assert.match(await dialog.innerText(), /Klaim berbobot 1 dan kunci berbobot 1/);
+  const cardLesson = dialog.getByRole('button', { name: 'Lihat kartu latihan' });
+  if (hasDeck) {
+    await cardLesson.click();
+    await dialog.getByRole('heading', { name: 'Kartu di tangan' }).waitFor();
+    assert.match(await dialog.innerText(), /Kamu mengunci landmark dan mendapat satu kartu taktis/);
+    const hand = dialog.getByRole('region', { name: 'Tangan latihan' });
+    assert.deepEqual(await hand.locator('strong').allTextContents(), ['Intip Tantangan']);
+    assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth));
+    if (mode === 'solo') await page.screenshot({ path: join(results, 'practice-claim-card.png') });
+  } else assert.equal(await cardLesson.count(), 0);
   await dialog.getByRole('button', { name: 'Ulangi latihan' }).click();
   await dialog.getByRole('heading', { name: 'Pilih landmark' }).waitFor();
   await dialog.getByRole('button', { name: 'Lewati latihan' }).click();
@@ -150,13 +190,15 @@ export async function exerciseChooser(context, origin, dist, results) {
     const detail = page.getByRole('article', { name: 'Detail edisi' });
     await detail.waitFor();
     assert.match(await detail.innerText(), /Hide\s*&\s*Seek/i);
+    assert.match(await detail.innerText(), /Cara bermain.*Bergantian jadi penyembunyi dan pencari/s);
+    assert.match(await detail.getByRole('region', { name: 'Aturan edisi' }).innerText(), /Dek.*Petunjuk/s);
     assert.ok(await noOverflow());
     assert.equal(await detail.getByRole('button', { name: 'Solo', exact: true }).count(), 0);
     await writeFile(join(results, 'edition.aria.txt'), await detail.ariaSnapshot());
     await verifySeekPractice(page, results, 'Radar', /45 menit.*120 menit/, /hingga 4 menit/);
     const versionedUrl = new URL(page.url());
     versionedUrl.searchParams.set('version', '32');
-    // Public catalog fixture for a different edition version with Radar disabled.
+    // Public catalog fixtures for a different clue reward and a disabled tactical deck.
     const alternate = '**/api/rulebooks/catalog';
     await page.route(alternate, async route => {
       const response = await route.fetch();
@@ -165,17 +207,26 @@ export async function exerciseChooser(context, origin, dist, results) {
       payload.editions.push({
         ...original, version: 32, headStartMinutes: 15, searchLimitMinutes: 70,
         headStartMs: 930_000, searchLimitMs: 4_200_000, objectiveResponseMs: 75_000,
-        title: 'Edisi Latihan Termometer', questionFamilies: [{ family: 'thermometer' }],
+        title: 'Edisi Latihan Termometer', questionFamilies: [{ family: 'thermometer', drawCount: 1, keepCount: 1 }],
       });
+      const claim = payload.editions.find(edition => edition.packId === 'official-jakarta-compact-claim');
+      payload.editions.push({ ...claim, version: 33, title: 'Edisi Landmark Tanpa Dek',
+        tacticalDeckSummary: { ...claim.tacticalDeckSummary, enabled: false }, cardExamples: [] });
       await route.fulfill({ response, json: payload });
     });
     await page.goto(versionedUrl.href);
     await page.getByRole('heading', { name: 'Edisi Latihan Termometer' }).waitFor();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await verifySeekPractice(page, results, 'Termometer', /15 menit 30 detik.*70 menit/, /hingga 1 menit 15 detik/);
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
+    await page.goto(new URL('/?edition=official-jakarta-compact-claim&version=33', origin).href);
+    await page.getByRole('heading', { name: 'Edisi Landmark Tanpa Dek' }).waitFor();
+    await verifyClaimPractice(page, results, 'solo', false);
     await page.unroute(alternate);
     await page.goto(origin);
     await soloEdition.waitFor();
     await soloEdition.click();
+    assert.match(await detail.innerText(), /Cara bermain.*Jelajahi landmark di peta/s);
     const group = page.getByRole('button', { name: 'Grup', exact: true });
     const solo = page.getByRole('button', { name: 'Solo', exact: true });
     await tabTo(page, group);

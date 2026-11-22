@@ -86,8 +86,39 @@
 .ep-photo { margin: 0; display: grid; gap: 3px; }
 .ep-photo img { width: 100%; height: 110px; object-fit: cover; border-radius: 8px; }
 .ep-photo figcaption { font-size: .75rem; color: #456356; }
+.ep-cards, .ep-card-pages { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.ep-cards { padding: 10px; border-radius: 12px; background: #dbeade; }
+.ep-cards:has(> :only-child) { grid-template-columns: minmax(0, 238px); justify-content: center; }
+.ep-card-slot { display: grid; grid-template-rows: 1fr auto; min-width: 0; gap: 4px; }
+.ep-card-count { color: #13483c; font-weight: 800; }
+.ep-card-back, .ep-card-face {
+  border: 1px solid #255448; border-radius: 12px; box-shadow: 0 3px #24493c38; min-height: 128px; min-width: 0;
+}
+.ep-card-back {
+  display: grid; place-items: center; color: #e3f195; font-size: 2rem; min-height: 166px;
+  background: repeating-linear-gradient(135deg, #1a4d3e 0 12px, #235c4d 12px 15px, #1a4d3e 15px 26px);
+}
+.ep-card-back span { border: 2px solid currentColor; border-radius: 50%; display: grid; place-items: center; width: 52px; height: 52px; }
+.ep-card-face {
+  display: grid; align-content: start; gap: 5px; background: #faffed; color: #183f35; padding: 8px;
+  overflow-wrap: anywhere;
+}
+.ep-card-face.time_bonus { background: #fff3ce; }
+.ep-card-face.curse { background: #f6e7f6; }
+.ep-card-mark { justify-self: start; font-size: 1.25rem; color: #1a4d3e; }
+.ep-card-face small { font-size: .71rem; font-weight: 750; }
+.ep-card-face p { font-size: .82rem; }
+.ep-card-select { min-height: 44px; border: 1px solid #5b835d; border-radius: 8px; color: #164137; background: #faffed; }
+.ep-card-select[aria-pressed="true"] { background: #d9f181; font-weight: 800; }
+.ep-card-select[aria-disabled="true"] { opacity: .65; }
+.ep-cards.deal > *, .ep-hand > * { animation: ep-deal .26s ease-out both; }
+.ep-cards.deal > :nth-child(even) { animation-delay: .055s; }
+.ep-card-slot.flipped .ep-card-face { animation: ep-flip .23s ease-out; }
 @keyframes ep-lock { from { transform: scale(.72); } 65% { transform: scale(1.16); } }
 @keyframes ep-appear { from { opacity: .4; } }
+@keyframes ep-deal { from { transform: translate(-18px, -12px) scale(.85); opacity: .4; } }
+@keyframes ep-flip { from { transform: perspective(450px) rotateY(-84deg); opacity: .5; } }
 @media (prefers-reduced-motion: reduce) {
   .ep-position, .ep-pin-visual, .ep-overlay { transition: none; animation: none; }
+  .ep-cards.deal > *, .ep-hand > *, .ep-card-slot.flipped .ep-card-face { animation: none; }
 }
