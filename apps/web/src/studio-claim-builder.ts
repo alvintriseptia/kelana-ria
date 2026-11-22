@@ -58,10 +58,10 @@ export function renderClaimStep3(
           : renderClaimDeck(pack, state, dis, editable)
     }
 
-    <div class="rb-step-footer">
-      <button type="button" class="secondary" data-step="2">← Peta &amp; Lokasi</button>
-      ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan &amp; Validasi</button>` : ""}
-      <button type="button" class="primary" data-step="4">Lanjut: Validasi &amp; Ajukan →</button>
+    <div class="rb-sticky-footer">
+      <button type="button" class="secondary" data-step="2">← Peta</button>
+      ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan</button>` : "<span></span>"}
+      <button type="button" class="primary" data-step="4">Validasi →</button>
     </div>
   </div>`;
 }
@@ -121,21 +121,24 @@ function renderClaimChallenges(
       </select>
     </label>
 
-    <ul class="rb-list">
-      ${
-        items.length === 0
-          ? "<li>Belum ada tantangan pada target ini.</li>"
-          : items
-              .map(
-                (item, idx) => `<li>
-                  <div><strong>${escapeText(item.title)}</strong> <span class="rb-badge">${escapeText(item.payload.primitive)}</span></div>
-                  <small>${item.reviewed ? `Ditinjau ${escapeText(item.reviewedAt)}` : "Belum ditinjau"} · ${escapeText(item.verificationNotes)}</small>
-                  ${editable ? `<button type="button" class="secondary" data-c3-action="delete-challenge" data-index="${idx}">Hapus</button>` : ""}
-                </li>`,
-              )
-              .join("")
-      }
-    </ul>
+    <details class="rb-accordion">
+      <summary>Daftar Tantangan (${items.length})</summary>
+      <ul class="rb-list">
+        ${
+          items.length === 0
+            ? "<li>Belum ada tantangan pada target ini.</li>"
+            : items
+                .map(
+                  (item, idx) => `<li>
+                    <div><strong>${escapeText(item.title)}</strong> <span class="rb-badge">${escapeText(item.payload.primitive)}</span></div>
+                    <small>${item.reviewed ? `Ditinjau ${escapeText(item.reviewedAt)}` : "Belum ditinjau"} · ${escapeText(item.verificationNotes)}</small>
+                    ${editable ? `<button type="button" class="secondary" data-c3-action="delete-challenge" data-index="${idx}">Hapus</button>` : ""}
+                  </li>`,
+                )
+                .join("")
+        }
+      </ul>
+    </details>
 
     ${
       editable
@@ -233,21 +236,24 @@ function renderClaimDeck(
     </div>
     ${editable ? `<button type="button" class="secondary" data-c3-action="save-deck-cfg">Simpan Pengaturan Dek</button>` : ""}
 
-    <ul class="rb-list">
-      ${pack.tacticalDeck.cards
-        .map(
-          (card, idx) => `<li>
-            <div>
-              <strong>${escapeText(card.title)}</strong>
-              <span class="rb-badge">${card.copies}x</span>
-              <span class="rb-badge">${escapeText(card.effect.primitive)}</span>
-            </div>
-            <small>${escapeText(card.description)}</small>
-            ${editable ? `<button type="button" class="secondary" data-c3-action="delete-claim-card" data-index="${idx}">Hapus</button>` : ""}
-          </li>`,
-        )
-        .join("")}
-    </ul>
+    <details class="rb-accordion">
+      <summary>Daftar Kartu Taktis (${pack.tacticalDeck.cards.length} jenis)</summary>
+      <ul class="rb-list">
+        ${pack.tacticalDeck.cards
+          .map(
+            (card, idx) => `<li>
+              <div>
+                <strong>${escapeText(card.title)}</strong>
+                <span class="rb-badge">${card.copies}x</span>
+                <span class="rb-badge">${escapeText(card.effect.primitive)}</span>
+              </div>
+              <small>${escapeText(card.description)}</small>
+              ${editable ? `<button type="button" class="secondary" data-c3-action="delete-claim-card" data-index="${idx}">Hapus</button>` : ""}
+            </li>`,
+          )
+          .join("")}
+      </ul>
+    </details>
 
     ${
       editable
