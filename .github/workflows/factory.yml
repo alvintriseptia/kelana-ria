@@ -42,6 +42,8 @@ jobs:
         run: npm run qa:seek --workspace @kelana-ria/web
       - name: Play rulebook-driven Hide & Seek and Creator Studio
         run: npm run qa:rulebook-seek --workspace @kelana-ria/web
+      - name: Exercise the Hide & Seek QA room controls
+        run: npm run qa:seek-mode --workspace @kelana-ria/web
       - name: Play rulebook-driven Claim the City and unified Studio
         run: npm run qa:rulebook-claim --workspace @kelana-ria/web
       - name: Verify full visual Studio Kreator lifecycle and dry-run simulator

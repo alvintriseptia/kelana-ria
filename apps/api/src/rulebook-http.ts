@@ -19,7 +19,16 @@ const cookieName = "kelana_rulebook";
 
 type Store = ReturnType<typeof rulebookStore>;
 
-export function rulebookHandler(store: Store, now: () => number, secureCookie = false) {
+export function rulebookHandler(store: Store, now: () => number, secureCookie = false, allowHideSeekQa = false) {
+  function resolveQaFix(action: Record<string, unknown>, roomCode: string, cred: string, ts: number): boolean {
+    if (!isObject(action.fix) || !("qaLocationId" in action.fix)) return true;
+    if (!allowHideSeekQa || typeof action.fix.qaLocationId !== "string") return false;
+    const fix = store.qaLocation(roomCode, cred, action.fix.qaLocationId, ts);
+    if (!fix) return false;
+    action.fix = fix;
+    return true;
+  }
+
   function ensureCred(request: IncomingMessage, response: ServerResponse): string {
     const existing = credential(request, cookieName);
     if (existing) return existing;
@@ -46,14 +55,14 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
         });
         return;
       }
-      json(response, 200, { role: "public", listings, orders: store.listOrders() });
+      json(response, 200, { role: "public", listings, orders: store.listOrders(), allowHideSeekQa });
       return;
     }
 
     const photoRoute = /^\/api\/rulebooks\/rooms\/([\w-]+)\/photos\/([\w-]+)$/.exec(path);
     if (request.method === "GET" && photoRoute) {
       const cred = credential(request, cookieName);
-      const photo = cred && store.viewSeekPhoto(photoRoute[1], cred, photoRoute[2], now());
+      const photo = cred && store.viewSeekPhoto(photoRoute[1], cred, photoRoute[2], store.roomTime(photoRoute[1], now()));
       if (!photo) return json(response, 404, { error: "photo-not-found" });
       response.writeHead(200, {
         "Content-Type": "image/jpeg",
@@ -68,7 +77,7 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
     if (request.method === "GET" && path.startsWith("/api/rulebooks/rooms/")) {
       const roomCode = decodeURIComponent(path.slice("/api/rulebooks/rooms/".length));
       const cred = ensureCred(request, response);
-      const view = store.viewRoom(roomCode, cred, now());
+      const view = store.viewRoom(roomCode, cred, store.roomTime(roomCode, now()));
       if (!view) return json(response, 404, { error: "room-not-found" });
       json(response, 200, view);
       return;
@@ -99,7 +108,7 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
           typeof actionId !== "string" || actionId.length < 1 || actionId.length > 100 || typeof photoBase64 !== "string") {
         return json(response, 400, { error: "invalid-request" });
       }
-      const reply = await store.answerSeekPhoto(roomCode, cred, questionId, actionId, photoBase64, now);
+      const reply = await store.answerSeekPhoto(roomCode, cred, questionId, actionId, photoBase64, () => store.roomTime(roomCode, now()));
       return json(response, reply.error ? 400 : 200, reply);
     }
 
@@ -175,12 +184,14 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
         return;
       }
       if (type === "create-free-room") {
+        if (body.qa === true && !allowHideSeekQa) return json(response, 403, { error: "seek-qa-disabled" });
         const res = store.createFreeRoomFromRulebook(
           String(body.packId ?? ""),
           Number(body.version ?? 1),
           cred,
           String(body.hostName ?? "Host"),
           ts,
+          body.qa === true,
         );
         json(response, res.ok ? 200 : 400, res);
         return;
@@ -208,33 +219,39 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
         json(response, res.ok ? 200 : 400, res);
         return;
       }
+      const roomCode = String(body.roomCode ?? "");
+      const roomTs = store.roomTime(roomCode, ts);
+      if (type === "seek-qa-advance") {
+        if (!allowHideSeekQa) return json(response, 403, { error: "seek-qa-disabled" });
+        const { step, actionId, expectedDeadline } = body;
+        if ((step !== "minute" && step !== "five-minutes" && step !== "phase-end") ||
+            typeof actionId !== "string" || actionId.length < 1 || actionId.length > 100) {
+          return json(response, 400, { error: "invalid-request" });
+        }
+        const res = store.advanceQaClock(roomCode, cred, actionId, step, expectedDeadline, ts);
+        return json(response, res.error === "qa-host-only" ? 403 : res.error ? 400 : 200, res);
+      }
       if (type === "join-room") {
-        const res = store.joinRoom(String(body.roomCode ?? ""), cred, String(body.name ?? "Player"), ts);
+        const res = store.joinRoom(roomCode, cred, String(body.name ?? "Player"), roomTs);
         json(response, res.ok ? 200 : 400, res);
         return;
       }
       if (type === "room-action") {
-        const res = store.actInRoom(
-          String(body.roomCode ?? ""),
-          cred,
-          body.action as SeekEngineAction | ClaimEngineAction,
-          ts,
-        );
+        if (!isObject(body.action)) return json(response, 400, { error: "invalid-request" });
+        if (!resolveQaFix(body.action, roomCode, cred, roomTs)) return json(response, 400, { error: "invalid-qa-location" });
+        const res = store.actInRoom(roomCode, cred, body.action as SeekEngineAction | ClaimEngineAction, roomTs);
         json(response, "error" in res && !("room" in res) ? 400 : 200, res);
         return;
       }
       if (type === "play-card") {
-        const res = store.playCardInRoom(String(body.roomCode ?? ""), cred, body.params as PlaySeekCardParams, ts);
+        const res = store.playCardInRoom(roomCode, cred, body.params as PlaySeekCardParams, roomTs);
         json(response, res.ok ? 200 : 400, res);
         return;
       }
       if (type === "deck-action") {
-        const res = store.deckActionInRoom(
-          String(body.roomCode ?? ""),
-          cred,
-          (isObject(body.action) ? body.action : {}) as Record<string, unknown>,
-          ts,
-        );
+        const action = isObject(body.action) ? body.action : {};
+        if (!resolveQaFix(action, roomCode, cred, roomTs)) return json(response, 400, { error: "invalid-qa-location" });
+        const res = store.deckActionInRoom(roomCode, cred, action, roomTs);
         json(response, res.ok ? 200 : 400, res);
         return;
       }
