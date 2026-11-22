@@ -1,5 +1,5 @@
 import type { HideSeekQuestionFamily, RulebookPlayMode } from "@kelana-ria/contracts";
-import type { CatalogEdition } from "./rulebook-catalog";
+import { playerRange, type CatalogEdition } from "./rulebook-catalog";
 import { escapeText } from "./escape-text";
 import samplePhoto from "./assets/jakarta.webp";
 import "./edition-practice.css";
@@ -110,28 +110,41 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
   const range = claim?.checkInRadiusMeters
     ? `dalam radius ${claim.checkInRadiusMeters} meter`
     : "dalam radius landmark";
+  const players = mode === "solo" ? "1 pemain · Solo" : playerRange(Math.max(2, edition.minPlayers), edition.maxPlayers);
+  const duration = claim ? formatTime(claim.durationMs ?? claim.durationMinutes * 60_000) : "";
   const goal = claim && mode === "solo" && claim.soloTargets
-    ? `Kunci ${claim.soloTargets.lockedLandmarks} landmark di setidaknya ${claim.soloTargets.distinctZones} zona dalam ${claim.durationMinutes} menit.`
-    : claim ? `Kuasai zona terbanyak dalam ${claim.durationMinutes} menit. Jika seri, bandingkan landmark terkunci lalu total landmark.` : "";
+    ? `Kunci ${claim.soloTargets.lockedLandmarks} landmark di setidaknya ${claim.soloTargets.distinctZones} zona dalam ${duration}.`
+    : `Kuasai zona terbanyak dalam ${duration}. Jika seri, bandingkan landmark terkunci lalu total landmark.`;
+  const weights = claim?.claimWeight !== undefined && claim.lockWeight !== undefined
+    ? ` Klaim berbobot ${claim.claimWeight} dan kunci berbobot ${claim.lockWeight}.`
+    : "";
+  const claimResult = mode === "solo" ? "Landmark ini menambah progresmu." : `Tim dengan bobot landmark tertinggi menguasai zona.${weights}`;
   const claimScenes: Scene[] = [
     { title: "Pilih landmark", text: `${goal} Ketuk pin untuk melihat titik latihan.`, action: "pin", label: "Pilih landmark latihan" },
-    { title: "Check-in di dekat titik", text: `Check-in berhasil ${range}. Setelah itu kamu bisa membuka tantangan.`, action: "check", label: "Check-in latihan" },
+    { title: "Check-in di dekat titik", text: `Pin menunjukkan nama dan status landmark. Masuk ${range} untuk check-in dan membuka tantangan.`, action: "check", label: "Check-in latihan" },
     { title: "Baca petunjuk", text: "Papan latihan punya dua panah. Ada berapa arah yang bisa kamu pilih?", action: "answer", label: "Kirim jawaban" },
-    { title: "Landmark terkunci!", text: "Jawaban tepat. Pin berubah bentuk dan landmark menambah progres zonamu.", action: "finish", label: "Kembali ke edisi" },
+    { title: "Landmark terkunci!", text: `Jawaban tepat. Landmark ini jadi milikmu hingga ronde selesai. ${claimResult}`, action: "finish", label: "Kembali ke edisi" },
   ];
 
   function seekScene(): Scene {
-    if (step === 0) return {
-      title: "Waktunya bersembunyi",
-      text: `Penyembunyi punya ${seek!.headStartMinutes} menit untuk bersiap. Setelah itu pencari mendapat hingga ${seek!.searchLimitMinutes} menit untuk mencari.`,
-      action: "next", label: "Mulai pencarian latihan",
-    };
+    if (step === 0) {
+      const headStart = formatTime(seek!.headStartMs ?? seek!.headStartMinutes * 60_000);
+      const searchLimit = formatTime(seek!.searchLimitMs ?? seek!.searchLimitMinutes * 60_000);
+      return {
+        title: "Waktunya bersembunyi",
+        text: `Penyembunyi punya ${headStart} untuk memilih stasiun sembunyi dan bersiap. Setelah itu pencari mendapat hingga ${searchLimit} untuk mencari.`,
+        action: "next", label: "Mulai pencarian latihan",
+      };
+    }
     if (!clue) return {
       title: "Pencarian dimulai",
       text: "Pencari menelusuri papan dan menyelidiki titik yang mungkin. Setelah berganti peran, waktu sembunyi dibandingkan.",
       action: "finish", label: "Kembali ke edisi",
     };
-    if (step === 1) return { title: "Pencari · Pilih petunjuk", text: clue.prompt, action: "next", label: "Pratinjau " + clue.title };
+    if (step === 1) return {
+      title: "Pencari · Pilih petunjuk", text: `Saat pencarian aktif, gunakan lokasimu untuk menyiapkan petunjuk. ${clue.prompt}`,
+      action: "next", label: "Pratinjau " + clue.title,
+    };
     if (step === 2) return { title: "Pratinjau " + clue.title, text: clue.preview, action: "next", label: "Kirim pertanyaan" };
     if (step === 3) {
       const deadline = family === "photo" ? seek!.photoResponseMs : seek!.objectiveResponseMs;
@@ -150,7 +163,7 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
     };
     return {
       title: family === "photo" ? "Foto diterima" : "Area pencarian menyempit",
-      text: clue.result, action: "finish", label: "Kembali ke edisi",
+      text: `${clue.result} Setelah berganti peran, waktu sembunyi akhir terlama menang.`, action: "finish", label: "Kembali ke edisi",
     };
   }
 
@@ -215,6 +228,7 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
       ${renderBoard()}
       <section class="ep-scene" aria-labelledby="edition-practice-title">
         <h2 id="edition-practice-title" tabindex="-1">${scene.title}</h2>
+        ${step === 0 ? `<p class="ep-player-count">${players}</p>` : ""}
         <p>${scene.text}</p>
         ${evidence()}
       </section>

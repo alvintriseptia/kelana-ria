@@ -21,13 +21,18 @@ export type CatalogEdition = {
 } & ({
   format: "claim-the-city";
   durationMinutes: number;
+  durationMs?: number;
   checkInRadiusMeters: number;
+  claimWeight?: number;
+  lockWeight?: number;
   soloTargets: { lockedLandmarks: number; distinctZones: number } | null;
 } | {
   format: "hide-and-seek";
   headStartMinutes: number;
   searchLimitMinutes: number;
   regroupMinutes: number;
+  headStartMs?: number;
+  searchLimitMs?: number;
   objectiveResponseMs: number;
   photoResponseMs: number;
   questionFamilies: { family: string }[];
@@ -85,7 +90,7 @@ function price(item: Edition) {
   return item.priceIdr === 0 ? "Gratis" : `Rp${item.priceIdr.toLocaleString("id-ID")}`;
 }
 
-function playerRange(minimum: number, maximum: number) {
+export function playerRange(minimum: number, maximum: number) {
   return `${minimum === maximum ? minimum : `${minimum}–${maximum}`} pemain`;
 }
 

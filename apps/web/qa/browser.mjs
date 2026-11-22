@@ -29,7 +29,7 @@ async function confirmCredits(page, results) {
   assert.ok(await about.evaluate(el => el === document.activeElement), 'Credits should restore keyboard focus');
 }
 
-async function verifySeekPractice(page, results, family, timing) {
+async function verifySeekPractice(page, results, family, timing, responseTime) {
   const practice = page.getByRole('button', { name: 'Coba Panduan', exact: true });
   await tabTo(page, practice);
   await page.keyboard.press('Enter');
@@ -44,6 +44,7 @@ async function verifySeekPractice(page, results, family, timing) {
   assert.ok(await dialog.locator('[data-practice-map="preview"]').isVisible());
   await dialog.getByRole('button', { name: 'Kirim pertanyaan' }).click();
   await dialog.getByRole('heading', { name: 'Menunggu jawaban' }).waitFor();
+  assert.match(await dialog.innerText(), responseTime);
   assert.equal(await dialog.locator('[data-practice-map="deduced"]').count(), 0);
   await dialog.getByRole('button', { name: 'Mainkan sisi penyembunyi' }).click();
   const submit = dialog.getByRole('button', { name: 'Kirim jawaban' });
@@ -60,23 +61,31 @@ async function verifySeekPractice(page, results, family, timing) {
   assert.equal(new URL(page.url()).searchParams.get('room'), null);
 }
 
-async function verifyClaimPractice(page, results) {
+async function verifyClaimPractice(page, results, mode) {
   const practice = page.getByRole('button', { name: 'Coba Panduan', exact: true });
   await practice.click();
   const dialog = page.locator('#edition-practice[open]');
+  assert.match(await dialog.innerText(), mode === 'solo' ? /1 pemain · Solo/ : /2–4 pemain/);
+  assert.match(await dialog.innerText(), /90 menit/);
   await dialog.getByRole('button', { name: 'Pilih landmark latihan' }).click();
+  assert.match(await dialog.innerText(), /radius 100 meter/);
   const check = dialog.getByRole('button', { name: 'Check-in latihan' });
   await check.click();
   const toast = dialog.getByRole('alert');
   assert.match(await toast.innerText(), /Kamu masih terlalu jauh dari titik ini/);
   assert.ok(await check.evaluate(el => el === document.activeElement));
-  await page.screenshot({ path: join(results, 'practice-claim-retry.png') });
+  if (mode === 'solo') await page.screenshot({ path: join(results, 'practice-claim-retry.png') });
   await dialog.getByRole('button', { name: 'Dekati titik latihan' }).click();
   await check.click();
+  await dialog.getByRole('button', { name: 'Tiga arah' }).click();
+  await dialog.getByRole('button', { name: 'Kirim jawaban' }).click();
+  assert.match(await toast.innerText(), /Hitung kembali panah/);
   await dialog.getByRole('button', { name: 'Dua arah' }).click();
   await dialog.getByRole('button', { name: 'Kirim jawaban' }).click();
   await dialog.getByRole('heading', { name: 'Landmark terkunci!' }).waitFor();
-  assert.match(await dialog.getByRole('status').innerText(), /1\/4 landmark terkunci · 1\/2 zona/);
+  assert.match(await dialog.getByRole('status').innerText(), mode === 'solo'
+    ? /1\/4 landmark terkunci · 1\/2 zona/ : /1 zona dikuasai · 1 landmark terkunci/);
+  if (mode === 'group') assert.match(await dialog.innerText(), /Klaim berbobot 1 dan kunci berbobot 1/);
   await dialog.getByRole('button', { name: 'Ulangi latihan' }).click();
   await dialog.getByRole('heading', { name: 'Pilih landmark' }).waitFor();
   await dialog.getByRole('button', { name: 'Lewati latihan' }).click();
@@ -144,7 +153,7 @@ export async function exerciseChooser(context, origin, dist, results) {
     assert.ok(await noOverflow());
     assert.equal(await detail.getByRole('button', { name: 'Solo', exact: true }).count(), 0);
     await writeFile(join(results, 'edition.aria.txt'), await detail.ariaSnapshot());
-    await verifySeekPractice(page, results, 'Radar', /45 menit.*120 menit/);
+    await verifySeekPractice(page, results, 'Radar', /45 menit.*120 menit/, /hingga 4 menit/);
     const versionedUrl = new URL(page.url());
     versionedUrl.searchParams.set('version', '32');
     // Public catalog fixture for a different edition version with Radar disabled.
@@ -155,13 +164,14 @@ export async function exerciseChooser(context, origin, dist, results) {
       const original = payload.editions.find(edition => edition.packId === 'official-jakarta-wide-seek');
       payload.editions.push({
         ...original, version: 32, headStartMinutes: 15, searchLimitMinutes: 70,
+        headStartMs: 930_000, searchLimitMs: 4_200_000, objectiveResponseMs: 75_000,
         title: 'Edisi Latihan Termometer', questionFamilies: [{ family: 'thermometer' }],
       });
       await route.fulfill({ response, json: payload });
     });
     await page.goto(versionedUrl.href);
     await page.getByRole('heading', { name: 'Edisi Latihan Termometer' }).waitFor();
-    await verifySeekPractice(page, results, 'Termometer', /15 menit.*70 menit/);
+    await verifySeekPractice(page, results, 'Termometer', /15 menit 30 detik.*70 menit/, /hingga 1 menit 15 detik/);
     await page.unroute(alternate);
     await page.goto(origin);
     await soloEdition.waitFor();
@@ -172,10 +182,11 @@ export async function exerciseChooser(context, origin, dist, results) {
     await page.keyboard.press('Enter');
     assert.equal(await group.getAttribute('aria-pressed'), 'true');
     assert.match(await detail.innerText(), /2–4 pemain/);
+    await verifyClaimPractice(page, results, 'group');
     await tabTo(page, solo);
     await page.keyboard.press('Enter');
     assert.equal(await solo.getAttribute('aria-pressed'), 'true');
-    await verifyClaimPractice(page, results);
+    await verifyClaimPractice(page, results, 'solo');
     const pwa = await checkPwa(page, cdp, origin);
     await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
     await page.getByRole('link', { name: /Katalog/ }).click();
