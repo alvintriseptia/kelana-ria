@@ -155,12 +155,23 @@ try {
   await clickAndWaitPost(pageCreator, 'button[data-map-action="add-landmark"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Landmark Baru"));
 
-  // Step 3: add custom photo_proof challenge & save
+  // Step 3: add custom photo_proof + Call Your Shot challenge + Sabotage Curse tactical card
   await pageCreator.click('button[data-step="3"]');
   await pageCreator.waitForSelector("#ed-claim-photo-title");
   await pageCreator.fill("#ed-claim-photo-title", "Foto Mural Senopati");
   await clickAndWaitPost(pageCreator, 'button[data-action="save-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
+
+  await pageCreator.click('button[data-c3-tab="challenges"]');
+  await pageCreator.fill("#ed-chal-title", "Tantangan Call Your Shot Senopati");
+  await pageCreator.fill("#ed-chal-answer", "rahasia-jawaban-senopati");
+  await clickAndWaitPost(pageCreator, 'button[data-c3-action="add-challenge"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Tantangan Call Your Shot Senopati"));
+
+  await pageCreator.click('button[data-c3-tab="deck"]');
+  await pageCreator.fill("#ed-ccard-title", "Sabotase Macet Senopati");
+  await clickAndWaitPost(pageCreator, 'button[data-c3-action="add-claim-card"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Sabotase Macet Senopati"));
 
   // Step 4: dry-run & submit -> Reviewer publish
   await pageCreator.click('button[data-step="4"]');
@@ -171,6 +182,16 @@ try {
   await pageCreator.click('button[data-tab="reviewer"]');
   await clickAndWaitPost(pageCreator, 'button[data-action="publish"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("publish-version"));
+
+  // Confirm private answer keys NEVER leak on public /api/rulebooks listing
+  const publicListingText = await pageCreator.evaluate(() =>
+    fetch("/api/rulebooks?format=claim-the-city").then((r) => r.text()),
+  );
+  assert.equal(
+    publicListingText.includes("rahasia-jawaban-senopati"),
+    false,
+    "Private answer keys authored in Studio must never leak to public catalog",
+  );
 
   await pageCreator.click('button[data-nav="catalog"]');
   await pageCreator.waitForSelector('article[data-pack-id="pack-senopati-claim"]');

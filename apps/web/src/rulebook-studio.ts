@@ -1,16 +1,34 @@
 import type {
+  ClaimCardEffect,
+  ClaimChallengePrimitive,
+  CurseClearCondition,
   GeoCoordinate,
   GeoSnapshot,
+  HideSeekCardEffect,
+  HideSeekQuestionFamily,
+  HideSeekRegroupPolicy,
+  HideSeekRepeatCostMode,
   MapConfig,
   RulebookFormat,
   RulebookValidationIssue,
 } from "@kelana-ria/contracts";
 import { escapeText } from "./solo-view";
 import {
+  buildClaimCardFromForm,
+  buildClaimChallengeFromForm,
+  renderClaimStep3,
+  type ClaimStep3State,
+} from "./studio-claim-builder";
+import {
   parseStudioBundleJson,
   serializeStudioBundle,
   triggerStudioBundleDownload,
 } from "./studio-json";
+import {
+  buildSeekCardFromForm,
+  renderSeekStep3,
+  type SeekStep3State,
+} from "./studio-seek-builder";
 import {
   createNewLandmark,
   createNewPoi,
@@ -74,6 +92,18 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     selected: null,
     mapFailed: false,
     lastClickedCoord: null,
+  };
+  const seekStep3: SeekStep3State = {
+    subTab: "timers",
+    family: "radar",
+    cardPrimitive: "curse",
+    curseClearType: "photo_challenge",
+  };
+  const claimStep3: ClaimStep3State = {
+    subTab: "session",
+    challengeTarget: "backup",
+    challengePrimitive: "call_your_shot",
+    cardPrimitive: "sabotage_curse",
   };
 
   async function persistDraft(
@@ -391,46 +421,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     const editable = isEditable(active);
     if (isClaimStudioPack(active.pack)) {
-      const pack = active.pack;
-      return `<div class="rb-card" data-studio-slot="rules-builder">
-        <h3>3. Aturan, Tantangan &amp; Dek Taktis · ${escapeText(pack.meta.title)}</h3>
-        <div class="rb-grid-2">
-          <label class="rb-field"><span>Durasi Sesi (menit)</span><input id="ed-claim-duration" type="number" value="${Math.round(pack.session.durationMs / 60_000)}" ${!editable ? "disabled" : ""}></label>
-          <label class="rb-field"><span>Target Kunci Solo</span><input id="ed-claim-solo-locks" type="number" value="${pack.session.soloTargets?.lockedLandmarks ?? 4}" ${!editable ? "disabled" : ""}></label>
-          <label class="rb-field"><span>Target Zona Solo</span><input id="ed-claim-solo-zones" type="number" value="${pack.session.soloTargets?.distinctZones ?? 2}" ${!editable ? "disabled" : ""}></label>
-          <label class="rb-field"><span>Batas Kartu Taktis</span><input id="ed-claim-hand" type="number" value="${pack.tacticalDeck.maxHandSize}" ${!editable ? "disabled" : ""}></label>
-        </div>
-        <label class="rb-field">
-          <span>Tambah Tantangan Foto Kustom ke Backup Pool (Judul)</span>
-          <input id="ed-claim-photo-title" placeholder="Mis. Foto Mural Blok M" ${!editable ? "disabled" : ""}>
-        </label>
-        <div class="rb-step-footer">
-          <button type="button" class="secondary" data-step="2">← Peta &amp; Lokasi</button>
-          ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan &amp; Validasi</button>` : ""}
-          <button type="button" class="primary" data-step="4">Lanjut: Validasi &amp; Ajukan →</button>
-        </div>
-      </div>`;
+      return renderClaimStep3(active.pack, claimStep3, editable);
     }
-
-    const pack = active.pack;
-    return `<div class="rb-card" data-studio-slot="rules-builder">
-      <h3>3. Aturan, Buku Petunjuk &amp; Dek Kartu · ${escapeText(pack.meta.title)}</h3>
-      <div class="rb-grid-2">
-        <label class="rb-field"><span>Radius Zona Sembunyi (m)</span><input id="ed-zone" type="number" value="${pack.geography.hidingZoneRadiusMeters}" ${!editable ? "disabled" : ""}></label>
-        <label class="rb-field"><span>Head Start (menit)</span><input id="ed-head" type="number" value="${Math.round(pack.timers.headStartMs / 60_000)}" ${!editable ? "disabled" : ""}></label>
-        <label class="rb-field"><span>Batas Cari (menit)</span><input id="ed-search" type="number" value="${Math.round(pack.timers.searchLimitMs / 60_000)}" ${!editable ? "disabled" : ""}></label>
-        <label class="rb-field"><span>Batas Kartu Tangan</span><input id="ed-hand" type="number" value="${pack.deck.baseHandLimit}" ${!editable ? "disabled" : ""}></label>
-      </div>
-      <label class="rb-field">
-        <span>Tambah Kutukan Foto Kustom ke Dek (Judul)</span>
-        <input id="ed-curse-title" placeholder="Mis. Kutukan Kopi Senopati" ${!editable ? "disabled" : ""}>
-      </label>
-      <div class="rb-step-footer">
-        <button type="button" class="secondary" data-step="2">← Peta &amp; Lokasi</button>
-        ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan &amp; Validasi</button>` : ""}
-        <button type="button" class="primary" data-step="4">Lanjut: Validasi &amp; Ajukan →</button>
-      </div>
-    </div>`;
+    return renderSeekStep3(active.pack, seekStep3, editable);
   }
 
   function renderStep4(active?: StudioVersionRecord): string {
@@ -573,6 +566,12 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (metaPriceEl) updatedPack.meta.priceIdr = Number(metaPriceEl.value || 0);
 
     if (isClaimStudioPack(updatedPack)) {
+      const minpEl = root.querySelector<HTMLInputElement>("#ed-claim-minp");
+      if (minpEl) updatedPack.session.minPlayers = Number(minpEl.value || 1);
+      const maxpEl = root.querySelector<HTMLInputElement>("#ed-claim-maxp");
+      if (maxpEl) updatedPack.session.maxPlayers = Number(maxpEl.value || 4);
+      const teamEl = root.querySelector<HTMLSelectElement>("#ed-claim-team");
+      if (teamEl) updatedPack.session.teamMode = teamEl.value as "ffa" | "teams";
       const durEl = root.querySelector<HTMLInputElement>("#ed-claim-duration");
       if (durEl) updatedPack.session.durationMs = Number(durEl.value || 90) * 60_000;
       const locksEl = root.querySelector<HTMLInputElement>("#ed-claim-solo-locks");
@@ -581,6 +580,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         if (locksEl) updatedPack.session.soloTargets.lockedLandmarks = Number(locksEl.value || 4);
         if (zonesEl) updatedPack.session.soloTargets.distinctZones = Number(zonesEl.value || 2);
       }
+      const fpEl = root.querySelector<HTMLSelectElement>("#ed-claim-fail-policy");
+      if (fpEl) updatedPack.claiming.multiplayerFailPolicy = fpEl.value as "cooldown_ms" | "burned_for_player";
+      const cdEl = root.querySelector<HTMLInputElement>("#ed-claim-cooldown");
+      if (cdEl) updatedPack.claiming.failCooldownMs = Number(cdEl.value || 5) * 60_000;
       const handEl = root.querySelector<HTMLInputElement>("#ed-claim-hand");
       if (handEl) updatedPack.tacticalDeck.maxHandSize = Number(handEl.value || 2);
       const lmName = root.querySelector<HTMLInputElement>("#ed-claim-landmark-name")?.value.trim();
@@ -604,14 +607,26 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         });
       }
     } else {
+      const minpEl = root.querySelector<HTMLInputElement>("#ed-seek-minp");
+      if (minpEl) updatedPack.session.minPlayers = Number(minpEl.value || 2);
+      const maxpEl = root.querySelector<HTMLInputElement>("#ed-seek-maxp");
+      if (maxpEl) updatedPack.session.maxPlayers = Number(maxpEl.value || 4);
+      const rgpEl = root.querySelector<HTMLSelectElement>("#ed-regroup-policy");
+      if (rgpEl) updatedPack.session.regroupPolicy = rgpEl.value as HideSeekRegroupPolicy;
+      const repEl = root.querySelector<HTMLSelectElement>("#ed-repeat-mode");
+      if (repEl) updatedPack.investigationBook.repeatCostMode = repEl.value as HideSeekRepeatCostMode;
       const zoneEl = root.querySelector<HTMLInputElement>("#ed-zone");
       if (zoneEl) updatedPack.geography.hidingZoneRadiusMeters = Number(zoneEl.value || 400);
       const headEl = root.querySelector<HTMLInputElement>("#ed-head");
       if (headEl) updatedPack.timers.headStartMs = Number(headEl.value || 25) * 60_000;
       const searchEl = root.querySelector<HTMLInputElement>("#ed-search");
       if (searchEl) updatedPack.timers.searchLimitMs = Number(searchEl.value || 60) * 60_000;
+      const regroupEl = root.querySelector<HTMLInputElement>("#ed-regroup");
+      if (regroupEl) updatedPack.timers.regroupLimitMs = Number(regroupEl.value || 30) * 60_000;
       const handEl = root.querySelector<HTMLInputElement>("#ed-hand");
       if (handEl) updatedPack.deck.baseHandLimit = Number(handEl.value || 5);
+      const maxCursesEl = root.querySelector<HTMLInputElement>("#ed-max-curses");
+      if (maxCursesEl) updatedPack.deck.maxActiveBlockingCurses = Number(maxCursesEl.value || 1);
       const stationName = root.querySelector<HTMLInputElement>("#ed-station-name")?.value.trim();
       if (stationName && updatedSnapshot.stations[0]) {
         updatedSnapshot.stations[0].name = stationName;
@@ -653,6 +668,31 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       validationErrors = [];
       statusMsg = "";
       errorMsg = "";
+      render();
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.id === "ed-card-prim") {
+      seekStep3.cardPrimitive = target.value as HideSeekCardEffect["primitive"];
+      render();
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.id === "ed-curse-clear") {
+      seekStep3.curseClearType = target.value as CurseClearCondition["type"];
+      render();
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.id === "ed-chal-target") {
+      claimStep3.challengeTarget = target.value;
+      render();
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.id === "ed-chal-prim") {
+      claimStep3.challengePrimitive = target.value as ClaimChallengePrimitive["primitive"];
+      render();
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.id === "ed-ccard-prim") {
+      claimStep3.cardPrimitive = target.value as ClaimCardEffect["primitive"];
       render();
       return;
     }
@@ -726,6 +766,183 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         id: btn.dataset.selectId,
       };
       render();
+      return;
+    }
+    if (btn.dataset.s3Tab) {
+      seekStep3.subTab = btn.dataset.s3Tab as SeekStep3State["subTab"];
+      render();
+      return;
+    }
+    if (btn.dataset.s3Family) {
+      seekStep3.family = btn.dataset.s3Family as HideSeekQuestionFamily;
+      render();
+      return;
+    }
+    if (btn.dataset.c3Tab) {
+      claimStep3.subTab = btn.dataset.c3Tab as ClaimStep3State["subTab"];
+      render();
+      return;
+    }
+
+    const s3Action = btn.dataset.s3Action;
+    if (s3Action) {
+      void (async () => {
+        const active = currentDraft();
+        if (!active || !isEditable(active) || isClaimStudioPack(active.pack)) return;
+        const pack = structuredClone(active.pack);
+        const snap = structuredClone(active.snapshot);
+        const fam = seekStep3.family;
+        if (s3Action === "save-family-cfg") {
+          const enabled = root.querySelector<HTMLSelectElement>("#ed-fam-enabled")?.value === "true";
+          const drawCount = Math.max(1, Number(root.querySelector<HTMLInputElement>("#ed-fam-draw")?.value ?? 2));
+          const keepCount = Math.max(1, Math.min(drawCount, Number(root.querySelector<HTMLInputElement>("#ed-fam-keep")?.value ?? 1)));
+          const existing = pack.investigationBook.families[fam];
+          if (existing) {
+            existing.enabled = enabled;
+            existing.drawCount = drawCount;
+            existing.keepCount = keepCount;
+          }
+          await persistDraft(pack, snap, `Pengaturan keluarga ${fam} disimpan.`);
+          return;
+        }
+        if (s3Action === "delete-book-item") {
+          const idx = Number(btn.dataset.index ?? -1);
+          const existing = pack.investigationBook.families[fam];
+          if (existing && idx >= 0) {
+            existing.items.splice(idx, 1);
+            await persistDraft(pack, snap, `Item ${fam} dihapus.`);
+          }
+          return;
+        }
+        if (s3Action === "add-book-item") {
+          const label = root.querySelector<HTMLInputElement>("#ed-item-label")?.value.trim();
+          if (!label) {
+            errorMsg = "Label item petunjuk wajib diisi.";
+            render();
+            return;
+          }
+          const num = Number(root.querySelector<HTMLInputElement>("#ed-item-num")?.value ?? 750);
+          const extra = root.querySelector<HTMLInputElement>("#ed-item-extra")?.value.trim() || "taman";
+          const id = `${fam}-${Date.now().toString(36)}`;
+          if (fam === "radar") {
+            pack.investigationBook.families.radar ??= { enabled: true, drawCount: 2, keepCount: 1, availableInPhases: ["seeking", "endgame"], items: [] };
+            pack.investigationBook.families.radar.items.push({ id, label, radiusMeters: num });
+          } else if (fam === "thermometer") {
+            pack.investigationBook.families.thermometer ??= { enabled: true, drawCount: 2, keepCount: 1, availableInPhases: ["seeking"], items: [] };
+            pack.investigationBook.families.thermometer.items.push({ id, label, minTravelMeters: num });
+          } else if (fam === "matching") {
+            pack.investigationBook.families.matching ??= { enabled: true, drawCount: 3, keepCount: 1, availableInPhases: ["seeking"], items: [] };
+            pack.investigationBook.families.matching.items.push({ id, label, matchType: "station_attribute", attributeKey: extra });
+          } else if (fam === "measuring") {
+            pack.investigationBook.families.measuring ??= { enabled: true, drawCount: 3, keepCount: 1, availableInPhases: ["seeking"], items: [] };
+            pack.investigationBook.families.measuring.items.push({ id, label, targetType: "poi_category", poiCategory: extra });
+          } else if (fam === "tentacles") {
+            pack.investigationBook.families.tentacles ??= { enabled: true, drawCount: 4, keepCount: 2, availableInPhases: ["seeking"], items: [] };
+            pack.investigationBook.families.tentacles.items.push({ id, label, radiusMeters: num, poiCategory: extra });
+          } else {
+            pack.investigationBook.families.photo ??= { enabled: true, drawCount: 1, keepCount: 1, availableInPhases: ["seeking", "endgame"], items: [] };
+            pack.investigationBook.families.photo.items.push({ id, label, prompt: extra, phase: "both" });
+          }
+          await persistDraft(pack, snap, `Item ${label} ditambahkan ke ${fam}.`);
+          return;
+        }
+        if (s3Action === "add-seek-card") {
+          const card = buildSeekCardFromForm(root, seekStep3);
+          if (!card) {
+            errorMsg = "Judul kartu wajib diisi.";
+            render();
+            return;
+          }
+          pack.deck.cards.push(card);
+          await persistDraft(pack, snap, `Kartu ${card.title} ditambahkan ke dek.`);
+          return;
+        }
+        if (s3Action === "dup-seek-card") {
+          const idx = Number(btn.dataset.index ?? -1);
+          const orig = pack.deck.cards[idx];
+          if (orig) {
+            const copy = structuredClone(orig);
+            copy.id = `${orig.id}-copy-${Date.now().toString(36)}`;
+            copy.title = `${orig.title} (Salinan)`;
+            pack.deck.cards.push(copy);
+            await persistDraft(pack, snap, `Kartu ${orig.title} diduplikasi.`);
+          }
+          return;
+        }
+        if (s3Action === "delete-seek-card") {
+          const idx = Number(btn.dataset.index ?? -1);
+          if (idx >= 0) {
+            pack.deck.cards.splice(idx, 1);
+            await persistDraft(pack, snap, "Kartu dihapus dari dek.");
+          }
+        }
+      })();
+      return;
+    }
+
+    const c3Action = btn.dataset.c3Action;
+    if (c3Action) {
+      void (async () => {
+        const active = currentDraft();
+        if (!active || !isEditable(active) || !isClaimStudioPack(active.pack)) return;
+        const pack = structuredClone(active.pack);
+        const snap = structuredClone(active.snapshot);
+        if (c3Action === "add-challenge") {
+          const chal = buildClaimChallengeFromForm(root, claimStep3);
+          if (!chal) {
+            errorMsg = "Judul tantangan wajib diisi.";
+            render();
+            return;
+          }
+          if (claimStep3.challengeTarget === "backup") {
+            pack.challenges.backupPool.push(chal);
+          } else {
+            pack.challenges.landmarkChallenges[claimStep3.challengeTarget] ??= [];
+            pack.challenges.landmarkChallenges[claimStep3.challengeTarget].push(chal);
+          }
+          await persistDraft(pack, snap, `Tantangan ${chal.title} ditambahkan.`);
+          return;
+        }
+        if (c3Action === "delete-challenge") {
+          const idx = Number(btn.dataset.index ?? -1);
+          const list =
+            claimStep3.challengeTarget === "backup"
+              ? pack.challenges.backupPool
+              : pack.challenges.landmarkChallenges[claimStep3.challengeTarget];
+          if (list && idx >= 0) {
+            list.splice(idx, 1);
+            await persistDraft(pack, snap, "Tantangan dihapus.");
+          }
+          return;
+        }
+        if (c3Action === "save-deck-cfg") {
+          pack.tacticalDeck.enabled = root.querySelector<HTMLSelectElement>("#ed-cdeck-enabled")?.value === "true";
+          pack.tacticalDeck.maxActiveCursesPerTarget = Math.max(
+            1,
+            Number(root.querySelector<HTMLInputElement>("#ed-cdeck-maxc")?.value ?? 1),
+          );
+          await persistDraft(pack, snap, "Pengaturan Dek Taktis disimpan.");
+          return;
+        }
+        if (c3Action === "add-claim-card") {
+          const card = buildClaimCardFromForm(root, claimStep3);
+          if (!card) {
+            errorMsg = "Judul kartu taktis wajib diisi.";
+            render();
+            return;
+          }
+          pack.tacticalDeck.cards.push(card);
+          await persistDraft(pack, snap, `Kartu taktis ${card.title} ditambahkan.`);
+          return;
+        }
+        if (c3Action === "delete-claim-card") {
+          const idx = Number(btn.dataset.index ?? -1);
+          if (idx >= 0) {
+            pack.tacticalDeck.cards.splice(idx, 1);
+            await persistDraft(pack, snap, "Kartu taktis dihapus.");
+          }
+        }
+      })();
       return;
     }
 
