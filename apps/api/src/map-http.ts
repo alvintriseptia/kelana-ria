@@ -53,6 +53,11 @@ function isTileAsset(parsed: URL): boolean {
     /\/(?:tiles?|v1\/tile)\//i.test(parsed.pathname);
 }
 
+function encodeProxyParam(rawUrl: string): string {
+  const normalized = rawUrl.replace(/%7B/gi, "{").replace(/%7D/gi, "}");
+  return encodeURIComponent(normalized).replace(/%7B/gi, "{").replace(/%7D/gi, "}");
+}
+
 function rewriteStyleJson(
   style: Record<string, unknown>,
   proxyPrefix: string,
@@ -61,10 +66,10 @@ function rewriteStyleJson(
   const rewriteUrl = (value: unknown): unknown => {
     if (typeof value !== "string") return value;
     // Preserve MapLibre template placeholders like {z}/{x}/{y} or {fontstack}/{range}.
-    const probe = value.replace(/\{[^}]+\}/g, "0");
+    const probe = value.replace(/%7B/gi, "{").replace(/%7D/gi, "}").replace(/\{[^}]+\}/g, "0");
     if (!isAllowedUpstream(probe, extraOrigin)) return value;
     const clean = stripApiKey(value);
-    return `${proxyPrefix}?u=${encodeURIComponent(clean)}`;
+    return `${proxyPrefix}?u=${encodeProxyParam(clean)}`;
   };
 
   const cloned = structuredClone(style);
@@ -162,12 +167,16 @@ export function mapHandler(options: MapProxyOptions = {}) {
       }
     }
 
-    if (url.pathname === "/api/map/asset") {
+    const assetMatch = url.pathname.match(/^\/api\/map\/asset((?:@\dx)?\.(?:json|png))?$/);
+    if (assetMatch) {
       if (!apiKey) return json(response, 503, { error: "map-provider-unconfigured" });
       const rawTarget = url.searchParams.get("u");
       if (!rawTarget) return json(response, 400, { error: "invalid-map-asset" });
       const parsed = isAllowedUpstream(rawTarget, extraOrigin);
       if (!parsed) return json(response, 400, { error: "invalid-map-asset" });
+      if (assetMatch[1]) {
+        parsed.pathname += assetMatch[1];
+      }
 
       parsed.searchParams.set("apiKey", apiKey);
       const countsAsTile = isTileAsset(parsed);
@@ -186,8 +195,9 @@ export function mapHandler(options: MapProxyOptions = {}) {
           const data = (await upstream.json()) as Record<string, unknown>;
           if (Array.isArray(data.tiles)) {
             data.tiles = data.tiles.map((tile) =>
-              typeof tile === "string" && isAllowedUpstream(tile.replace(/\{[^}]+\}/g, "0"), extraOrigin)
-                ? `/api/map/asset?u=${encodeURIComponent(stripApiKey(tile))}`
+              typeof tile === "string" &&
+              isAllowedUpstream(tile.replace(/%7B/gi, "{").replace(/%7D/gi, "}").replace(/\{[^}]+\}/g, "0"), extraOrigin)
+                ? `/api/map/asset?u=${encodeProxyParam(stripApiKey(tile))}`
                 : tile,
             );
           }

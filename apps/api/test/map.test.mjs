@@ -67,6 +67,11 @@ test("Geoapify vector map proxy rewrites URLs, keeps apiKey server-side, blocks 
       );
       return;
     }
+    if (reqUrl.pathname === "/v1/styles/osm-bright/sprite@2x.json") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({}));
+      return;
+    }
     if (reqUrl.pathname.endsWith(".pbf")) {
       if (failTile) {
         res.writeHead(503);
@@ -105,6 +110,10 @@ test("Geoapify vector map proxy rewrites URLs, keeps apiKey server-side, blocks 
   const style = JSON.parse(styleText);
   assert.match(style.sources.openmaptiles.url, /^\/api\/map\/asset\?u=/);
   assert.match(style.sprite, /^\/api\/map\/asset\?u=/);
+  assert.ok(style.glyphs.includes("{fontstack}") && style.glyphs.includes("{range}"), "Glyph placeholders must stay literal for MapLibre");
+  const spriteUrl = style.sprite.replace("/api/map/asset", "/api/map/asset@2x.json");
+  const spriteRes = await fetch(`${apiUrl}${spriteUrl}`);
+  assert.equal(spriteRes.status, 200, "Sprite suffix inserted before ?u= must proxy cleanly");
 
   // TileJSON proxy also rewrites tile URLs without leaking apiKey.
   const tileJsonText = await (await fetch(`${apiUrl}${style.sources.openmaptiles.url}`)).text();
