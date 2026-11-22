@@ -160,6 +160,27 @@ export {
   type SeekEngineMatch,
 } from "./seek-engine/seek-engine.js";
 export {
+  autoResolveActiveDraw,
+  buyoutSeekCurse,
+  checkSeekTimeTraps,
+  chooseSeekDrawCards,
+  clearCurseByGpsDetour,
+  clearCurseByHonorTask,
+  computeHeldTimeBonusMs,
+  createSeekDeckState,
+  enqueueSeekDrawBatches,
+  expireSeekDeckAndCurses,
+  onSeekerQuestionAskedForCurses,
+  playSeekDeckCard,
+  resolveAllPendingDrawsOnTurnEnd,
+  reviewCursePhotoProof,
+  submitCursePhotoProof,
+  syncCursesToMatch,
+  viewSeekDeck,
+  type PlaySeekCardParams,
+  type SeekDeckEngineState,
+} from "./seek-engine/deck-engine.js";
+export {
   isFreshSoloEdition,
   prepareSoloFixture,
   toSoloCandidate,

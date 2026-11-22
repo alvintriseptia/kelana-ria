@@ -1,7 +1,12 @@
 // Runtime contracts for the rulebook-driven 2-6 player Hide & Seek engine (#36).
 
 import type {
+  CurseBlockerType,
+  CurseClearCondition,
+  CurseEffectModifier,
   GeoCoordinate,
+  HideSeekCardCategory,
+  HideSeekCardEffect,
   HideSeekPlayPhase,
   HideSeekQuestionFamily,
   HideSeekRulebookPack,
@@ -210,4 +215,70 @@ export type SeekEngineActionReply = {
   endgameTriggered?: boolean;
   earnedDrawBatches?: SeekDrawBatch[];
   purgedPhotoIds?: string[];
+};
+
+// Runtime Hider Deck & Composable Curse contracts (#37).
+
+export type SeekCardInstance = {
+  instanceId: string;
+  cardId: string;
+  category: HideSeekCardCategory;
+  title: string;
+  description: string;
+  effect: HideSeekCardEffect;
+};
+
+export type SeekActiveDrawBatch = {
+  cards: SeekCardInstance[];
+  keepCount: number;
+  deadline: number;
+};
+
+export type SeekPlantedTrap = {
+  trapId: string;
+  stationId: string;
+  stationName: string;
+  bonusMinutes: number;
+  plantedAt: number;
+  triggeredAt: number | null;
+};
+
+export type SeekActiveCurse = {
+  curseInstanceId: string;
+  cardId: string;
+  title: string;
+  description: string;
+  castAt: number;
+  blockerType: CurseBlockerType;
+  effectModifiers: CurseEffectModifier[];
+  clearCondition: CurseClearCondition;
+  expiresAt: number | null;
+  remainingQuestions: number | null;
+  revealedClue?: { clueType: "photo_prompt" | "match_attribute"; detail: string; value: string };
+  pendingPhoto?: {
+    photoId: string;
+    submittedBySeatId: string;
+    submittedAt: number;
+    autoApproveAt: number;
+  } | null;
+};
+
+export type SeekDeckPublicView = {
+  drawPileCount: number;
+  discardPileCount: number;
+  hiderHandCount: number;
+  currentHandLimit: number;
+  activeCurses: SeekActiveCurse[];
+  triggeredTraps: SeekPlantedTrap[];
+  questionsBlocked: boolean;
+  transitBlocked: boolean;
+  bannedFamilies: HideSeekQuestionFamily[];
+  extraDrawPerQuestion: number;
+};
+
+export type SeekDeckHiderView = SeekDeckPublicView & {
+  hand: SeekCardInstance[];
+  activeDraw: SeekActiveDrawBatch | null;
+  queuedBatchCount: number;
+  plantedTraps: SeekPlantedTrap[];
 };
