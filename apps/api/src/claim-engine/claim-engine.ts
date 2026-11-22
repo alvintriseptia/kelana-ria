@@ -63,6 +63,7 @@ type InternalAttempt = {
 
 export type ClaimEngineMatch = {
   code: string;
+  mode?: "solo" | "group";
   pack: ClaimRulebookPack;
   snapshot: GeoSnapshot;
   phase: ClaimEnginePhase;
@@ -91,7 +92,7 @@ export function findClaimEngineSeat(match: ClaimEngineMatch, credentialHash: str
 }
 
 function isSoloMatch(match: ClaimEngineMatch): boolean {
-  return match.seats.length === 1;
+  return match.mode === undefined ? match.seats.length === 1 : match.mode === "solo";
 }
 
 function startVerified(seat: InternalSeat, now: number, requireStartCheckIn: boolean): boolean {
@@ -344,6 +345,7 @@ function completeAttemptSuccess(
 
 export function createClaimEngineMatch(params: {
   code: string;
+  mode?: ClaimEngineMatch["mode"];
   pack: ClaimRulebookPack;
   snapshot: GeoSnapshot;
   hostSeatId: string;
@@ -387,6 +389,7 @@ export function createClaimEngineMatch(params: {
   const hostTeamId = params.hostTeamId ?? params.hostSeatId;
   return {
     code: params.code,
+    mode: params.mode,
     pack: params.pack,
     snapshot: params.snapshot,
     phase: "lobby",
@@ -427,7 +430,8 @@ export function joinClaimEngineMatch(
 ): { ok: true } | { ok: false; error: string } {
   if (match.phase !== "lobby") return { ok: false, error: "room-already-started" };
   if (match.seats.some((s) => s.credentialHash === params.credentialHash)) return { ok: true };
-  if (match.seats.length >= match.pack.session.maxPlayers) return { ok: false, error: "room-full" };
+  const capacity = match.mode === "solo" ? 1 : match.pack.session.maxPlayers;
+  if (match.seats.length >= capacity) return { ok: false, error: "room-full" };
   if (match.seats.some((s) => s.seatId === params.seatId)) return { ok: false, error: "seat-taken" };
   match.seats.push({
     seatId: params.seatId,
@@ -670,7 +674,8 @@ export function applyClaimEngineAction(
       if (!seat.isHost) return finish({ error: "host-only" });
       if (match.startedAt !== null) return finish();
       if (match.phase !== "lobby") return finish({ error: "room-phase-changed" });
-      if (match.seats.length < match.pack.session.minPlayers) return finish({ error: "not-enough-players" });
+      const minimum = match.mode === "group" ? Math.max(2, match.pack.session.minPlayers) : match.pack.session.minPlayers;
+      if (match.seats.length < minimum) return finish({ error: "not-enough-players" });
       const allReady = match.seats.every(
         (s) => s.ready && startVerified(s, now, match.pack.session.requireStartCheckIn),
       );

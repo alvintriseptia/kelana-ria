@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#f7f6ed">
-  <meta name="description" content="Pilih permainan jelajah Jakarta untuk solo atau grup hingga 6 pemain.">
+  <meta name="description" content="Pilih edisi Claim the City atau Hide &amp; Seek untuk menjelajahi kota.">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
@@ -18,49 +18,9 @@
   </div></header>
   <main>
     <div id="setup">
-    <h1>Pilih permainan</h1>
-    <p class="intro">Jelajahi Jakarta dengan berjalan kaki dan naik transportasi umum.</p>
-    <div class="layout">
-      <section class="board" aria-labelledby="board-heading">
-        <div class="art">
-          <img src="/src/assets/jakarta.webp" alt="" width="800" height="550" fetchpriority="high">
-          <div class="caption"><span class="map-pin" aria-hidden="true"></span><h2 id="board-heading">Jakarta</h2></div>
-        </div>
-        <div class="board-info">
-          <label for="board">Cakupan papan</label>
-          <select id="board" name="board" form="chooser">
-            <option value="compact">Jakarta (Compact)</option>
-            <option value="jakarta-wide">Jakarta (Wide)</option>
-          </select>
-          <p id="extent">Sekitar Blok M, Senayan, dan Palmerah.</p>
-          <div class="station"><span class="station-dot" aria-hidden="true"></span><span>Titik awal <strong>CSW–ASEAN</strong></span></div>
-        </div>
-      </section>
-
-      <form id="chooser">
-        <fieldset class="people"><legend>Jumlah pemain</legend>
-          <div class="segments">
-            <label><input type="radio" name="players" value="1" checked><span>Solo</span></label>
-            <label><input type="radio" name="players" value="2"><span>Grup (2–6)</span></label>
-          </div>
-        </fieldset>
-        <fieldset class="formats"><legend>Format permainan</legend>
-          <label class="mode">
-            <input type="radio" name="format" value="claim-the-city" checked>
-            <span class="mode-body"><strong lang="en">Claim the City</strong><span id="claim-objective">Kunci 4 tempat di setidaknya 2 zona sebelum waktu habis.</span><small>1–6 pemain</small></span>
-          </label>
-          <label class="mode">
-            <input type="radio" name="format" value="hide-and-seek" disabled>
-            <span class="mode-body"><strong lang="en">Hide &amp; Seek</strong><span>Bergantian sembunyi dan mencari dengan zona sembunyi, dek kartu &amp; Endgame.</span><small>Perlu 2–6 pemain</small></span>
-          </label>
-        </fieldset>
-        <p class="time-row"><span class="clock" aria-hidden="true"></span><span>Durasi permainan <strong id="duration">90 menit</strong></span></p>
-        <button class="primary" type="submit">Lihat ringkasan <span aria-hidden="true">→</span></button>
-        <button class="secondary" type="button" id="chooser-studio">Studio Kreator &amp; Katalog Paket</button>
-        <p class="sr-only" role="status" id="feedback"></p>
-        <noscript>Aktifkan JavaScript untuk mengubah pilihan permainan.</noscript>
-      </form>
-    </div>
+      <h1>Pilih permainan</h1>
+      <p class="intro">Jelajahi kota lewat misi dan kartu.</p>
+      <noscript>Aktifkan JavaScript untuk membuka katalog permainan.</noscript>
     </div>
     <div id="play" hidden></div>
   </main>
@@ -77,23 +37,6 @@
       </div>
       <p class="credit">Terinspirasi oleh <a href="https://nebula.tv/jetlag" lang="en">Jet Lag: The Game</a>, karya Adam Chase, Sam Denby, dan Ben Doyle, serta aturan komunitas <a href="https://jetlagoxford.co.uk/" target="_blank" rel="noopener noreferrer" lang="en">jetlagoxford.co.uk</a>. Kelana Ria adalah proyek independen.</p>
       <form method="dialog"><button class="secondary ig-close-bottom" data-copy="dialog.close">Tutup</button></form>
-    </div>
-  </dialog>
-  <dialog id="summary" aria-labelledby="summary-heading">
-    <div class="dialog-body">
-      <h2 id="summary-heading" tabindex="-1" autofocus>Ringkasan permainan</h2>
-      <h3 id="summary-format" lang="en"></h3><p id="summary-goal"></p>
-      <dl>
-        <dt>Pemain</dt><dd id="summary-players"></dd>
-        <dt>Papan</dt><dd id="summary-board"></dd>
-        <dt>Titik awal</dt><dd>CSW–ASEAN</dd>
-        <dt>Durasi permainan</dt><dd id="summary-time"></dd>
-      </dl>
-      <p id="summary-travel">Berjalan kaki atau gunakan MRT, KRL, dan Transjakarta. Siapkan data seluler dan ongkos perjalanan.</p>
-      <p class="preview-note" id="summary-note">Gratis dimainkan di Jakarta dengan GPS perangkat.</p>
-      <button id="summary-play" class="primary" type="button" hidden>Main Solo</button>
-      <button id="summary-packs" class="secondary" type="button" hidden>Katalog Paket Komunitas</button>
-      <form method="dialog"><button class="secondary">Kembali ke pilihan</button></form>
     </div>
   </dialog>
   <script type="module" src="/src/index.ts"></script>

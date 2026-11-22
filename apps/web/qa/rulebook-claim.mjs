@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
+import { openEdition } from "./catalog.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -14,6 +15,7 @@ const server = createSoloServer({
   staticDir: distDir,
   midtrans: createRecordedMidtransAdapter(),
   allowSimulatedLocation: true,
+  allowRulebookSandboxCheckout: true,
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -53,9 +55,18 @@ try {
   const ctxSolo = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
   const pageSolo = await ctxSolo.newPage();
   await pageSolo.goto(baseUrl, { waitUntil: "networkidle" });
-  await pageSolo.getByRole("button", { name: "Lihat ringkasan" }).click();
+  await openEdition(pageSolo, "claim-the-city");
   await pageSolo.getByRole("button", { name: "Main Solo", exact: true }).click();
   await pageSolo.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+
+  const soloRoomCode = new URL(pageSolo.url()).searchParams.get("room");
+  assert.equal(await pageSolo.getByTestId("invite-link").count(), 0);
+  const outsider = await browser.newContext();
+  const soloJoin = await outsider.request.post(`${baseUrl}/api/rulebooks`, {
+    data: { type: "join-room", roomCode: soloRoomCode, name: "Penantang" },
+  });
+  assert.equal((await soloJoin.json()).error, "room-full");
+  await outsider.close();
 
   await clickAndWaitPost(pageSolo, 'button[data-action="sim-start-checkin"]');
   await clickAndWaitPost(pageSolo, 'button[data-action="mark-ready"]');
@@ -134,10 +145,16 @@ try {
   const ctxP1 = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageP1 = await ctxP1.newPage();
   await pageP1.goto(baseUrl, { waitUntil: "networkidle" });
-  await pageP1.locator("#chooser").getByText("Grup (2–6)", { exact: true }).click();
-  await pageP1.getByRole("button", { name: "Lihat ringkasan" }).click();
-  await pageP1.getByRole("button", { name: "Main Grup (2–6)", exact: true }).click();
+  await openEdition(pageP1, "claim-the-city");
+  await pageP1.getByRole("button", { name: "Grup", exact: true }).click();
+  await pageP1.getByRole("button", { name: "Main Grup", exact: true }).click();
   await pageP1.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+  const groupRoom = new URL(pageP1.url()).searchParams.get("room");
+  assert.equal(await pageP1.locator('[data-action="start-match"]').isDisabled(), true);
+  const earlyStart = await ctxP1.request.post(`${baseUrl}/api/rulebooks`, {
+    data: { type: "room-action", roomCode: groupRoom, action: { type: "start", actionId: "group-too-small" } },
+  });
+  assert.equal((await earlyStart.json()).error, "not-enough-players");
   const inviteHref = await pageP1.getAttribute('[data-testid="invite-link"]', "href");
   assert.ok(inviteHref && inviteHref.includes("room=RC-"), "Shareable invite link should be visible in lobby");
   const codeMatch = (await pageP1.textContent("body")).match(/Kode:\s*(RC-[A-F0-9]+)/);
@@ -265,17 +282,98 @@ try {
     "Private answer keys authored in Studio must never leak to public catalog",
   );
 
-  await pageCreator.click('button[data-nav="catalog"]');
-  await pageCreator.waitForSelector('article[data-pack-id="pack-senopati-claim"]');
-  await clickAndWaitPost(
-    pageCreator,
-    'article[data-pack-id="pack-senopati-claim"] button[data-action="buy-pack"]',
-  );
-  await pageCreator.waitForSelector('button[data-action="settle-order"]');
-  await clickAndWaitPost(pageCreator, 'button[data-action="settle-order"]');
-  await pageCreator.waitForFunction(
-    () => document.body.textContent.includes("Ruang Tunggu") && document.body.textContent.includes("Pass Berbayar"),
-  );
+  const packs = await ctxCreator.request.get(`${baseUrl}/api/rulebooks?role=writer&format=claim-the-city`);
+  const { versions } = await packs.json();
+  const versionOne = versions.find(record => record.packId === "pack-senopati-claim" && record.version === 1);
+  const fixture = structuredClone(versionOne.pack);
+  fixture.meta.version = 2;
+  fixture.meta.cityLabel = "Kota Contoh (Simulasi)";
+  fixture.meta.title = "Kota Contoh · Claim the City";
+  fixture.meta.priceIdr = 42_000;
+  fixture.session.maxPlayers = 3;
+  fixture.session.durationMs = 105 * 60_000;
+  const author = async data => {
+    const res = await ctxCreator.request.post(`${baseUrl}/api/rulebooks`, { data });
+    const reply = await res.json();
+    assert.ok(reply.ok, JSON.stringify(reply.error ?? reply.validation?.errors));
+    return reply;
+  };
+  await author({ type: "save-draft", pack: fixture, snapshot: versionOne.snapshot });
+  await author({ type: "submit-draft", packId: fixture.meta.packId, version: 2 });
+  await author({ type: "publish-version", packId: fixture.meta.packId, version: 2 });
+
+  const catalog = await ctxCreator.request.get(`${baseUrl}/api/rulebooks/catalog`);
+  const catalogData = await catalog.json();
+  assert.equal(catalogData.editions.filter(item => item.packId === fixture.meta.packId).length, 2);
+  assert.equal(JSON.stringify(catalogData).includes("rahasia-jawaban-senopati"), false);
+
+  const buyer = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const shop = await buyer.newPage();
+  for (const version of [1, 2]) {
+    await shop.goto(baseUrl);
+    const group = shop.getByRole("region", { name: "Claim the City" });
+    await group.locator('.cat-card[data-pack-id="official-jakarta-compact-claim"]').waitFor();
+    const paid = group.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="${version}"]`);
+    await paid.click();
+    const editionUrl = shop.url();
+    const detail = shop.getByRole("article", { name: "Detail edisi" });
+    await detail.waitFor();
+    assert.equal(new URL(editionUrl).searchParams.get("version"), String(version));
+    if (version === 2) {
+      assert.match(await detail.innerText(), /105 menit/);
+      assert.match(await detail.innerText(), /Kota Contoh/);
+    }
+    const orderRequest = shop.waitForRequest(req => req.url().endsWith("/api/rulebooks/catalog") && req.method() === "POST");
+    await shop.getByRole("button", { name: "Beli sesi · Uji pembayaran" }).click();
+    const checkout = (await orderRequest).postDataJSON();
+    await shop.getByRole("button", { name: "Cek status pembayaran" }).waitFor();
+    await shop.reload();
+    await shop.getByRole("button", { name: "Cek status pembayaran" }).click();
+    await shop.getByRole("alert").filter({ hasText: "masih menunggu" }).waitFor();
+    assert.equal(new URL(shop.url()).searchParams.get("room"), null);
+    await shop.getByRole("button", { name: "Simulasikan pembayaran berhasil" }).click();
+    await shop.getByText("Pass Berbayar").waitFor();
+    const roomCode = new URL(shop.url()).searchParams.get("room");
+    const roomResponse = await buyer.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`);
+    const { pass } = await roomResponse.json();
+    assert.equal(pass.version, version);
+    assert.equal(pass.maxPlayers, 1);
+    assert.equal(pass.mode, "solo");
+    const verify = await buyer.request.post(`${baseUrl}/api/rulebooks/catalog`, {
+      data: { ...checkout, type: "check-payment" },
+    });
+    assert.equal((await verify.json()).pass.roomCode, roomCode);
+    if (version === 2) {
+      await shop.route("**/api/health", route => route.fulfill({ json: { allowSimulatedLocation: false } }));
+    }
+    await shop.reload();
+    await shop.getByText("Pass Berbayar").waitFor();
+    if (version === 2) {
+      const { publicBoard: { startPoint }, room } = await roomResponse.json();
+      await shop.evaluate(({ latitude, longitude, timestamp }) => {
+        let retry = false;
+        Object.defineProperty(navigator, "geolocation", { configurable: true, value: {
+          getCurrentPosition(resolve, reject) {
+            if (retry) resolve({ coords: { latitude, longitude, accuracy: 10 }, timestamp });
+            else { retry = true; reject({ code: 1 }); }
+          },
+        } });
+      }, { ...startPoint, timestamp: room.now });
+      const check = shop.getByRole("button", { name: "Check-in Titik Awal", exact: true });
+      await check.click();
+      await shop.getByRole("alert").filter({ hasText: "Izin lokasi ditolak" }).waitFor();
+      assert.equal(new URL(shop.url()).searchParams.get("room"), roomCode);
+      const accepted = shop.waitForResponse(res => res.url().endsWith("/api/rulebooks") && res.request().method() === "POST");
+      await check.click();
+      const verifiedStart = await (await accepted).json();
+      assert.equal(verifiedStart.error, undefined);
+      assert.ok(verifiedStart.room.seats[0].startVerifiedUntil);
+    }
+  }
+  await buyer.close();
+  await author({ type: "pause-version", packId: fixture.meta.packId, version: 2, reason: "Edisi latihan selesai" });
+  await pageCreator.goto(`${baseUrl}/?edition=${fixture.meta.packId}&version=2`);
+  await pageCreator.getByRole("alert").filter({ hasText: "Edisi ini tidak tersedia" }).waitFor();
   await ctxCreator.close();
 
   console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Unified Studio + Midtrans Pass)");

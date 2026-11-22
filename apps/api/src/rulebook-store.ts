@@ -16,6 +16,7 @@ import type {
   PackOrderSummary,
   PackVersionStatus,
   RulebookFormat,
+  RulebookPlayMode,
   SeekEngineAction,
   SeekEngineActionReply,
   SeekEngineRoomView,
@@ -160,9 +161,24 @@ export type RulebookRoomPass = {
   version: number;
   format: RulebookFormat;
   maxPlayers: number;
+  mode?: RulebookPlayMode;
+  minPlayers?: number;
   paid: boolean;
   createdAt: number;
 };
+
+type RulebookOrder = PackOrderSummary & { mode?: RulebookPlayMode };
+
+function catalogOrderId(buyerHash: string, packId: string, version: number, mode: RulebookPlayMode | undefined, requestId: string) {
+  return `KRB-${digest(JSON.stringify([buyerHash, packId, version, mode, requestId])).slice(0, 30)}`;
+}
+
+function supportsMode(pack: AnyRulebookPack, mode?: RulebookPlayMode): boolean {
+  if (!mode) return true;
+  return mode === "solo"
+    ? pack.meta.format === "claim-the-city" && pack.session.minPlayers === 1
+    : pack.session.maxPlayers >= 2;
+}
 
 type LiveSeekSession = {
   format: "hide-and-seek";
@@ -342,7 +358,7 @@ export function rulebookStore(
   const listVersionsStmt = db.prepare("SELECT payload FROM rulebook_versions ORDER BY is_official DESC, pack_id ASC, version DESC");
   const maxVersionStmt = db.prepare("SELECT MAX(version) AS max_v FROM rulebook_versions WHERE pack_id = ?");
   const upsertOrderStmt = db.prepare("INSERT OR REPLACE INTO rulebook_orders (order_id, buyer_hash, pack_id, version, payload) VALUES (?, ?, ?, ?, ?)");
-  const getOrderStmt = db.prepare("SELECT payload FROM rulebook_orders WHERE order_id = ?");
+  const getOrderStmt = db.prepare("SELECT payload, buyer_hash FROM rulebook_orders WHERE order_id = ?");
   const listOrdersStmt = db.prepare("SELECT payload FROM rulebook_orders ORDER BY order_id DESC");
   const getEarningByOrderStmt = db.prepare("SELECT payload FROM rulebook_earnings WHERE order_id = ?");
   const insertEarningStmt = db.prepare("INSERT OR IGNORE INTO rulebook_earnings (earnings_entry_id, order_id, pack_id, version, payload) VALUES (?, ?, ?, ?, ?)");
@@ -376,6 +392,8 @@ export function rulebookStore(
   for (const { pack, snapshot } of officialClaimLoaded) seedOfficial(pack, snapshot);
 
   const liveRooms = new Map<string, LiveSession>();
+  const catalogRooms = new Map<string, string>();
+  const pendingOrders = new Map<string, ReturnType<typeof createOrder>>();
 
   function getRecord(packId: string, version: number): StoredRulebookRecord | undefined {
     const row = getVersionStmt.get(packId, version) as { payload: string } | undefined;
@@ -398,12 +416,14 @@ export function rulebookStore(
     return (listVersionsStmt.all() as { payload: string }[]).map((row) => JSON.parse(row.payload) as StoredRulebookRecord);
   }
 
-  function listPublicListings(format?: RulebookFormat): RulebookPublicListing[] {
+  function listPublicListings(format?: RulebookFormat, everyVersion = false): RulebookPublicListing[] {
     const officialSeekIds = new Set<string>();
-    return allRecords()
-      .filter((r) => r.status === "published" && (!format || r.format === format))
+    const published = allRecords().filter((r) => r.status === "published" && (!format || r.format === format));
+    if (everyVersion) published.sort((a, b) => (b.publishedAt ?? b.updatedAt) - (a.publishedAt ?? a.updatedAt)
+      || a.packId.localeCompare(b.packId) || b.version - a.version);
+    return published
       .filter((r) => {
-        if (!r.isOfficial || r.format !== "hide-and-seek") return true;
+        if (everyVersion || !r.isOfficial || r.format !== "hide-and-seek") return true;
         if (officialSeekIds.has(r.packId)) return false;
         officialSeekIds.add(r.packId);
         return true;
@@ -553,11 +573,12 @@ export function rulebookStore(
 
   function instantiateRoom(
     rec: StoredRulebookRecord,
-    hostCredential: string,
+    hostCredentialHash: string,
     hostName: string,
     now: number,
     orderId: string | null = null,
     qa = false,
+    mode?: RulebookPlayMode,
   ): LiveSession {
     const prefix = rec.format === "claim-the-city" ? "RC" : "RB";
     const roomCode = `${prefix}-${randomBytes(3).toString("hex").toUpperCase()}`;
@@ -569,7 +590,8 @@ export function rulebookStore(
       packId: rec.packId,
       version: rec.version,
       format: rec.format,
-      maxPlayers: rec.pack.session.maxPlayers,
+      maxPlayers: mode === "solo" ? 1 : rec.pack.session.maxPlayers,
+      ...(mode ? { mode, minPlayers: mode === "group" ? Math.max(2, rec.pack.session.minPlayers) : 1 } : {}),
       paid: orderId !== null,
       createdAt: now,
     };
@@ -579,11 +601,12 @@ export function rulebookStore(
       const claimPack = rec.pack as ClaimRulebookPack;
       const match = createClaimEngineMatch({
         code: roomCode,
+        mode,
         pack: claimPack,
         snapshot: rec.snapshot,
         hostSeatId: "seat-1",
         hostName,
-        hostCredentialHash: digest(hostCredential),
+        hostCredentialHash,
       });
       session = { format: "claim-the-city", pass, match, photos: new Map() };
     } else {
@@ -594,7 +617,7 @@ export function rulebookStore(
         snapshot: rec.snapshot,
         hostSeatId: "seat-1",
         hostName,
-        hostCredentialHash: digest(hostCredential),
+        hostCredentialHash,
       });
       const deck = createSeekDeckState(seekPack);
       session = {
@@ -615,6 +638,8 @@ export function rulebookStore(
     hostName: string,
     now: number,
     qa = false,
+    mode?: RulebookPlayMode,
+    requestId?: string,
   ):
     | { ok: true; roomCode: string; pass: RulebookRoomPass; room: SeekEngineRoomView | ClaimEngineRoomView }
     | { ok: false; error: string } {
@@ -622,7 +647,13 @@ export function rulebookStore(
     if (!rec || rec.status !== "published") return { ok: false, error: "pack-unavailable" };
     if (rec.pack.meta.priceIdr > 0) return { ok: false, error: "payment-required" };
     if (qa && rec.format !== "hide-and-seek") return { ok: false, error: "seek-qa-only" };
-    const session = instantiateRoom(rec, hostCredential, hostName, now, null, qa);
+    if (!supportsMode(rec.pack, mode)) return { ok: false, error: "mode-unavailable" };
+    const hostHash = digest(hostCredential);
+    const requestKey = requestId ? JSON.stringify([hostHash, packId, version, mode, requestId]) : undefined;
+    const previousCode = requestKey && catalogRooms.get(requestKey);
+    const previous = previousCode ? liveRooms.get(previousCode) : undefined;
+    const session = previous ?? instantiateRoom(rec, hostHash, hostName, now, null, qa, mode);
+    if (requestKey && !previous) catalogRooms.set(requestKey, session.pass.roomCode);
     const room =
       session.format === "claim-the-city"
         ? viewClaimEngineMatch(session.match, "seat-1", now)
@@ -635,12 +666,40 @@ export function rulebookStore(
     packId: string,
     version: number,
     now: number,
-  ): Promise<{ ok: true; order: PackOrderSummary } | { ok: false; error: string }> {
+    mode?: RulebookPlayMode,
+    requestId?: string,
+  ): Promise<{ ok: true; order: RulebookOrder } | { ok: false; error: string }> {
+    const buyerHash = digest(buyerCredential);
+    const orderId = requestId
+      ? catalogOrderId(buyerHash, packId, version, mode, requestId)
+      : `KRB-${now}-${randomBytes(3).toString("hex").toUpperCase()}`;
+    const existing = getOrderStmt.get(orderId) as { payload: string; buyer_hash: string } | undefined;
+    if (existing?.buyer_hash === buyerHash) return { ok: true, order: JSON.parse(existing.payload) as RulebookOrder };
+    const pending = pendingOrders.get(orderId);
+    if (pending) return pending;
     const rec = getRecord(packId, version);
     if (!rec || rec.status !== "published") return { ok: false, error: "pack-unavailable" };
     if (rec.pack.meta.priceIdr <= 0) return { ok: false, error: "pack-is-free" };
+    if (!supportsMode(rec.pack, mode)) return { ok: false, error: "mode-unavailable" };
+    const task = createProviderOrder(rec, orderId, buyerHash, now, mode);
+    pendingOrders.set(orderId, task);
+    try {
+      return await task;
+    } finally {
+      pendingOrders.delete(orderId);
+    }
+  }
 
-    const orderId = `KRB-${now}-${randomBytes(3).toString("hex").toUpperCase()}`;
+  function viewCatalogOrder(credential: string, packId: string, version: number, mode: RulebookPlayMode, requestId: string) {
+    const buyerHash = digest(credential);
+    const orderId = catalogOrderId(buyerHash, packId, version, mode, requestId);
+    const row = getOrderStmt.get(orderId) as { payload: string; buyer_hash: string } | undefined;
+    return row?.buyer_hash === buyerHash ? JSON.parse(row.payload) as RulebookOrder : undefined;
+  }
+
+  async function createProviderOrder(
+    rec: StoredRulebookRecord, orderId: string, buyerHash: string, now: number, mode?: RulebookPlayMode,
+  ): Promise<{ ok: true; order: RulebookOrder } | { ok: false; error: string }> {
     const gross = rec.pack.meta.priceIdr;
     const fee = Math.round(gross * PLATFORM_FEE_RATE);
     const share = gross - fee;
@@ -657,13 +716,14 @@ export function rulebookStore(
       return { ok: false, error: "payment-provider-unavailable" };
     }
 
-    const order: PackOrderSummary = {
+    const order: RulebookOrder = {
       orderId,
       packId: rec.packId,
       version: rec.version,
       title: rec.pack.meta.title,
       byline: rec.pack.meta.byline,
-      players: rec.pack.session.minPlayers === 1 && rec.pack.session.maxPlayers === 1 ? 1 : 2,
+      players: mode === "solo" || (rec.pack.session.minPlayers === 1 && rec.pack.session.maxPlayers === 1) ? 1 : 2,
+      ...(mode ? { mode } : {}),
       currency: "IDR",
       grossAmountIdr: gross,
       platformFeeIdr: fee,
@@ -680,20 +740,30 @@ export function rulebookStore(
       snapRedirectUrl: snap.redirectUrl,
       sandbox: true,
     };
-    upsertOrderStmt.run(orderId, digest(buyerCredential), rec.packId, rec.version, JSON.stringify(order));
+    upsertOrderStmt.run(orderId, buyerHash, rec.packId, rec.version, JSON.stringify(order));
     return { ok: true, order };
   }
 
   async function settleVerifiedOrder(
     orderId: string,
-    hostCredential: string,
+    hostCredential: string | undefined,
     hostName: string,
     notification: Partial<MidtransNotificationPayload> | undefined,
     now: number,
   ): Promise<{ ok: true; duplicate: boolean; order: PackOrderSummary; pass?: RulebookRoomPass } | { ok: false; error: string }> {
-    const row = getOrderStmt.get(orderId) as { payload: string } | undefined;
-    if (!row) return { ok: false, error: "order-not-found" };
-    const order = JSON.parse(row.payload) as PackOrderSummary;
+    const row = getOrderStmt.get(orderId) as { payload: string; buyer_hash: string } | undefined;
+    if (!row || (hostCredential !== undefined && digest(hostCredential) !== row.buyer_hash)) {
+      return { ok: false, error: "order-not-found" };
+    }
+    const order = JSON.parse(row.payload) as RulebookOrder;
+    if (hostCredential === undefined || notification?.signature_key) {
+      if (!notification?.signature_key || !midtrans.verifySignature({
+        order_id: orderId,
+        status_code: notification.status_code ?? "200",
+        gross_amount: notification.gross_amount ?? `${order.grossAmountIdr}.00`,
+        signature_key: notification.signature_key,
+      })) return { ok: false, error: "invalid-signature" };
+    }
 
     if (order.status === "settled") {
       const passRow = getPassByOrderStmt.get(orderId) as { payload: string } | undefined;
@@ -706,19 +776,11 @@ export function rulebookStore(
     }
     if (now >= order.expiresAt) {
       order.status = "expired";
-      upsertOrderStmt.run(orderId, digest(hostCredential), order.packId, order.version, JSON.stringify(order));
+      upsertOrderStmt.run(orderId, row.buyer_hash, order.packId, order.version, JSON.stringify(order));
       return { ok: false, error: "order-expired" };
     }
 
-    if (notification?.signature_key) {
-      const verifiedSig = midtrans.verifySignature({
-        order_id: orderId,
-        status_code: notification.status_code ?? "200",
-        gross_amount: notification.gross_amount ?? `${order.grossAmountIdr}.00`,
-        signature_key: notification.signature_key,
-      });
-      if (!verifiedSig) return { ok: false, error: "invalid-signature" };
-    } else if (isRecordedAdapter(midtrans) && notification?.transaction_status) {
+    if (!notification?.signature_key && isRecordedAdapter(midtrans) && notification?.transaction_status) {
       const parsedNotifAmount =
         notification.gross_amount !== undefined ? parseMidtransIdrAmount(notification.gross_amount) : undefined;
       midtrans.setOrderState(orderId, {
@@ -738,9 +800,12 @@ export function rulebookStore(
     if (status.grossAmountIdr !== order.grossAmountIdr || status.currency !== "IDR") {
       return { ok: false, error: "amount-or-currency-mismatch" };
     }
-    if (status.transactionStatus !== "settlement" && status.transactionStatus !== "capture") {
-      return { ok: false, error: `payment-${status.transactionStatus}` };
-    }
+    const isSettled = status.transactionStatus === "settlement" ||
+      (status.transactionStatus === "capture" && (status.fraudStatus === undefined || status.fraudStatus === "accept"));
+    if (!isSettled) return {
+      ok: false,
+      error: status.transactionStatus === "capture" ? "payment-review" : `payment-${status.transactionStatus}`,
+    };
 
     const rec = getRecord(order.packId, order.version);
     if (!rec) return { ok: false, error: "pack-not-found" };
@@ -748,7 +813,7 @@ export function rulebookStore(
     const existingPassRow = getPassByOrderStmt.get(orderId) as { payload: string } | undefined;
     const pass = existingPassRow
       ? (JSON.parse(existingPassRow.payload) as RulebookRoomPass)
-      : instantiateRoom(rec, hostCredential, hostName, now, orderId).pass;
+      : instantiateRoom(rec, row.buyer_hash, hostName, now, orderId, false, order.mode).pass;
 
     const existingEarningRow = getEarningByOrderStmt.get(orderId) as { payload: string } | undefined;
     const earning: PackEarningsEntry = existingEarningRow
@@ -777,7 +842,7 @@ export function rulebookStore(
     order.passId = pass.passId;
     order.roomCode = pass.roomCode;
     order.earningsEntryId = earning.earningsEntryId;
-    upsertOrderStmt.run(orderId, digest(hostCredential), order.packId, order.version, JSON.stringify(order));
+    upsertOrderStmt.run(orderId, row.buyer_hash, order.packId, order.version, JSON.stringify(order));
     return { ok: true, duplicate: false, order, pass };
   }
 
@@ -1144,6 +1209,7 @@ export function rulebookStore(
     reviewVersion,
     createFreeRoomFromRulebook,
     createOrder,
+    viewCatalogOrder,
     settleVerifiedOrder,
     joinRoom,
     actInRoom,

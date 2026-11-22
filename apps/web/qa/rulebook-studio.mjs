@@ -15,6 +15,7 @@ const server = createSoloServer({
   staticDir: distDir,
   midtrans: createRecordedMidtransAdapter(),
   allowSimulatedLocation: true,
+  allowRulebookSandboxCheckout: true,
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

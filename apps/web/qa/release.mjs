@@ -7,6 +7,7 @@ import { chromium } from "playwright";
 import { preview } from "vite";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { phoneOptions } from "./profile.mjs";
+import { openEdition } from "./catalog.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const results = join(root, "qa-results");
@@ -63,17 +64,11 @@ try {
   async function launchFromRoot(page, { players, format, board }) {
     await page.goto(origin, { waitUntil: "networkidle" });
     await page.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
-    await page.locator("#chooser").getByText(players === 2 ? "Grup (2–6)" : "Solo", { exact: true }).click();
-    await page.locator("label").filter({ has: page.locator(`input[value="${format}"]`) }).click();
-    await page.locator('select[name="board"]').selectOption(board);
-    await page.getByRole("button", { name: "Lihat ringkasan" }).click();
-    const playLabel =
-      format === "hide-and-seek"
-        ? "Main Hide & Seek"
-        : players === 2
-          ? "Main Grup (2–6)"
-          : "Main Solo";
-    await page.getByRole("button", { name: playLabel, exact: true }).click();
+    await openEdition(page, format, board);
+    if (format === "claim-the-city" && players === 2) {
+      await page.getByRole("button", { name: "Grup", exact: true }).click();
+    }
+    await page.getByRole("button", { name: players === 2 ? "Main Grup" : "Main Solo", exact: true }).click();
     await page.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
   }
 

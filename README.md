@@ -24,7 +24,9 @@ Add dependencies to the workspace that imports them, for example with `npm insta
 
 ## Development
 
-Run `npm run dev` to open the game chooser locally. For installation and offline checks, serve the production build with `npm run preview --workspace @kelana-ria/web` on localhost or an HTTPS origin. Serve the web build at the root path. The service worker verifies the original build bytes before caching the shell.
+Run the API and `npm run dev` to open the game catalog locally. For installation and offline checks, serve the production build with `npm run preview --workspace @kelana-ria/web` on localhost or an HTTPS origin. Serve the web build at the root path. The service worker verifies the original build bytes before caching the shell.
+
+Each edition page has a shareable address with its pack ID and version. Set `ALLOW_RULEBOOK_SANDBOX_CHECKOUT=1` on a test server to use the catalog’s test payment flow. Public sessions can launch free editions.
 
 To reproduce the mobile checks after building:
 
@@ -44,7 +46,7 @@ npm start --workspace @kelana-ria/api
 npm run dev
 ```
 
-Choose Solo, Claim the City and Jakarta (Compact), then open **Lihat ringkasan** and **Coba simulasi**. Use **Simulasikan lokasi di sini** to test check-ins without traveling. The board, challenges and location samples are fixtures. The local server stores countdowns, scores and results in `apps/api/.data/solo.sqlite`. Set `SOLO_DATABASE_PATH` to choose another database. The PWA caches the chooser shell. The outing requires a server connection for check-ins, claims and recovery.
+Open Claim the City’s Compact edition and choose **Main Solo** to start the current game. For the older simulated fixture, open `/?play=solo-claim` and use **Simulasikan lokasi di sini** to test check-ins without traveling. The board, challenges and location samples in that fixture are prepared data. The local server stores its countdowns, scores and results in `apps/api/.data/solo.sqlite`. Set `SOLO_DATABASE_PATH` to choose another database. The PWA caches the catalog shell. The outing requires a server connection for check-ins, claims and recovery.
 
 Run `npm test --workspace @kelana-ria/api` for server rules, edition validation (`compact-board-v1`), two feasible Compact editions with attributed route snapshots, HTTP provider adapters, and same-configuration fallback checks, and `npm run qa:solo --workspace @kelana-ria/web` for the mobile win, loss, provider outage rehearsal, closure notice and recovery paths. The browser test starts a fixture API with an isolated database and controlled clock. It writes screenshots and a result report alongside the chooser QA evidence.
 
@@ -52,7 +54,7 @@ Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (optional `CLOUDFLARE_AI_
 
 ## Play the Compact two-player fixture
 
-With the API and web server running, choose **Berdua**, **Claim the City**, and **Jakarta (Compact)**. Open the summary, choose **Coba simulasi berdua**, and create a room. Open its invitation in a second browser profile so each player has a separate seat. Both players check in at CSW–ASEAN and mark themselves ready before the host starts. The room shows who owns each landmark and how many landmarks each player has in every zone.
+With the API and web server running, open Claim the City’s Compact edition, select **Grup**, and choose **Main Grup**. Open its invitation in a second browser profile so each player has a separate seat. Both players check in at CSW–ASEAN and mark themselves ready before the host starts. The room shows who owns each landmark and how many landmarks each player has in every zone. The earlier two-player simulation is available at `/?play=duo-claim`.
 
 Run `npm run qa:duo --workspace @kelana-ria/web` against a production build to exercise two independent browser profiles. The test records both views and the public event sequence in the mobile QA artifact.
 
