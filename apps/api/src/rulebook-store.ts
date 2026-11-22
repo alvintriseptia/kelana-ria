@@ -19,6 +19,7 @@ import type {
   SeekEngineAction,
   SeekEngineActionReply,
   SeekEngineRoomView,
+  SeekMapPreviewRequest,
 } from "@kelana-ria/contracts";
 import {
   applyClaimEngineAction,
@@ -64,6 +65,7 @@ import {
   expireSeekEngineMatch,
   findSeekEngineSeat,
   joinSeekEngineMatch,
+  previewSeekEngineQuestion,
   viewSeekEngineMatch,
   type SeekEngineMatch,
 } from "./seek-engine/seek-engine.js";
@@ -848,6 +850,14 @@ export function rulebookStore(
     return reply;
   }
 
+  function previewSeekQuestion(roomCode: string, credential: string, request: SeekMapPreviewRequest, now: number) {
+    const session = liveRooms.get(roomCode);
+    if (session?.format !== "hide-and-seek") return { error: "room-not-found" };
+    const seatId = findSeekEngineSeat(session.match, digest(credential));
+    if (!seatId) return { error: "not-a-member" };
+    return previewSeekEngineQuestion(session.match, seatId, request, now);
+  }
+
   function roomTime(roomCode: string, now: number): number {
     const session = liveRooms.get(roomCode);
     return now + (session?.format === "hide-and-seek" ? session.qa?.offsetMs ?? 0 : 0);
@@ -1083,6 +1093,7 @@ export function rulebookStore(
     deckActionInRoom,
     viewRoom,
     roomTime,
+    previewSeekQuestion,
     qaLocation,
     advanceQaClock,
     seedGeoFromOfficialFixture,

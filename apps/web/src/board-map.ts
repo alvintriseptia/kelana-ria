@@ -2,7 +2,7 @@ import polygonClipping, { type MultiPolygon, type Polygon } from "polygon-clippi
 import * as maplibregl from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import "maplibre-gl/dist/maplibre-gl.css";
-import type { GeoCoordinate, MapConfig, SeekDeductionOverlay, SoloPoint } from "@kelana-ria/contracts";
+import type { GeoCoordinate, MapConfig, SeekDeductionOverlay, SeekMapPreview, SoloPoint } from "@kelana-ria/contracts";
 import "./board-map.css";
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
@@ -258,7 +258,31 @@ function searchArea(boundary: GeoCoordinate[], circles: BoardMapRadarCircle[]): 
   };
 }
 
-export function mountBoardMap(options: BoardMapOptions): { destroy: () => void; getCamera: () => BoardCamera | undefined } {
+function questionPreviewFeatures(preview?: SeekMapPreview): GeoJSON.FeatureCollection {
+  const features: GeoJSON.Feature[] = [];
+  if (!preview) return { type: "FeatureCollection", features };
+  const coordinates = (point: GeoCoordinate) => [point.longitude, point.latitude];
+  const origin = coordinates(preview.reference);
+  if (preview.radiusMeters !== undefined) {
+    features.push({
+      type: "Feature", properties: { kind: "radius" },
+      geometry: { type: "Polygon", coordinates: [circlePolygon(preview.reference, preview.radiusMeters, 96)] },
+    });
+  }
+  for (const target of preview.station ? [preview.station] : preview.targets ?? []) {
+    const targetPoint = coordinates(target);
+    if (preview.radiusMeters === undefined) {
+      features.push({
+        type: "Feature", properties: { kind: "connection" }, geometry: { type: "LineString", coordinates: [origin, targetPoint] },
+      });
+    }
+    features.push({ type: "Feature", properties: { kind: "target" }, geometry: { type: "Point", coordinates: targetPoint } });
+  }
+  features.push({ type: "Feature", properties: { kind: "reference" }, geometry: { type: "Point", coordinates: origin } });
+  return { type: "FeatureCollection", features };
+}
+
+export function mountBoardMap(options: BoardMapOptions) {
   const {
     container,
     config,
@@ -320,7 +344,63 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void; 
   let map: maplibregl.Map | undefined;
   let destroyed = false;
   let styleLoaded = false;
+  let questionPreview: SeekMapPreview | undefined;
+  let previewPadding: Required<maplibregl.PaddingOptions> | undefined;
   const markers: maplibregl.Marker[] = [];
+
+  function focusQuestionPreview(padding: maplibregl.PaddingOptions) {
+    if (!map || !questionPreview || !styleLoaded) return;
+    const { reference, station, targets, radiusMeters } = questionPreview;
+    const bounds = new maplibregl.LngLatBounds();
+    for (const point of [reference, ...(station ? [station] : targets ?? [])]) bounds.extend([point.longitude, point.latitude]);
+    if (radiusMeters !== undefined) {
+      for (const point of circlePolygon(reference, radiusMeters, 16)) bounds.extend(point);
+    }
+    map.fitBounds(bounds, { padding, maxZoom: 16, duration: 0 });
+  }
+
+  function drawQuestionPreview() {
+    if (!map || !styleLoaded) return;
+    const source = map.getSource<maplibregl.GeoJSONSource>("question-draft");
+    if (source) {
+      source.setData(questionPreviewFeatures(questionPreview));
+    } else if (questionPreview) {
+      map.addSource("question-draft", { type: "geojson", data: questionPreviewFeatures(questionPreview) });
+      map.addLayer({
+        id: "question-draft-fill", source: "question-draft", type: "fill",
+        filter: ["==", ["get", "kind"], "radius"],
+        paint: { "fill-color": "#2664aa", "fill-opacity": 0.12 },
+      });
+      map.addLayer({
+        id: "question-draft-outline", source: "question-draft", type: "line",
+        filter: ["match", ["get", "kind"], ["radius", "connection"], true, false],
+        paint: { "line-color": "#255d9f", "line-width": 3, "line-dasharray": [2, 2] },
+      });
+      map.addLayer({
+        id: "question-draft-points", source: "question-draft", type: "circle",
+        filter: ["match", ["get", "kind"], ["reference", "target"], true, false],
+        paint: {
+          "circle-color": ["case", ["==", ["get", "kind"], "reference"], "#255d9f", "#6745a8"],
+          "circle-radius": ["case", ["==", ["get", "kind"], "reference"], 7, 5],
+          "circle-stroke-color": "#fff",
+          "circle-stroke-width": 2,
+        },
+      });
+    }
+    if (!questionPreview) {
+      delete container.dataset.questionPreview;
+      return;
+    }
+    container.dataset.questionPreview = String(questionPreview.radiusMeters ?? "point");
+    if (previewPadding) {
+      const { reference } = questionPreview;
+      const { x, y } = map.project([reference.longitude, reference.latitude]);
+      if (x < previewPadding.left || x > canvasHost.clientWidth - previewPadding.right ||
+          y < previewPadding.top || y > canvasHost.clientHeight - previewPadding.bottom) {
+        focusQuestionPreview(previewPadding);
+      }
+    }
+  }
 
   function initMap(style: maplibregl.StyleSpecification) {
     if (destroyed) return;
@@ -423,6 +503,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void; 
         if (!camera && (focusPoints?.length ?? allPoints.length) > 1) {
           map.fitBounds(bounds, { padding: fitPadding ?? 36, maxZoom: 14.5, duration: 0 });
         }
+        drawQuestionPreview();
         container.dataset.mapReady = "true";
       });
 
@@ -495,9 +576,17 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void; 
 
   return {
     getCamera: () => map && styleLoaded ? { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() } : undefined,
+    setQuestionPreview(preview?: SeekMapPreview, padding?: Required<maplibregl.PaddingOptions>) {
+      if (preview === questionPreview) return;
+      questionPreview = preview;
+      previewPadding = padding;
+      drawQuestionPreview();
+    },
+    focusQuestionPreview,
     destroy() {
       destroyed = true;
       delete container.dataset.mapReady;
+      delete container.dataset.questionPreview;
       for (const m of markers) m.remove();
       map?.remove();
       map = undefined;

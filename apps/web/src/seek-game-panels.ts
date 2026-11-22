@@ -58,10 +58,11 @@ export function questionOptions(
   blocked: boolean,
   thermometer: { started: boolean; distance?: number } | undefined,
   busy: boolean,
+  preview?: { content: string; ready: boolean; validUntil?: number },
 ): string {
   const startThermometer = thermometer && !thermometer.started;
   const canSend = !blocked && !busy && selected?.availableInCurrentPhase && !selected.lockedSingleUse &&
-    (!thermometer || (thermometer.distance ?? 0) >= (selected.minTravelMeters ?? Infinity));
+    (!thermometer || (thermometer.distance ?? 0) >= (selected.minTravelMeters ?? Infinity)) && (preview?.ready ?? true);
   return `<div class="sg-detail-title">
       ${questionArt(family)}
       <div><h2 id="sg-panel-title" tabindex="-1">${questionNames[family]}</h2><p>${descriptions[family]}</p></div>
@@ -76,9 +77,10 @@ export function questionOptions(
       : "Tandai titik A. Bergerak sesuai jarak minimum, lalu tandai titik B."}${selected?.minTravelMeters ? ` Minimum ${selected.minTravelMeters} m.` : ""}</p>` : ""}
     ${selected?.prompt ? `<p>${escapeText(selected.prompt)}</p>` : ""}
     ${selected?.isCustomRadius ? `<label class="rb-field">Radius (meter)<input id="sg-radius" type="number" min="1" inputmode="numeric" required></label>` : ""}
+    ${preview?.content ?? ""}
     ${selected ? `<p class="sg-reward-note">${rewardLabel(selected.drawBatches)}${selected.nextRepeatMultiplier > 1 ? ` · ${selected.nextRepeatMultiplier}× biaya` : ""}</p>` : ""}
     ${thermometer ? `<button type="button" class="${startThermometer ? "sg-main" : "sg-pick"}" data-action="${startThermometer ? "start-thermometer" : "mark-thermometer-end"}" ${busy || blocked || !selected ? "disabled" : ""}>${startThermometer ? "Tandai titik A" : "Tandai titik B"}</button>` : ""}
-    ${startThermometer ? "" : `<button type="button" class="sg-main" data-action="ask-clue" data-family="${family}" data-item="${escapeText(selected?.itemId ?? "")}" ${canSend ? "" : "disabled"}>Kirim pertanyaan</button>`}`;
+    ${startThermometer ? "" : `<button type="button" class="sg-main" data-action="ask-clue" data-family="${family}" data-item="${escapeText(selected?.itemId ?? "")}" ${preview?.validUntil === undefined ? "" : `data-preview-until="${preview.validUntil}"`} ${canSend ? "" : "disabled"}>Kirim pertanyaan</button>`}`;
 }
 
 const answers: Record<string, string> = {

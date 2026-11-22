@@ -164,7 +164,7 @@ try {
 
   async function clickAndWaitPost(page, selector) {
     await Promise.all([
-      page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
+      page.waitForResponse((r) => r.url().includes("/api/rulebooks") && !r.url().endsWith("/question-preview") && r.request().method() === "POST"),
       page.click(selector),
     ]);
     await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
@@ -198,9 +198,45 @@ try {
   await radarCard.waitFor();
   await pageG2.locator("[data-map-ready=true]").waitFor();
   await pageG2.screenshot({ path: path.join(results, "rulebook-seek-question-deck.png") });
+  const canvas = await pageG2.locator(".sg-board .maplibregl-canvas").elementHandle();
+  const choosePreview = async (selector) => {
+    const [response] = await Promise.all([
+      pageG2.waitForResponse(r => r.url().endsWith("/api/rulebooks/question-preview")),
+      pageG2.locator(selector).first().click(),
+    ]);
+    assert.equal(response.status(), 200, await response.text());
+    return response.json();
+  };
   await radarCard.press("Enter");
-  await pageG2.click('button[data-item="rad-1km"]');
+  await choosePreview('button[data-item="rad-500m"]');
+  await pageG2.locator('[data-question-preview="500"]').waitFor();
+  for (const family of ["matching", "measuring", "tentacles"]) {
+    await pageG2.click('button[data-action="question-deck"]');
+    await pageG2.click(`button[data-action="question-family"][data-family="${family}"]`);
+    const draft = (await choosePreview('button[data-action="question-option"]:not([disabled])')).preview;
+    assert.ok(family === "matching" ? draft.station : Array.isArray(draft.targets));
+    if (family === "tentacles") assert.ok(draft.radiusMeters > 0);
+  }
+  await pageG2.click('button[data-action="question-deck"]');
+  await radarCard.click();
+  const draft = (await choosePreview('button[data-item="rad-1km"]')).preview;
+  const drawnPreview = pageG2.locator('[data-question-preview="1000"]');
+  await drawnPreview.waitFor();
+  assert.equal(await canvas.evaluate(element => element.isConnected), true);
+  assert.equal(await pageCreator.locator("[data-question-preview]").count(), 0);
+  const hiderBefore = await pageCreator.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
+  assert.equal(hiderBefore.room.questions.length, 0);
+  await pageG2.click('button[data-action="focus-preview"]');
+  await pageG2.screenshot({ path: path.join(results, "rulebook-seek-radar-preview.png") });
+  await pageG2.locator('[data-panel="ask"]').click();
+  await drawnPreview.waitFor({ state: "detached" });
+  await pageG2.locator('[data-panel="ask"]').click();
+  await drawnPreview.waitFor();
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
+  await drawnPreview.waitFor({ state: "detached" });
+  const seekerAfter = await pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
+  assert.deepEqual(seekerAfter.room.questions[0].referencePoint, draft.reference);
+  assert.equal(seekerAfter.room.questions[0].radarRadiusMeters, draft.radiusMeters);
   await refreshSeekRoom(pageCreator);
   await pageCreator.click('button[data-answer="no"]');
   assert.equal(await pageCreator.locator('button[data-action="answer-pending"]').isDisabled(), true);

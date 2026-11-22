@@ -153,6 +153,21 @@ export type SeekEngineMenuEntry = {
 
 export type SeekBoardPoint = GeoCoordinate & { id: string; name: string };
 
+export type SeekMapPreviewRequest = {
+  family: Exclude<HideSeekQuestionFamily, "photo" | "thermometer">;
+  itemId: string;
+  fix: LocationFix;
+  customRadiusMeters?: number;
+};
+
+export type SeekMapPreview = {
+  reference: GeoCoordinate;
+  radiusMeters?: number;
+  station?: SeekBoardPoint;
+  targets?: SeekBoardPoint[];
+  distanceMeters?: number;
+};
+
 export type SeekPublicBoard = {
   startPoint: SeekBoardPoint;
   stations: (SeekBoardPoint & { transitLines: string[] })[];

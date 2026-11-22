@@ -3,6 +3,8 @@ import type {
   GeoCoordinate,
   SeekBoardPoint,
   SeekPublicBoard,
+  SeekMapPreview,
+  SeekMapPreviewRequest,
   HideSeekQuestionFamily,
   SeekDeckHiderView,
   SeekDeckPublicView,
@@ -48,6 +50,11 @@ type RoomPayload = {
 };
 
 type CapturedLocation = LocationFix & { qaLocationId?: string };
+type QuestionDraft = {
+  key: string;
+  referenceKey: string;
+  query: Omit<SeekMapPreviewRequest, "fix">;
+};
 
 const phaseLabels: Record<SeekEngineRoomView["phase"], string> = {
   lobby: "Ruang Tunggu",
@@ -109,6 +116,12 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let pendingId = "";
   let answerChoice = "";
   let radiusDraft = "";
+  let previewSequence = 0;
+  let previewTimer: number | undefined;
+  let previewLoading = "";
+  let previewError: { key: string; message: string } | undefined;
+  let draftPreview: { key: string; data: SeekMapPreview; fix: CapturedLocation; validUntil?: number } | undefined;
+  let draftFix: { referenceKey: string; fix: CapturedLocation; validUntil?: number } | undefined;
   let photoPreview = "";
   let thermometerEnd: CapturedLocation | undefined;
   let actionPending = false;
@@ -143,6 +156,12 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const room = live?.room;
     if (!room) return;
     const now = roomNow + performance.now() - clockBase;
+    const sendDraft = root.querySelector<HTMLButtonElement>("[data-preview-until]");
+    if (sendDraft && now > Number(sendDraft.dataset.previewUntil)) {
+      sendDraft.disabled = true;
+      const previewStatus = root.querySelector<HTMLElement>("#sg-preview-status");
+      if (previewStatus) previewStatus.textContent = "Lokasi pratinjau kedaluwarsa. Perbarui lokasi.";
+    }
     root.querySelectorAll<HTMLElement>("[data-deadline]").forEach(element => {
       const text = clockText(Number(element.dataset.deadline) - now);
       if (element.textContent !== text) element.textContent = text;
@@ -155,14 +174,14 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     }
   }
 
-  function qaPoints({ room, publicBoard }: RoomPayload): SeekBoardPoint[] {
+  function roomPoints({ room, publicBoard }: RoomPayload): SeekBoardPoint[] {
     const points = [room.turnStartPoint, publicBoard.startPoint, ...publicBoard.stations];
     if (room.regroupPoint) points.unshift(room.regroupPoint);
     return [...new Map(points.map(point => [point.id, point])).values()];
   }
 
   function qaPoint(payload: RoomPayload): SeekBoardPoint {
-    return qaPoints(payload).find(point => point.id === qaStationId) ?? payload.room.regroupPoint ?? payload.room.turnStartPoint;
+    return roomPoints(payload).find(point => point.id === qaStationId) ?? payload.room.regroupPoint ?? payload.room.turnStartPoint;
   }
 
   async function locationFix(point?: GeoCoordinate): Promise<CapturedLocation> {
@@ -175,6 +194,82 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       return { latitude: point.latitude, longitude: point.longitude, accuracy: 10, timestamp: room.now };
     }
     return getLocation();
+  }
+
+  function pointById(id: string | undefined) {
+    return [live?.room.turnStartPoint, ...(live?.publicBoard.stations ?? [])].find(point => point?.id === id);
+  }
+
+  function seekerPoint() {
+    return pointById(stationId) ?? live?.room.seekerPosition ?? live?.room.turnStartPoint;
+  }
+
+  function selectedMapQuestion(): QuestionDraft | undefined {
+    const room = live?.room;
+    if (!room || room.role !== "seeker" || !room.playPhase || panel !== "ask" ||
+        room.questions.some(question => question.status === "pending") ||
+        (family !== "radar" && family !== "matching" && family !== "measuring" && family !== "tentacles")) return;
+    const selected = room.menu.find(entry => entry.family === family && entry.itemId === option);
+    if (!selected?.availableInCurrentPhase || selected.lockedSingleUse) return;
+    const customRadiusMeters = selected.isCustomRadius ? Number(radiusDraft) : undefined;
+    if (customRadiusMeters !== undefined && (!Number.isFinite(customRadiusMeters) || customRadiusMeters <= 0)) return;
+    const referenceKey = JSON.stringify([
+      room.code, room.turnNumber, room.phase, live?.qa ? qaPoint(live).id : stationId,
+    ]);
+    const query = { family, itemId: option, customRadiusMeters };
+    return { query, referenceKey, key: JSON.stringify([referenceKey, query]) };
+  }
+
+  function activeDraftPreview() {
+    return draftPreview?.key === selectedMapQuestion()?.key ? draftPreview : undefined;
+  }
+
+  function previewIsFresh(validUntil?: number) {
+    return validUntil === undefined || roomNow + performance.now() - clockBase <= validUntil;
+  }
+
+  function previewPadding(host: HTMLElement) {
+    const dockTop = root.querySelector(".sg-dock")?.getBoundingClientRect().top ?? host.clientHeight;
+    const bottom = Math.max(160, Math.min(host.clientHeight - 215, host.clientHeight - dockTop + 24));
+    return { top: 136, bottom, left: 34, right: 45 };
+  }
+
+  async function updateDraftPreview(updateLocation = false) {
+    const draft = selectedMapQuestion();
+    if (!draft || (!updateLocation && (draftPreview?.key === draft.key || previewLoading === draft.key))) return;
+    const request = ++previewSequence;
+    const code = roomCode;
+    previewLoading = draft.key;
+    previewError = undefined;
+    draftPreview = undefined;
+    render();
+    try {
+      const fix = !updateLocation && draftFix?.referenceKey === draft.referenceKey && previewIsFresh(draftFix.validUntil)
+        ? draftFix.fix : await locationFix(seekerPoint());
+      if (request !== previewSequence || selectedMapQuestion()?.key !== draft.key) return;
+      const response = await apiJson<{ preview?: SeekMapPreview; validUntil?: number; error?: string }>("/api/rulebooks/question-preview", {
+        roomCode: code,
+        ...draft.query,
+        fix,
+      });
+      if (request !== previewSequence || selectedMapQuestion()?.key !== draft.key) return;
+      if (!response.preview) {
+        throw new Error(response.error === "stale-fix" ? "Perbarui lokasi untuk pratinjau." :
+          response.error === "inaccurate-fix" ? "Lokasi kurang akurat. Coba perbarui lokasi." : "Pratinjau belum tersedia. Coba lagi.");
+      }
+      const validUntil = fix.qaLocationId ? undefined : response.validUntil;
+      draftFix = { referenceKey: draft.referenceKey, fix, validUntil };
+      draftPreview = { key: draft.key, data: response.preview, fix, validUntil };
+    } catch (error) {
+      if (request === previewSequence && selectedMapQuestion()?.key === draft.key) {
+        previewError = { key: draft.key, message: error instanceof Error ? error.message : "Pratinjau belum tersedia." };
+      }
+    } finally {
+      if (request === previewSequence) {
+        previewLoading = "";
+        render();
+      }
+    }
   }
 
   async function apiJson<T>(path: string, body?: unknown): Promise<T> {
@@ -384,7 +479,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         onSelect: id => {
           if (busy || actionPending) return;
           stationId = id;
-          if (panel === "ask" && family === "thermometer") return;
+          if (panel === "ask" && family) {
+            void updateDraftPreview();
+            return;
+          }
           panel = "board";
           render();
           root.querySelector<HTMLElement>("#sg-panel-title")?.focus({ preventScroll: true });
@@ -399,6 +497,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         }),
       });
       mapHandle = handle;
+      handle.setQuestionPreview(activeDraftPreview()?.data, previewPadding(host));
     } catch {
       if (current !== mapRequest) return;
       mapFailed = true;
@@ -480,7 +579,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     return `<h2 id="sg-panel-title" tabindex="-1">Mode QA</h2>
       <label class="rb-field">Lokasi simulasi kamu
         <select id="sg-qa-location" ${busy ? "disabled" : ""}>
-          ${qaPoints(payload).map(location => `<option value="${escapeText(location.id)}" ${location.id === point.id ? "selected" : ""}>${escapeText(location.name)}</option>`).join("")}
+          ${roomPoints(payload).map(location => `<option value="${escapeText(location.id)}" ${location.id === point.id ? "selected" : ""}>${escapeText(location.name)}</option>`).join("")}
         </select>
       </label>
       <p class="sg-qa-note">Aksi berbasis GPS memakai lokasi ini sampai kamu memilih titik lain.</p>
@@ -673,6 +772,39 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       </div>` : ""}`;
   }
 
+  function renderDraftPreview() {
+    const draft = selectedMapQuestion();
+    if (!draft) return { ready: false, content: "" };
+    const active = activeDraftPreview();
+    const data = active?.data;
+    const ready = Boolean(active && previewIsFresh(active.validUntil));
+    const meters = (value: number) => `${Math.round(value).toLocaleString("id-ID")} m`;
+    const nearby = data?.targets?.map(target => target.name).join(" / ");
+    const referenceName = data && live && roomPoints(live).find(point => point.latitude === data.reference.latitude &&
+      point.longitude === data.reference.longitude)?.name;
+    const status = previewLoading === draft.key ? "Menyiapkan pratinjau…" :
+      previewError?.key === draft.key ? previewError.message :
+      active && !ready ? "Lokasi pratinjau kedaluwarsa. Perbarui lokasi." :
+      data ? [
+        "Pratinjau",
+        ...(data.radiusMeters !== undefined ? [`Radius ${meters(data.radiusMeters)}`, referenceName ?? "Titik GPS"] : []),
+        ...(data.station ? [data.station.name] : []),
+        ...(data.distanceMeters !== undefined && nearby ? [`${nearby} · ${meters(data.distanceMeters)}`] :
+          data.targets ? [`${data.targets.length} titik tujuan`] : []),
+      ].join(" · ") : "Siapkan lokasi untuk pratinjau.";
+    return {
+      ready,
+      validUntil: active?.validUntil,
+      content: `<div class="sg-preview">
+        <p id="sg-preview-status" role="status">${escapeText(status)}</p>
+        <div class="rb-actions">
+          ${data && !mapFailed ? '<button type="button" class="sg-quiet" data-action="focus-preview">Fokus peta</button>' : ""}
+          <button type="button" class="sg-quiet" data-action="refresh-preview" ${previewLoading === draft.key || busy ? "disabled" : ""}>Perbarui lokasi</button>
+        </div>
+      </div>`,
+    };
+  }
+
   function renderGamePanel(payload: RoomPayload, deal: boolean): string {
     const { room, deck, publicBoard } = payload;
     if (panel === "qa") return payload.qa ? renderQaControls(payload) : "";
@@ -695,7 +827,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           started: room.thermometerStart !== null,
           distance: room.thermometerStart && thermometerEnd ? distanceMeters(room.thermometerStart, thermometerEnd) : undefined,
         } : undefined;
-        return questionOptions(family, entries, picked, deck.questionsBlocked || deck.bannedFamilies.includes(family), thermometer, busy);
+        const preview = family === "photo" || family === "thermometer" ? undefined : renderDraftPreview();
+        return questionOptions(family, entries, picked, deck.questionsBlocked || deck.bannedFamilies.includes(family), thermometer, busy, preview);
       }
       return questionDeck(room.menu);
     }
@@ -845,11 +978,21 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     } else if (mapKey !== nextMapKey) {
       mapKey = nextMapKey;
       void mountMapOverlay(mapHost, live);
+    } else {
+      mapHandle?.setQuestionPreview(activeDraftPreview()?.data, previewPadding(mapHost));
     }
   }
 
   root.addEventListener("input", event => {
-    if (event.target instanceof HTMLInputElement && event.target.id === "sg-radius") radiusDraft = event.target.value;
+    if (event.target instanceof HTMLInputElement && event.target.id === "sg-radius") {
+      radiusDraft = event.target.value;
+      mapHandle?.setQuestionPreview();
+      window.clearTimeout(previewTimer);
+      previewTimer = window.setTimeout(() => {
+        render();
+        void updateDraftPreview();
+      }, 160);
+    }
   }, { signal: lifecycle.signal });
 
   root.addEventListener("change", event => {
@@ -926,6 +1069,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       const next = btn.dataset.panel as Panel;
       panel = next === panel ? null : next;
       render();
+      void updateDraftPreview();
       return;
     }
     if (action === "question-family" || action === "question-deck" || action === "question-option" || action === "select-station") {
@@ -937,6 +1081,15 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       if (action === "select-station") stationId = btn.dataset.station ?? "";
       if (action === "question-family" || action === "question-deck") radiusDraft = "";
       render();
+      void updateDraftPreview();
+      return;
+    }
+    if (action === "refresh-preview") {
+      void updateDraftPreview(true);
+      return;
+    }
+    if (action === "focus-preview" && mapHost) {
+      mapHandle?.focusQuestionPreview(previewPadding(mapHost));
       return;
     }
     if (action === "choose-answer") {
@@ -957,8 +1110,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     errorMsg = "";
     void (async () => {
       const room = live?.room;
-      const pointById = (id: string | undefined) => [room?.turnStartPoint, ...(live?.publicBoard.stations ?? [])].find(point => point?.id === id);
-      const seekerPoint = () => pointById(stationId) ?? room?.seekerPosition ?? room?.turnStartPoint;
       if (action === "qa-advance" && live?.qa && room && btn.dataset.step) {
         const step = btn.dataset.step;
         const expectedDeadline = room.phaseEndsAt;
@@ -1099,7 +1250,14 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         const radius = root.querySelector<HTMLInputElement>("#sg-radius");
         if (radius && (!radius.reportValidity() || !Number.isFinite(radius.valueAsNumber))) return;
         const customRadiusMeters = radius?.valueAsNumber;
-        const fix = btn.dataset.family === "thermometer" && thermometerEnd ? thermometerEnd : await locationFix(seekerPoint());
+        const mapQuestion = btn.dataset.family !== "photo" && btn.dataset.family !== "thermometer";
+        const preview = activeDraftPreview();
+        if (mapQuestion && (!preview || !previewIsFresh(preview.validUntil))) {
+          void updateDraftPreview(true);
+          return;
+        }
+        const fix = preview?.fix ?? (btn.dataset.family === "thermometer" && thermometerEnd
+          ? thermometerEnd : await locationFix(seekerPoint()));
         const sent = await postRoomAction({
           type: "ask",
           family: btn.dataset.family,
@@ -1108,6 +1266,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           fix,
         });
         if (sent) {
+          draftPreview = undefined;
+          draftFix = undefined;
           thermometerEnd = undefined;
           radiusDraft = "";
         }
@@ -1196,6 +1356,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   });
   return () => {
     lifecycle.abort();
+    window.clearTimeout(previewTimer);
     root.removeAttribute("aria-busy");
     window.clearInterval(poller);
     window.clearInterval(ticker);

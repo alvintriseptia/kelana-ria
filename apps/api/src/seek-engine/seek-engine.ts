@@ -17,11 +17,13 @@ import type {
   SeekEngineRoomView,
   SeekEngineSeat,
   SeekEngineTurnResult,
+  SeekMapPreviewRequest,
 } from "@kelana-ria/contracts";
 import {
   evaluateObjectiveQuestion,
   findNearestStation,
   isInsideHidingZone,
+  previewMapQuestion,
   verifyGpsAtPoint,
   verifyGpsFreshAndAccurate,
 } from "./geo-evaluator.js";
@@ -628,6 +630,20 @@ function candidateStations(match: SeekEngineMatch): string[] | undefined {
   })).map(station => station.id);
   candidateCache.set(match, { key, ids });
   return ids;
+}
+
+export function previewSeekEngineQuestion(match: SeekEngineMatch, seatId: string, request: SeekMapPreviewRequest, now: number) {
+  if ((match.phase !== "seeking" && match.phase !== "endgame") || (match.phaseEndsAt !== null && now >= match.phaseEndsAt)) {
+    return { error: "room-phase-changed" };
+  }
+  if (seatId === activeHiderSeatId(match)) return { error: "seeker-only" };
+  const entry = buildMenu(match).find(item => item.family === request.family && item.itemId === request.itemId);
+  if (!entry?.availableInCurrentPhase || entry.lockedSingleUse) return { error: "question-unavailable-in-phase" };
+  const fresh = verifyGpsFreshAndAccurate(request.fix, now, match.pack.geography);
+  if (!fresh.ok) return { error: fresh.error };
+  const preview = previewMapQuestion(match.pack, match.snapshot, request);
+  return preview ? { preview, validUntil: request.fix.timestamp + match.pack.geography.maxGpsFixAgeMs }
+    : { error: "preview-unavailable" };
 }
 
 export function viewSeekEngineMatch(match: SeekEngineMatch, seatId: string, now: number): SeekEngineRoomView {

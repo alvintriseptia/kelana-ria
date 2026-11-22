@@ -8,6 +8,9 @@ import type {
   LocationFix,
   MatchingQuestionItem,
   MeasuringQuestionItem,
+  SeekBoardPoint,
+  SeekMapPreview,
+  SeekMapPreviewRequest,
   SeekObjectiveAnswer,
   TentaclesQuestionItem,
 } from "@kelana-ria/contracts";
@@ -100,6 +103,54 @@ function nearestPois(point: GeoCoordinate, pois: GeoPoi[]): { pois: GeoPoi[]; di
   });
   const tied = pois.filter((_, idx) => Math.abs(dists[idx] - minDist) <= TIE_EPSILON_METERS);
   return { pois: tied, distanceMeters: minDist };
+}
+
+function measuringTargets(item: MeasuringQuestionItem, snapshot: GeoSnapshot): GeoPoi[] {
+  return item.targetType === "named_poi"
+    ? snapshot.pois.filter(poi => poi.id === item.poiId)
+    : snapshot.pois.filter(poi => poi.category === item.poiCategory);
+}
+
+function tentaclesTargets(point: GeoCoordinate, item: TentaclesQuestionItem, snapshot: GeoSnapshot): GeoPoi[] {
+  return snapshot.pois.filter(poi => poi.category === item.poiCategory && haversineMeters(point, poi) <= item.radiusMeters);
+}
+
+function previewPoint({ id, name, latitude, longitude }: SeekBoardPoint): SeekBoardPoint {
+  return { id, name, latitude, longitude };
+}
+
+export function previewMapQuestion(
+  pack: HideSeekRulebookPack, snapshot: GeoSnapshot, request: SeekMapPreviewRequest,
+): SeekMapPreview | undefined {
+  const { family, itemId, fix, customRadiusMeters } = request;
+  const reference = { latitude: fix.latitude, longitude: fix.longitude };
+  const families = pack.investigationBook.families;
+  switch (family) {
+    case "radar": {
+      const radiusMeters = itemId === "custom-radar" ? customRadiusMeters
+        : families.radar?.items.find(item => item.id === itemId)?.radiusMeters;
+      return radiusMeters !== undefined && Number.isFinite(radiusMeters) && radiusMeters > 0
+        ? { reference, radiusMeters } : undefined;
+    }
+    case "matching": {
+      const nearest = findNearestStation(reference, snapshot.stations);
+      return nearest ? { reference, station: previewPoint(nearest.station) } : undefined;
+    }
+    case "measuring": {
+      const item = families.measuring?.items.find(candidate => candidate.id === itemId);
+      if (!item) return undefined;
+      const nearest = nearestPois(reference, measuringTargets(item, snapshot));
+      return {
+        reference,
+        targets: nearest.pois.map(previewPoint),
+        ...(Number.isFinite(nearest.distanceMeters) ? { distanceMeters: nearest.distanceMeters } : {}),
+      };
+    }
+    case "tentacles": {
+      const item = families.tentacles?.items.find(candidate => candidate.id === itemId);
+      return item ? { reference, radiusMeters: item.radiusMeters, targets: tentaclesTargets(reference, item, snapshot).map(previewPoint) } : undefined;
+    }
+  }
 }
 
 export function evaluateRadar(
@@ -220,10 +271,7 @@ export function evaluateMeasuring(
   snapshot: GeoSnapshot,
   tieToleranceMeters: number,
 ): SeekObjectiveAnswer {
-  const targets =
-    item.targetType === "named_poi"
-      ? snapshot.pois.filter((p) => p.id === item.poiId)
-      : snapshot.pois.filter((p) => p.category === item.poiCategory);
+  const targets = measuringTargets(item, snapshot);
   const seekerNearest = nearestPois(seekerPoint, targets);
   const hiderNearest = nearestPois(hiderAnchor, targets);
   const diff = hiderNearest.distanceMeters - seekerNearest.distanceMeters;
@@ -251,8 +299,7 @@ export function evaluateTentacles(
   item: TentaclesQuestionItem,
   snapshot: GeoSnapshot,
 ): SeekObjectiveAnswer {
-  const categoryPois = snapshot.pois.filter((p) => p.category === item.poiCategory);
-  const candidatePois = categoryPois.filter((p) => haversineMeters(seekerPoint, p) <= item.radiusMeters);
+  const candidatePois = tentaclesTargets(seekerPoint, item, snapshot);
   const hiderDist = haversineMeters(seekerPoint, hiderAnchor);
   if (hiderDist > item.radiusMeters || candidatePois.length === 0) {
     return {

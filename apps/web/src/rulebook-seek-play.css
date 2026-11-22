@@ -395,6 +395,15 @@
   gap: 7px;
 }
 
+.sg-preview {
+  display: grid;
+  gap: 5px;
+  border-inline-start: 3px dashed #255d9f;
+  padding-inline-start: 8px;
+  color: #244d77;
+  font-size: .84rem;
+}
+
 .sg-room-header {
   display: flex;
   align-items: flex-start;
