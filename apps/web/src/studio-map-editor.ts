@@ -18,6 +18,17 @@ export type StudioMapEditorOptions = {
   onError: () => void;
 };
 
+export type StudioMapUpdate = Pick<
+  StudioMapEditorOptions,
+  "record" | "mode" | "selectedTarget" | "onMapClick" | "onSelectTarget"
+>;
+
+export type StudioMapEditorHandle = {
+  update: (next: StudioMapUpdate) => void;
+  recenter: () => void;
+  destroy: () => void;
+};
+
 function buildGeoJson(record: StudioVersionRecord, selectedTarget: StudioMapEditorOptions["selectedTarget"]) {
   const boundaryCoords = record.snapshot.boundaryPolygon.map((p) => [p.longitude, p.latitude]);
   if (boundaryCoords.length >= 3) {
@@ -113,22 +124,28 @@ function offlineStudioStyle(boundaryFeatures: unknown[], radiusFeatures: unknown
   };
 }
 
-export function mountStudioMapEditor(options: StudioMapEditorOptions): { destroy: () => void } {
-  const { container, config, record, mode, selectedTarget, onMapClick, onSelectTarget, onError } = options;
-  container.innerHTML = `<div class="board-map-shell">
-    <div class="board-map-canvas" role="region" aria-label="Editor peta interaktif Studio Kreator"></div>
-    <p class="board-map-attribution">
-      Mode peta: <strong>${mode}</strong> · ${config.mode === "geoapify-vector" ? "Peta vektor langsung" : "Peta vektor luring"} · © Geoapify · © OpenStreetMap contributors
-    </p>
-  </div>`;
+type StudioTarget = NonNullable<StudioMapEditorOptions["selectedTarget"]>;
+type MarkerEntry = {
+  marker: maplibregl.Marker;
+  el: HTMLButtonElement;
+  customClassList: string[];
+  target: StudioTarget;
+  lat: number;
+  lng: number;
+};
 
-  const canvasHost = container.querySelector<HTMLElement>(".board-map-canvas")!;
-  const { boundaryFeatures, radiusFeatures } = buildGeoJson(record, selectedTarget);
-  let map: maplibregl.Map | undefined;
-  let destroyed = false;
-  let styleLoaded = false;
-  const markers: maplibregl.Marker[] = [];
+function syncStudioPinClasses(el: HTMLElement, prev: string[], next: string[]): string[] {
+  if (prev.length === next.length && prev.every((c, i) => c === next[i])) return prev;
+  for (const cls of prev) {
+    if (cls) el.classList.remove(cls);
+  }
+  for (const cls of next) {
+    if (cls) el.classList.add(cls);
+  }
+  return next;
+}
 
+function computeStudioBounds(record: StudioVersionRecord): maplibregl.LngLatBounds {
   const bounds = new maplibregl.LngLatBounds();
   bounds.extend([record.snapshot.startPoint.longitude, record.snapshot.startPoint.latitude]);
   if (isClaimStudioPack(record.pack)) {
@@ -136,34 +153,156 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): { destroy
   } else {
     for (const st of record.snapshot.stations) bounds.extend([st.longitude, st.latitude]);
   }
+  return bounds;
+}
 
-  function addMarker(
-    coord: GeoCoordinate,
-    label: string,
-    classes: string[],
-    target: { kind: "start" | "station" | "poi" | "landmark"; id: string },
-  ) {
-    if (!map) return;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    const isSel = selectedTarget?.kind === target.kind && selectedTarget?.id === target.id;
-    btn.className = ["board-map-pin", ...classes, isSel ? "board-map-pin-selected" : ""].filter(Boolean).join(" ");
-    btn.textContent = label;
-    btn.setAttribute("aria-label", label);
-    btn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      onSelectTarget(target);
-    });
-    markers.push(new maplibregl.Marker({ element: btn }).setLngLat([coord.longitude, coord.latitude]).addTo(map));
+export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMapEditorHandle {
+  const { container, config, onError } = options;
+  let current: StudioMapUpdate = {
+    record: options.record,
+    mode: options.mode,
+    selectedTarget: options.selectedTarget,
+    onMapClick: options.onMapClick,
+    onSelectTarget: options.onSelectTarget,
+  };
+
+  container.innerHTML = `<div class="board-map-shell">
+    <div class="board-map-canvas" role="region" aria-label="Editor peta interaktif Studio Kreator"></div>
+    <p class="board-map-attribution">
+      Mode peta: <strong data-studio-mode-label></strong> · ${config.mode === "geoapify-vector" ? "Peta vektor langsung" : "Peta vektor luring"} · © Geoapify · © OpenStreetMap contributors
+    </p>
+  </div>`;
+
+  const canvasHost = container.querySelector<HTMLElement>(".board-map-canvas")!;
+  const modeLabelEl = container.querySelector<HTMLElement>("[data-studio-mode-label]")!;
+  modeLabelEl.textContent = current.mode;
+
+  let map: maplibregl.Map | undefined;
+  let destroyed = false;
+  let styleLoaded = false;
+  const markerMap = new Map<string, MarkerEntry>();
+
+  function syncSources() {
+    if (!map || !styleLoaded || destroyed) return;
+    const { boundaryFeatures, radiusFeatures } = buildGeoJson(current.record, current.selectedTarget);
+    const boundarySrc = map.getSource<maplibregl.GeoJSONSource>("studio-boundary");
+    if (boundarySrc) {
+      boundarySrc.setData({ type: "FeatureCollection", features: boundaryFeatures as never });
+    }
+    const radiusSrc = map.getSource<maplibregl.GeoJSONSource>("studio-radius");
+    if (radiusSrc) {
+      radiusSrc.setData({ type: "FeatureCollection", features: radiusFeatures as never });
+    }
+  }
+
+  function syncMarkers() {
+    if (!map || destroyed) return;
+    const desired: {
+      key: string;
+      coord: GeoCoordinate;
+      label: string;
+      classes: string[];
+      target: StudioTarget;
+    }[] = [
+      {
+        key: `start:${current.record.snapshot.startPoint.id}`,
+        coord: current.record.snapshot.startPoint,
+        label: `A · ${current.record.snapshot.startPoint.name}`,
+        classes: ["board-map-pin-start"],
+        target: { kind: "start", id: current.record.snapshot.startPoint.id },
+      },
+    ];
+
+    if (isClaimStudioPack(current.record.pack)) {
+      const zoneLabelById = new Map(current.record.pack.geography.zones.map((z) => [z.id, z.label]));
+      current.record.pack.geography.landmarks.forEach((lm, idx) => {
+        const zl = zoneLabelById.get(lm.zoneId) ?? lm.zoneId;
+        desired.push({
+          key: `landmark:${lm.id}`,
+          coord: lm,
+          label: `${idx + 1} · [${zl}] ${lm.name}`,
+          classes: [],
+          target: { kind: "landmark", id: lm.id },
+        });
+      });
+    } else {
+      current.record.snapshot.stations.forEach((st, idx) => {
+        desired.push({
+          key: `station:${st.id}`,
+          coord: st,
+          label: `${idx + 1} · ${st.name}`,
+          classes: st.eligibleHidingAnchor ? [] : ["board-map-pin-dimmed"],
+          target: { kind: "station", id: st.id },
+        });
+      });
+      current.record.snapshot.pois.forEach((poi) => {
+        desired.push({
+          key: `poi:${poi.id}`,
+          coord: poi,
+          label: `★ ${poi.name}`,
+          classes: ["board-map-pin-claimed"],
+          target: { kind: "poi", id: poi.id },
+        });
+      });
+    }
+
+    const seenKeys = new Set<string>();
+    for (const item of desired) {
+      seenKeys.add(item.key);
+      const isSel =
+        current.selectedTarget?.kind === item.target.kind && current.selectedTarget?.id === item.target.id;
+      const classes = ["board-map-pin", ...item.classes, isSel ? "board-map-pin-selected" : ""].filter(Boolean);
+      const existing = markerMap.get(item.key);
+      if (existing) {
+        existing.target = item.target;
+        existing.customClassList = syncStudioPinClasses(existing.el, existing.customClassList, classes);
+        if (existing.el.textContent !== item.label) existing.el.textContent = item.label;
+        existing.el.setAttribute("aria-label", item.label);
+        existing.el.dataset.mapPoint = item.target.id;
+        if (existing.lat !== item.coord.latitude || existing.lng !== item.coord.longitude) {
+          existing.lat = item.coord.latitude;
+          existing.lng = item.coord.longitude;
+          existing.marker.setLngLat([item.coord.longitude, item.coord.latitude]);
+        }
+      } else {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.classList.add(...classes);
+        btn.textContent = item.label;
+        btn.dataset.mapPoint = item.target.id;
+        btn.setAttribute("aria-label", item.label);
+        const entry: MarkerEntry = {
+          marker: new maplibregl.Marker({ element: btn }).setLngLat([item.coord.longitude, item.coord.latitude]).addTo(map),
+          el: btn,
+          customClassList: classes,
+          target: item.target,
+          lat: item.coord.latitude,
+          lng: item.coord.longitude,
+        };
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          current.onSelectTarget(entry.target);
+        });
+        markerMap.set(item.key, entry);
+      }
+    }
+
+    for (const [key, entry] of markerMap.entries()) {
+      if (!seenKeys.has(key)) {
+        entry.marker.remove();
+        markerMap.delete(key);
+      }
+    }
   }
 
   function initMap(style: maplibregl.StyleSpecification) {
     if (destroyed) return;
     try {
+      const { boundaryFeatures, radiusFeatures } = buildGeoJson(current.record, current.selectedTarget);
       map = new maplibregl.Map({
         container: canvasHost,
         style,
-        center: [record.snapshot.startPoint.longitude, record.snapshot.startPoint.latitude],
+        center: [current.record.snapshot.startPoint.longitude, current.record.snapshot.startPoint.latitude],
         zoom: 12.5,
         attributionControl: false,
         transformRequest: (url) => ({ url: absolutizeMapUrl(url) }),
@@ -173,11 +312,12 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): { destroy
       map.on("load", () => {
         styleLoaded = true;
         if (!map || destroyed) return;
+        const latestGeo = buildGeoJson(current.record, current.selectedTarget);
         if (config.mode === "geoapify-vector") {
           if (!map.getSource("studio-boundary")) {
             map.addSource("studio-boundary", {
               type: "geojson",
-              data: { type: "FeatureCollection", features: boundaryFeatures as never },
+              data: { type: "FeatureCollection", features: latestGeo.boundaryFeatures as never },
             });
             map.addLayer({
               id: "studio-boundary-fill",
@@ -195,7 +335,7 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): { destroy
           if (!map.getSource("studio-radius")) {
             map.addSource("studio-radius", {
               type: "geojson",
-              data: { type: "FeatureCollection", features: radiusFeatures as never },
+              data: { type: "FeatureCollection", features: latestGeo.radiusFeatures as never },
             });
             map.addLayer({
               id: "studio-radius-fill",
@@ -211,11 +351,13 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): { destroy
             });
           }
         }
-        map.fitBounds(bounds, { padding: 36, maxZoom: 14.5, duration: 0 });
+        syncSources();
+        syncMarkers();
+        map.fitBounds(computeStudioBounds(current.record), { padding: 36, maxZoom: 14.5, duration: 0 });
       });
 
       map.on("click", (ev) => {
-        onMapClick({
+        current.onMapClick({
           latitude: Number(ev.lngLat.lat.toFixed(5)),
           longitude: Number(ev.lngLat.lng.toFixed(5)),
         });
@@ -225,28 +367,7 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): { destroy
         if (!styleLoaded) onError();
       });
 
-      addMarker(record.snapshot.startPoint, `A · ${record.snapshot.startPoint.name}`, ["board-map-pin-start"], {
-        kind: "start",
-        id: record.snapshot.startPoint.id,
-      });
-
-      if (isClaimStudioPack(record.pack)) {
-        const zoneLabelById = new Map(record.pack.geography.zones.map((z) => [z.id, z.label]));
-        record.pack.geography.landmarks.forEach((lm, idx) => {
-          const zl = zoneLabelById.get(lm.zoneId) ?? lm.zoneId;
-          addMarker(lm, `${idx + 1} · [${zl}] ${lm.name}`, [], { kind: "landmark", id: lm.id });
-        });
-      } else {
-        record.snapshot.stations.forEach((st, idx) => {
-          addMarker(st, `${idx + 1} · ${st.name}`, st.eligibleHidingAnchor ? [] : ["board-map-pin-dimmed"], {
-            kind: "station",
-            id: st.id,
-          });
-        });
-        record.snapshot.pois.forEach((poi) => {
-          addMarker(poi, `★ ${poi.name}`, ["board-map-pin-claimed"], { kind: "poi", id: poi.id });
-        });
-      }
+      syncMarkers();
     } catch {
       onError();
     }
@@ -263,13 +384,26 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): { destroy
         if (!destroyed) onError();
       });
   } else {
+    const { boundaryFeatures, radiusFeatures } = buildGeoJson(current.record, current.selectedTarget);
     initMap(offlineStudioStyle(boundaryFeatures, radiusFeatures));
   }
 
   return {
+    update(next: StudioMapUpdate) {
+      if (destroyed) return;
+      current = next;
+      modeLabelEl.textContent = current.mode;
+      syncSources();
+      syncMarkers();
+    },
+    recenter() {
+      if (destroyed || !map) return;
+      map.fitBounds(computeStudioBounds(current.record), { padding: 36, maxZoom: 14.5, duration: 250 });
+    },
     destroy() {
       destroyed = true;
-      for (const m of markers) m.remove();
+      for (const entry of markerMap.values()) entry.marker.remove();
+      markerMap.clear();
       map?.remove();
       map = undefined;
     },

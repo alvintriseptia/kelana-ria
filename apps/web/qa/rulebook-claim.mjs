@@ -21,6 +21,7 @@ const baseUrl = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({
   channel: "chromium",
   executablePath: process.env.CHROMIUM_PATH || undefined,
+  args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
 });
 
 async function clickAndWaitPost(page, selector) {
@@ -43,6 +44,8 @@ try {
   await clickAndWaitPost(pageSolo, 'button[data-action="mark-ready"]');
   await clickAndWaitPost(pageSolo, 'button[data-action="start-match"]');
   await pageSolo.waitForFunction(() => document.body.textContent.includes("Permainan Aktif"));
+  await pageSolo.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
+  const claimCanvas = await pageSolo.locator("#rb-claim-map-host .maplibregl-canvas").elementHandle();
 
   // Zero hidden challenge prompt / answer key leakage before check-in
   const preCheckInText = await pageSolo.textContent("body");
@@ -55,6 +58,11 @@ try {
   await pageSolo.fill("#claim-input-answer", "2");
   await clickAndWaitPost(pageSolo, 'button[data-action="submit-input"]');
   await pageSolo.waitForFunction(() => document.body.textContent.includes("1/4 landmark terkunci"));
+  assert.equal(
+    await claimCanvas.evaluate((el) => el.isConnected && document.querySelector("#rb-claim-map-host .maplibregl-canvas") === el),
+    true,
+    "Claim play MapLibre canvas must stay continuously mounted across check-in actions",
+  );
 
   // Lock taman-ayodya via photo_proof (2nd zone!)
   await clickAndWaitPost(pageSolo, 'li[data-landmark-id="taman-ayodya"] button[data-action="checkin-landmark"]');

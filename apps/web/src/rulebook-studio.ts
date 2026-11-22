@@ -43,10 +43,12 @@ import {
   createNewZone,
   ensureStep2Selection,
   parseAttributes,
+  renderStep2Bottom,
+  renderStep2Top,
   renderStep2View,
   type Step2State,
 } from "./studio-step2-view";
-import type { StudioMapMode } from "./studio-map-editor";
+import type { StudioMapEditorHandle, StudioMapMode } from "./studio-map-editor";
 import {
   isClaimStudioPack,
   type StudioEarningsRecord,
@@ -91,7 +93,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let dryRunSummary = "";
   let statusMsg = "";
   let errorMsg = "";
-  let mapCleanup: (() => void) | undefined;
+  let refreshSeq = 0;
+  let studioMapHandle: StudioMapEditorHandle | undefined;
+  let studioMapKey = "";
+  let studioMapReq = 0;
   let mapCfgPromise: Promise<MapConfig> | null = null;
   const step2: Step2State = {
     mapMode: "select",
@@ -156,111 +161,127 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     return false;
   }
 
-  async function mountStep2Map(host: HTMLElement, active: StudioVersionRecord) {
-    mapCleanup?.();
-    mapCleanup = undefined;
+  function destroyStep2Map() {
+    studioMapReq++;
+    studioMapHandle?.destroy();
+    studioMapHandle = undefined;
+    studioMapKey = "";
+  }
+
+  function handleStep2SelectTarget(target: { kind: "start" | "station" | "poi" | "landmark"; id: string }) {
+    step2.selected = target;
+    render();
+  }
+
+  function handleStep2MapClick(coord: GeoCoordinate) {
+    step2.lastClickedCoord = coord;
+    const latest = currentDraft();
+    if (!latest || !isEditable(latest) || step2.mapMode === "select") {
+      render();
+      return;
+    }
+    const pack = structuredClone(latest.pack);
+    const snap = structuredClone(latest.snapshot);
+    if (step2.mapMode === "boundary") {
+      snap.boundaryPolygon.push(coord);
+      void persistDraft(pack, snap, `Sudut batas ditambahkan (${coord.latitude}, ${coord.longitude}).`);
+      return;
+    }
+    if (step2.mapMode === "add") {
+      if (isClaimStudioPack(pack)) {
+        const emptyZone = pack.geography.zones.find(
+          (z) => !pack.geography.landmarks.some((l) => l.zoneId === z.id),
+        );
+        const zoneId = emptyZone?.id ?? pack.geography.zones[0]?.id ?? "zone-1";
+        const lm = createNewLandmark(coord, zoneId, pack.geography.landmarks.length);
+        pack.geography.landmarks.push(lm);
+        pack.challenges.landmarkChallenges[lm.id] = [
+          {
+            id: `chal-${lm.id}`,
+            title: `Tantangan ${lm.name}`,
+            verificationNotes: "Terverifikasi dari ruang publik.",
+            reviewed: true,
+            reviewedAt: new Date().toISOString().slice(0, 10),
+            payload: {
+              primitive: "photo_proof",
+              prompt: `Ambil foto publik di ${lm.name}.`,
+              verificationMode: "rival_or_timeout",
+              autoApproveMs: 120_000,
+            },
+          },
+        ];
+        step2.selected = { kind: "landmark", id: lm.id };
+        void persistDraft(pack, snap, `Landmark ${lm.name} ditambahkan di peta.`);
+      } else if (step2.subTab === "secondary") {
+        const poi = createNewPoi(coord, snap.pois.length);
+        snap.pois.push(poi);
+        step2.selected = { kind: "poi", id: poi.id };
+        void persistDraft(pack, snap, `POI ${poi.name} ditambahkan di peta.`);
+      } else {
+        const st = createNewStation(coord, snap.stations.length);
+        snap.stations.push(st);
+        step2.selected = { kind: "station", id: st.id };
+        void persistDraft(pack, snap, `Stasiun ${st.name} ditambahkan di peta.`);
+      }
+      return;
+    }
+    if (step2.mapMode === "move" && step2.selected) {
+      if (step2.selected.kind === "start") {
+        snap.startPoint.latitude = coord.latitude;
+        snap.startPoint.longitude = coord.longitude;
+      } else if (step2.selected.kind === "station") {
+        const st = snap.stations.find((s) => s.id === step2.selected!.id);
+        if (st) {
+          st.latitude = coord.latitude;
+          st.longitude = coord.longitude;
+        }
+      } else if (step2.selected.kind === "poi") {
+        const poi = snap.pois.find((p) => p.id === step2.selected!.id);
+        if (poi) {
+          poi.latitude = coord.latitude;
+          poi.longitude = coord.longitude;
+        }
+      } else if (step2.selected.kind === "landmark" && isClaimStudioPack(pack)) {
+        const lm = pack.geography.landmarks.find((l) => l.id === step2.selected!.id);
+        if (lm) {
+          lm.latitude = coord.latitude;
+          lm.longitude = coord.longitude;
+        }
+      }
+      void persistDraft(pack, snap, `Titik dipindahkan ke (${coord.latitude}, ${coord.longitude}).`);
+    }
+  }
+
+  async function mountStep2Map(host: HTMLElement, active: StudioVersionRecord, draftKey: string) {
+    const reqId = ++studioMapReq;
     try {
       if (!mapCfgPromise) mapCfgPromise = apiJson<MapConfig>("/api/map/config");
       const [{ mountStudioMapEditor }, cfg] = await Promise.all([
         import("./studio-map-editor"),
         mapCfgPromise,
       ]);
-      const selected = ensureStep2Selection(active, step2);
-      const handle = mountStudioMapEditor({
+      if (reqId !== studioMapReq || !host.isConnected) return;
+      const latest = currentDraft() ?? active;
+      const selected = ensureStep2Selection(latest, step2);
+      studioMapKey = draftKey;
+      studioMapHandle = mountStudioMapEditor({
         container: host,
         config: cfg,
-        record: active,
+        record: latest,
         mode: step2.mapMode,
         selectedTarget: selected,
-        onSelectTarget: (target) => {
-          step2.selected = target;
-          render();
-        },
-        onMapClick: (coord: GeoCoordinate) => {
-          step2.lastClickedCoord = coord;
-          if (!isEditable(active) || step2.mapMode === "select") {
-            render();
-            return;
-          }
-          const pack = structuredClone(active.pack);
-          const snap = structuredClone(active.snapshot);
-          if (step2.mapMode === "boundary") {
-            snap.boundaryPolygon.push(coord);
-            void persistDraft(pack, snap, `Sudut batas ditambahkan (${coord.latitude}, ${coord.longitude}).`);
-            return;
-          }
-          if (step2.mapMode === "add") {
-            if (isClaimStudioPack(pack)) {
-              const emptyZone = pack.geography.zones.find(
-                (z) => !pack.geography.landmarks.some((l) => l.zoneId === z.id),
-              );
-              const zoneId = emptyZone?.id ?? pack.geography.zones[0]?.id ?? "zone-1";
-              const lm = createNewLandmark(coord, zoneId, pack.geography.landmarks.length);
-              pack.geography.landmarks.push(lm);
-              pack.challenges.landmarkChallenges[lm.id] = [
-                {
-                  id: `chal-${lm.id}`,
-                  title: `Tantangan ${lm.name}`,
-                  verificationNotes: "Terverifikasi dari ruang publik.",
-                  reviewed: true,
-                  reviewedAt: new Date().toISOString().slice(0, 10),
-                  payload: {
-                    primitive: "photo_proof",
-                    prompt: `Ambil foto publik di ${lm.name}.`,
-                    verificationMode: "rival_or_timeout",
-                    autoApproveMs: 120_000,
-                  },
-                },
-              ];
-              step2.selected = { kind: "landmark", id: lm.id };
-              void persistDraft(pack, snap, `Landmark ${lm.name} ditambahkan di peta.`);
-            } else if (step2.subTab === "secondary") {
-              const poi = createNewPoi(coord, snap.pois.length);
-              snap.pois.push(poi);
-              step2.selected = { kind: "poi", id: poi.id };
-              void persistDraft(pack, snap, `POI ${poi.name} ditambahkan di peta.`);
-            } else {
-              const st = createNewStation(coord, snap.stations.length);
-              snap.stations.push(st);
-              step2.selected = { kind: "station", id: st.id };
-              void persistDraft(pack, snap, `Stasiun ${st.name} ditambahkan di peta.`);
-            }
-            return;
-          }
-          if (step2.mapMode === "move" && step2.selected) {
-            if (step2.selected.kind === "start") {
-              snap.startPoint.latitude = coord.latitude;
-              snap.startPoint.longitude = coord.longitude;
-            } else if (step2.selected.kind === "station") {
-              const st = snap.stations.find((s) => s.id === step2.selected!.id);
-              if (st) {
-                st.latitude = coord.latitude;
-                st.longitude = coord.longitude;
-              }
-            } else if (step2.selected.kind === "poi") {
-              const poi = snap.pois.find((p) => p.id === step2.selected!.id);
-              if (poi) {
-                poi.latitude = coord.latitude;
-                poi.longitude = coord.longitude;
-              }
-            } else if (step2.selected.kind === "landmark" && isClaimStudioPack(pack)) {
-              const lm = pack.geography.landmarks.find((l) => l.id === step2.selected!.id);
-              if (lm) {
-                lm.latitude = coord.latitude;
-                lm.longitude = coord.longitude;
-              }
-            }
-            void persistDraft(pack, snap, `Titik dipindahkan ke (${coord.latitude}, ${coord.longitude}).`);
-          }
-        },
+        onSelectTarget: handleStep2SelectTarget,
+        onMapClick: handleStep2MapClick,
         onError: () => {
           step2.mapFailed = true;
+          destroyStep2Map();
           render();
         },
       });
-      mapCleanup = handle.destroy;
     } catch {
+      if (reqId !== studioMapReq) return;
       step2.mapFailed = true;
+      destroyStep2Map();
       render();
     }
   }
@@ -275,9 +296,12 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }
 
   async function refresh() {
+    const seq = ++refreshSeq;
+    const targetFormat = format;
     const data = await apiJson<{ versions?: StudioVersionRecord[]; earnings?: StudioEarningsRecord[] }>(
       "/api/rulebooks?role=reviewer",
     );
+    if (seq !== refreshSeq || targetFormat !== format) return;
     versions = (data.versions ?? []).filter((v) => v.format === format);
     earnings = data.earnings ?? [];
     const community = versions.filter((v) => !v.isOfficial);
@@ -306,6 +330,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }
 
   function renderCloneCard(officialTemplates: StudioVersionRecord[]): string {
+    if (officialTemplates.length === 0) {
+      return `<div class="rb-card" data-testid="clone-template-card"><h3>Kloning dari Templat Resmi</h3><p role="status">Memuat templat resmi…</p></div>`;
+    }
     const defaultPackId = format === "claim-the-city" ? "pack-senopati-claim" : "pack-senopati-seek";
     const defaultTitle =
       format === "claim-the-city" ? "Senopati Culinary Claim the City" : "Senopati Coffee Hide & Seek";
@@ -491,89 +518,130 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     const submittedCount = communityVersions.filter((v) => v.status === "submitted").length;
     const active = currentDraft();
 
-    root.innerHTML = `<section class="rb-shell" aria-label="Studio Kreator Rulebook">
-      <div class="rb-card">
-        <h2>Studio Kreator · ${format === "claim-the-city" ? "Claim the City" : "Hide &amp; Seek"} RulebookPack</h2>
-        <p>Buat paket permainan sendiri dalam 4 langkah: kloning templat, atur peta, sesuaikan aturan/kartu, lalu validasi dan ajukan untuk terbit di katalog.</p>
-        <div class="rb-actions">
-          <button type="button" class="${format === "hide-and-seek" ? "primary" : "secondary"}" data-format="hide-and-seek">Format Hide &amp; Seek</button>
-          <button type="button" class="${format === "claim-the-city" ? "primary" : "secondary"}" data-format="claim-the-city">Format Claim the City</button>
-        </div>
-        <div class="rb-actions">
-          <button type="button" class="${tab === "writer" ? "primary" : "secondary"}" data-tab="writer">Penulis (Creator)</button>
-          <button type="button" class="${tab === "reviewer" ? "primary" : "secondary"}" data-tab="reviewer">Peninjau (${submittedCount})</button>
-          <button type="button" class="secondary" data-nav="catalog">Katalog Publik</button>
-          <button type="button" class="secondary" data-nav="back">Beranda</button>
-        </div>
-        ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
-        ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
-        ${
-          validationErrors.length > 0
-            ? `<ul class="rb-errors" aria-label="Kesalahan validasi">${validationErrors
-                .map((e) => {
-                  const target = resolveValidationJump(e.path, format);
-                  return `<li>
-                    <div><code>${escapeText(e.code)}</code> (${escapeText(e.path)}): ${escapeText(e.message)}</div>
-                    <button type="button" class="secondary" data-jump-path="${escapeText(e.path)}">Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button>
-                  </li>`;
-                })
-                .join("")}</ul>`
-            : ""
-        }
-      </div>
-
-      ${
-        tab === "writer"
-          ? `${renderStepper()}
-             ${
-               step === 1
-                 ? renderStep1(officialTemplates, communityVersions, active)
-                 : step === 2
-                   ? renderStep2(active)
-                   : step === 3
-                     ? renderStep3(active)
-                     : renderStep4(active)
-             }`
-          : `<div class="rb-card">
-              <h3>Antrean Tinjauan Editorial (${communityVersions.length})</h3>
-              <ul class="rb-list">
-                ${
-                  communityVersions.length === 0
-                    ? "<li>Belum ada paket komunitas untuk format ini.</li>"
-                    : communityVersions
-                        .map(
-                          (v) => `<li>
-                            <div>
-                              <strong>${escapeText(v.pack.meta.title)}</strong> (<code>${escapeText(v.packId)}</code> v${v.version})
-                              <span class="rb-badge">${escapeText(statusLabel(v.status))}</span>
-                            </div>
-                            ${v.reviewNote ? `<small>Catatan terakhir: ${escapeText(v.reviewNote)}</small>` : ""}
-                            ${
-                              v.status === "submitted"
-                                ? `<label class="rb-field"><span>Catatan Revisi (opsional)</span><input id="rev-note-${escapeText(v.packId)}-${v.version}" value="Perjelas catatan akses lokasi."></label>`
-                                : ""
-                            }
-                            <div class="rb-actions">
-                              ${v.status === "submitted" ? `<button type="button" class="primary" data-action="publish" data-pack="${escapeText(v.packId)}" data-version="${v.version}">Terbitkan ke Katalog</button>` : ""}
-                              ${v.status === "submitted" ? `<button type="button" class="secondary" data-action="request-changes" data-pack="${escapeText(v.packId)}" data-version="${v.version}">Minta Revisi</button>` : ""}
-                              ${v.status === "published" ? `<button type="button" class="secondary" data-action="pause" data-pack="${escapeText(v.packId)}" data-version="${v.version}">Jeda Penjualan</button>` : ""}
-                            </div>
-                          </li>`,
-                        )
-                        .join("")
-                }
-              </ul>
-            </div>`
-      }
-    </section>`;
-
-    if (tab === "writer" && step === 2 && active && !step2.mapFailed) {
-      const host = root.querySelector<HTMLElement>("#st-map-host");
-      if (host) void mountStep2Map(host, active);
-    } else {
-      mapCleanup?.();
-      mapCleanup = undefined;
+    if (!root.querySelector("#st-header-slot")) {
+      root.innerHTML = `<section class="rb-shell" aria-label="Studio Kreator Rulebook">
+        <div id="st-header-slot"></div>
+        <div id="st-stepper-slot"></div>
+        <div id="st-body-slot"></div>
+      </section>`;
     }
+
+    const headerSlot = root.querySelector<HTMLElement>("#st-header-slot")!;
+    const stepperSlot = root.querySelector<HTMLElement>("#st-stepper-slot")!;
+    const bodySlot = root.querySelector<HTMLElement>("#st-body-slot")!;
+
+    headerSlot.innerHTML = `<div class="rb-card">
+      <h2>Studio Kreator · ${format === "claim-the-city" ? "Claim the City" : "Hide &amp; Seek"} RulebookPack</h2>
+      <p>Buat paket permainan sendiri dalam 4 langkah: kloning templat, atur peta, sesuaikan aturan/kartu, lalu validasi dan ajukan untuk terbit di katalog.</p>
+      <div class="rb-actions">
+        <button type="button" class="${format === "hide-and-seek" ? "primary" : "secondary"}" data-format="hide-and-seek">Format Hide &amp; Seek</button>
+        <button type="button" class="${format === "claim-the-city" ? "primary" : "secondary"}" data-format="claim-the-city">Format Claim the City</button>
+      </div>
+      <div class="rb-actions">
+        <button type="button" class="${tab === "writer" ? "primary" : "secondary"}" data-tab="writer">Penulis (Creator)</button>
+        <button type="button" class="${tab === "reviewer" ? "primary" : "secondary"}" data-tab="reviewer">Peninjau (${submittedCount})</button>
+        <button type="button" class="secondary" data-nav="catalog">Katalog Publik</button>
+        <button type="button" class="secondary" data-nav="back">Beranda</button>
+      </div>
+      ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
+      ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
+      ${
+        validationErrors.length > 0
+          ? `<ul class="rb-errors" aria-label="Kesalahan validasi">${validationErrors
+              .map((e) => {
+                const target = resolveValidationJump(e.path, format);
+                return `<li>
+                  <div><code>${escapeText(e.code)}</code> (${escapeText(e.path)}): ${escapeText(e.message)}</div>
+                  <button type="button" class="secondary" data-jump-path="${escapeText(e.path)}">Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button>
+                </li>`;
+              })
+              .join("")}</ul>`
+          : ""
+      }
+    </div>`;
+
+    stepperSlot.innerHTML = tab === "writer" ? renderStepper() : "";
+
+    if (tab !== "writer") {
+      destroyStep2Map();
+      bodySlot.innerHTML = `<div class="rb-card">
+        <h3>Antrean Tinjauan Editorial (${communityVersions.length})</h3>
+        <ul class="rb-list">
+          ${
+            communityVersions.length === 0
+              ? "<li>Belum ada paket komunitas untuk format ini.</li>"
+              : communityVersions
+                  .map(
+                    (v) => `<li>
+                      <div>
+                        <strong>${escapeText(v.pack.meta.title)}</strong> (<code>${escapeText(v.packId)}</code> v${v.version})
+                        <span class="rb-badge">${escapeText(statusLabel(v.status))}</span>
+                      </div>
+                      ${v.reviewNote ? `<small>Catatan terakhir: ${escapeText(v.reviewNote)}</small>` : ""}
+                      ${
+                        v.status === "submitted"
+                          ? `<label class="rb-field"><span>Catatan Revisi (opsional)</span><input id="rev-note-${escapeText(v.packId)}-${v.version}" value="Perjelas catatan akses lokasi."></label>`
+                          : ""
+                      }
+                      <div class="rb-actions">
+                        ${v.status === "submitted" ? `<button type="button" class="primary" data-action="publish" data-pack="${escapeText(v.packId)}" data-version="${v.version}">Terbitkan ke Katalog</button>` : ""}
+                        ${v.status === "submitted" ? `<button type="button" class="secondary" data-action="request-changes" data-pack="${escapeText(v.packId)}" data-version="${v.version}">Minta Revisi</button>` : ""}
+                        ${v.status === "published" ? `<button type="button" class="secondary" data-action="pause" data-pack="${escapeText(v.packId)}" data-version="${v.version}">Jeda Penjualan</button>` : ""}
+                      </div>
+                    </li>`,
+                  )
+                  .join("")
+          }
+        </ul>
+      </div>`;
+      return;
+    }
+
+    if (step === 2 && active) {
+      const editable = isEditable(active);
+      const draftKey = `${active.packId}@${active.version}`;
+      const topSlot = bodySlot.querySelector<HTMLElement>("#st-step2-top");
+      const mapHost = bodySlot.querySelector<HTMLElement>("#st-map-host");
+      const fallbackEl = bodySlot.querySelector<HTMLElement>("#st-map-fallback");
+      const bottomSlot = bodySlot.querySelector<HTMLElement>("#st-step2-bottom");
+
+      if (topSlot && mapHost && fallbackEl && bottomSlot && studioMapKey === draftKey) {
+        topSlot.innerHTML = renderStep2Top(active, step2, editable);
+        bottomSlot.innerHTML = renderStep2Bottom(active, step2, editable);
+        mapHost.hidden = step2.mapFailed;
+        fallbackEl.hidden = !step2.mapFailed;
+        if (step2.mapFailed) {
+          destroyStep2Map();
+        } else {
+          studioMapHandle?.update({
+            record: active,
+            mode: step2.mapMode,
+            selectedTarget: ensureStep2Selection(active, step2),
+            onSelectTarget: handleStep2SelectTarget,
+            onMapClick: handleStep2MapClick,
+          });
+        }
+        return;
+      }
+
+      destroyStep2Map();
+      bodySlot.innerHTML = renderStep2View(active, step2, editable);
+      if (!step2.mapFailed) {
+        const freshHost = bodySlot.querySelector<HTMLElement>("#st-map-host");
+        if (freshHost) void mountStep2Map(freshHost, active, draftKey);
+      }
+      return;
+    }
+
+    destroyStep2Map();
+    bodySlot.innerHTML =
+      step === 1
+        ? renderStep1(officialTemplates, communityVersions, active)
+        : step === 2
+          ? renderStep2(active)
+          : step === 3
+            ? renderStep3(active)
+            : renderStep4(active);
   }
 
   function applyFormEdits(active: StudioVersionRecord): { pack: StudioPack; snapshot: GeoSnapshot } {
@@ -773,6 +841,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (btn.dataset.format === "hide-and-seek" || btn.dataset.format === "claim-the-city") {
       format = btn.dataset.format;
       selectedKey = "";
+      versions = [];
       step2.selected = null;
       step2.subTab = "primary";
       step2.mapMode = "select";
@@ -783,6 +852,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       statusMsg = "";
       errorMsg = "";
       validationErrors = [];
+      render();
       void refresh();
       return;
     }
@@ -1044,6 +1114,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
     const mapAction = btn.dataset.mapAction;
     if (mapAction) {
+      if (mapAction === "recenter") {
+        studioMapHandle?.recenter();
+        return;
+      }
       void (async () => {
         const active = currentDraft();
         if (!active || !isEditable(active)) return;
@@ -1425,6 +1499,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   void refresh();
   return () => {
-    mapCleanup?.();
+    destroyStep2Map();
   };
 }

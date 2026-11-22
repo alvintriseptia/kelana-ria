@@ -48,6 +48,37 @@ export type BoardMapOptions = {
   onError?: (reason: string) => void;
 };
 
+export type BoardMapUpdateOptions = Omit<BoardMapOptions, "container" | "config">;
+
+export type BoardMapHandle = {
+  getCamera: () => { center: maplibregl.LngLat; zoom: number; pitch: number; bearing: number } | undefined;
+  setQuestionPreview: (preview?: SeekMapPreview, padding?: Required<maplibregl.PaddingOptions>) => void;
+  focusQuestionPreview: (padding: maplibregl.PaddingOptions) => void;
+  update: (next: BoardMapUpdateOptions) => void;
+  destroy: () => void;
+};
+
+type BoardMarkerEntry = {
+  marker: maplibregl.Marker;
+  el: HTMLElement;
+  tag: "BUTTON" | "SPAN";
+  customClassList: string[];
+  lat: number;
+  lng: number;
+  onClick: () => void;
+};
+
+function syncPinClasses(el: HTMLElement, prev: string[], next: string[]): string[] {
+  if (prev.length === next.length && prev.every((c, i) => c === next[i])) return prev;
+  for (const cls of prev) {
+    if (cls) el.classList.remove(cls);
+  }
+  for (const cls of next) {
+    if (cls) el.classList.add(cls);
+  }
+  return next;
+}
+
 export function circlePolygon(center: GeoCoordinate, radiusMeters: number, steps = 48): [number, number][] {
   const earthRadius = 6_371_000;
   const latRad = (center.latitude * Math.PI) / 180;
@@ -282,27 +313,9 @@ function questionPreviewFeatures(preview?: SeekMapPreview): GeoJSON.FeatureColle
   return { type: "FeatureCollection", features };
 }
 
-export function mountBoardMap(options: BoardMapOptions) {
-  const {
-    container,
-    config,
-    start,
-    startSelectable = false,
-    startLabel,
-    camera,
-    fitPadding,
-    focusPoints,
-    deductionBoundary,
-    thermometer,
-    checkpoints,
-    selectedId,
-    radarCircles = [],
-    deductionOverlays = [],
-    hidingZone,
-    onSelect,
-    onSelectStart,
-    onError,
-  } = options;
+export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
+  const { container, config } = options;
+  let current: BoardMapUpdateOptions = options;
 
   delete container.dataset.mapReady;
   container.innerHTML = `<div class="board-map-shell">
@@ -318,11 +331,30 @@ export function mountBoardMap(options: BoardMapOptions) {
 
   const shell = container.querySelector<HTMLElement>(".board-map-shell")!;
   const attribution = shell.querySelector<HTMLElement>(".board-map-attribution")!;
-  if (!deductionBoundary && radarCircles.length > 0) {
-    const radarList = document.createElement("ul");
-    radarList.className = "board-map-radars";
-    radarList.setAttribute("aria-label", "Lingkaran radar terkirim");
-    for (const circle of radarCircles) {
+  const canvasHost = container.querySelector<HTMLElement>(".board-map-canvas")!;
+
+  let map: maplibregl.Map | undefined;
+  let destroyed = false;
+  let styleLoaded = false;
+  let questionPreview: SeekMapPreview | undefined;
+  let previewPadding: Required<maplibregl.PaddingOptions> | undefined;
+  const markerMap = new Map<string, BoardMarkerEntry>();
+
+  function syncRadarList() {
+    const radars = current.radarCircles ?? [];
+    const existing = shell.querySelector<HTMLUListElement>(".board-map-radars");
+    if (current.deductionBoundary || radars.length === 0) {
+      existing?.remove();
+      return;
+    }
+    const radarList = existing ?? document.createElement("ul");
+    if (!existing) {
+      radarList.className = "board-map-radars";
+      radarList.setAttribute("aria-label", "Lingkaran radar terkirim");
+      shell.insertBefore(radarList, attribution);
+    }
+    const items: HTMLLIElement[] = [];
+    for (const circle of radars) {
       const item = document.createElement("li");
       item.dataset.radarInside = String(circle.inside);
       const badge = document.createElement("span");
@@ -331,32 +363,319 @@ export function mountBoardMap(options: BoardMapOptions) {
       const desc = document.createElement("span");
       desc.textContent = `Radar ${circle.radiusMeters} m · acuan ${circle.center.name}`;
       item.append(badge, desc);
-      radarList.append(item);
+      items.push(item);
     }
-    shell.insertBefore(radarList, attribution);
+    radarList.replaceChildren(...items);
   }
 
-  const canvasHost = container.querySelector<HTMLElement>(".board-map-canvas")!;
-  const allPoints: SoloPoint[] = [start, ...checkpoints, ...radarCircles.map((circle) => circle.center)];
-  const bounds = new maplibregl.LngLatBounds();
-  for (const p of focusPoints ?? allPoints) bounds.extend([p.longitude, p.latitude]);
+  function computeFitBounds(points: GeoCoordinate[]): maplibregl.LngLatBounds {
+    const b = new maplibregl.LngLatBounds();
+    for (const p of points) b.extend([p.longitude, p.latitude]);
+    return b;
+  }
 
-  let map: maplibregl.Map | undefined;
-  let destroyed = false;
-  let styleLoaded = false;
-  let questionPreview: SeekMapPreview | undefined;
-  let previewPadding: Required<maplibregl.PaddingOptions> | undefined;
-  const markers: maplibregl.Marker[] = [];
+  function syncSources() {
+    if (!map || !styleLoaded || destroyed) return;
+    const radars = current.radarCircles ?? [];
+    const overlays = current.deductionOverlays ?? [];
+    const { circleFeatures, bisectorFeatures } = buildOverlayFeatures(radars, overlays, current.hidingZone);
+
+    const corridorSrc = map.getSource<maplibregl.GeoJSONSource>("corridors");
+    if (corridorSrc) {
+      corridorSrc.setData({
+        type: "FeatureCollection",
+        features: current.checkpoints.map((point) => ({
+          type: "Feature" as const,
+          properties: { id: point.id },
+          geometry: {
+            type: "LineString" as const,
+            coordinates: [
+              [current.start.longitude, current.start.latitude],
+              [point.longitude, point.latitude],
+            ],
+          },
+        })),
+      });
+    }
+
+    const radarsSrc = map.getSource<maplibregl.GeoJSONSource>("radars");
+    if (radarsSrc) {
+      radarsSrc.setData({ type: "FeatureCollection", features: circleFeatures });
+    } else if (config.mode === "geoapify-vector" && circleFeatures.length > 0) {
+      map.addSource("radars", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: circleFeatures },
+      });
+      map.addLayer({
+        id: "radar-fill",
+        type: "fill",
+        source: "radars",
+        paint: {
+          "fill-color": ["case", ["get", "inside"], "#0f766e", "#b45309"],
+          "fill-opacity": current.deductionBoundary ? 0 : 0.16,
+        },
+      });
+      map.addLayer({
+        id: "radar-outline",
+        type: "line",
+        source: "radars",
+        paint: {
+          "line-color": ["case", ["get", "inside"], "#0f766e", "#b45309"],
+          "line-width": 2,
+        },
+      });
+    }
+
+    if (map.getLayer("radar-fill")) {
+      if (current.hidingZone && current.deductionBoundary) {
+        map.setPaintProperty("radar-fill", "fill-opacity", ["case", ["==", ["get", "id"], "hiding-zone"], 0.16, 0]);
+      } else {
+        map.setPaintProperty("radar-fill", "fill-opacity", current.deductionBoundary ? 0 : 0.16);
+      }
+    }
+
+    const areaData: GeoJSON.FeatureCollection = current.deductionBoundary
+      ? searchArea(current.deductionBoundary, radars.filter((c) => !c.preview))
+      : { type: "FeatureCollection", features: [] };
+    const areaSrc = map.getSource<maplibregl.GeoJSONSource>("radar-search-area");
+    if (areaSrc) {
+      areaSrc.setData(areaData);
+    } else if (areaData.features.length > 0) {
+      map.addSource("radar-search-area", { type: "geojson", data: areaData });
+      map.addLayer(
+        {
+          id: "radar-search-shading",
+          type: "fill",
+          source: "radar-search-area",
+          paint: {
+            "fill-color": ["case", ["get", "possible"], "#28a981", "#26384e"],
+            "fill-opacity": ["case", ["get", "possible"], 0.27, 0.34],
+          },
+        },
+        map.getLayer("radar-outline") ? "radar-outline" : undefined,
+      );
+    }
+
+    const preview = radars.find((c) => c.preview);
+    const previewData: GeoJSON.FeatureCollection = preview
+      ? {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              properties: {},
+              geometry: { type: "Polygon", coordinates: [circlePolygon(preview.center, preview.radiusMeters)] },
+            },
+          ],
+        }
+      : { type: "FeatureCollection", features: [] };
+    const previewColor = preview
+      ? preview.preview === "correct"
+        ? "#087b61"
+        : preview.preview === "incorrect"
+          ? "#bc2e29"
+          : "#295c8d"
+      : "#295c8d";
+    const previewSrc = map.getSource<maplibregl.GeoJSONSource>("radar-preview");
+    if (previewSrc) {
+      previewSrc.setData(previewData);
+      if (map.getLayer("radar-preview-fill")) map.setPaintProperty("radar-preview-fill", "fill-color", previewColor);
+      if (map.getLayer("radar-preview-outline")) map.setPaintProperty("radar-preview-outline", "line-color", previewColor);
+    } else if (preview) {
+      map.addSource("radar-preview", { type: "geojson", data: previewData });
+      map.addLayer({
+        id: "radar-preview-fill",
+        type: "fill",
+        source: "radar-preview",
+        paint: { "fill-color": previewColor, "fill-opacity": 0.12 },
+      });
+      map.addLayer({
+        id: "radar-preview-outline",
+        type: "line",
+        source: "radar-preview",
+        paint: { "line-color": previewColor, "line-width": 3, "line-dasharray": [2, 2] },
+      });
+    }
+
+    const bisectorsSrc = map.getSource<maplibregl.GeoJSONSource>("bisectors");
+    if (bisectorsSrc) {
+      bisectorsSrc.setData({ type: "FeatureCollection", features: bisectorFeatures });
+    } else if (config.mode === "geoapify-vector" && bisectorFeatures.length > 0) {
+      map.addSource("bisectors", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: bisectorFeatures },
+      });
+      map.addLayer({
+        id: "bisector-lines",
+        type: "line",
+        source: "bisectors",
+        paint: {
+          "line-color": "#7c3aed",
+          "line-width": 2.5,
+          "line-dasharray": [4, 2],
+        },
+      });
+    }
+
+    const thermData: GeoJSON.FeatureCollection = current.thermometer?.end
+      ? {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              properties: {},
+              geometry: {
+                type: "LineString",
+                coordinates: [
+                  [current.thermometer.start.longitude, current.thermometer.start.latitude],
+                  [current.thermometer.end.longitude, current.thermometer.end.latitude],
+                ],
+              },
+            },
+          ],
+        }
+      : { type: "FeatureCollection", features: [] };
+    const thermSrc = map.getSource<maplibregl.GeoJSONSource>("thermometer-track");
+    if (thermSrc) {
+      thermSrc.setData(thermData);
+    } else if (current.thermometer?.end) {
+      map.addSource("thermometer-track", { type: "geojson", data: thermData });
+      map.addLayer({
+        id: "thermometer-track-line",
+        type: "line",
+        source: "thermometer-track",
+        paint: { "line-color": "#9f214b", "line-width": 4, "line-dasharray": [2, 2] },
+      });
+    }
+  }
+
+  function syncMarkers() {
+    if (!map || destroyed) return;
+    const start = current.start;
+    const startSelectable = current.startSelectable ?? false;
+    const selectedId = current.selectedId;
+    const startLabel = current.startLabel;
+
+    type DesiredMarker = {
+      key: string;
+      id: string;
+      tag: "BUTTON" | "SPAN";
+      classes: string[];
+      text: string;
+      title?: string;
+      ariaLabel: string;
+      lat: number;
+      lng: number;
+      onClick: () => void;
+    };
+
+    const desired: DesiredMarker[] = [
+      {
+        key: "__start__",
+        id: start.id,
+        tag: startSelectable ? "BUTTON" : "SPAN",
+        classes: [
+          "board-map-pin",
+          "board-map-pin-start",
+          start.id === selectedId ? "board-map-pin-selected" : "",
+        ].filter(Boolean),
+        text: startLabel ? `${startLabel} · ${start.name}` : `A · ${start.name}`,
+        ariaLabel: `${start.name} (Titik awal)`,
+        lat: start.latitude,
+        lng: start.longitude,
+        onClick: () => {
+          if (current.onSelectStart) current.onSelectStart();
+          else current.onSelect?.(current.start.id);
+        },
+      },
+    ];
+
+    current.checkpoints.forEach((point, index) => {
+      const pointId = point.id;
+      desired.push({
+        key: `ck:${pointId}`,
+        id: pointId,
+        tag: point.selectable ? "BUTTON" : "SPAN",
+        classes: [
+          "board-map-pin",
+          point.claimed ? "board-map-pin-claimed" : "",
+          point.dimmed ? "board-map-pin-dimmed" : "",
+          point.markerKind ? `board-map-pin-${point.markerKind}` : "",
+          point.statusTag ? `board-map-pin-${point.statusTag}` : "",
+          point.id === selectedId ? "board-map-pin-selected" : "",
+        ].filter(Boolean),
+        text: point.markerText ?? (point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`),
+        title: point.markerKind === "station" ? point.name : undefined,
+        ariaLabel: point.label ? `${point.name} (${point.label})` : point.name,
+        lat: point.latitude,
+        lng: point.longitude,
+        onClick: () => current.onSelect?.(pointId),
+      });
+    });
+
+    const seenKeys = new Set<string>();
+    for (const item of desired) {
+      seenKeys.add(item.key);
+      const existing = markerMap.get(item.key);
+      if (existing && existing.tag === item.tag) {
+        existing.onClick = item.onClick;
+        existing.customClassList = syncPinClasses(existing.el, existing.customClassList, item.classes);
+        if (existing.el.textContent !== item.text) existing.el.textContent = item.text;
+        existing.el.dataset.mapPoint = item.id;
+        existing.el.setAttribute("aria-label", item.ariaLabel);
+        if (item.title !== undefined) existing.el.title = item.title;
+        else if (existing.el.hasAttribute("title")) existing.el.removeAttribute("title");
+        if (existing.lat !== item.lat || existing.lng !== item.lng) {
+          existing.lat = item.lat;
+          existing.lng = item.lng;
+          existing.marker.setLngLat([item.lng, item.lat]);
+        }
+      } else {
+        if (existing) {
+          existing.marker.remove();
+          markerMap.delete(item.key);
+        }
+        const el = document.createElement(item.tag === "BUTTON" ? "button" : "span");
+        const entry: BoardMarkerEntry = {
+          marker: undefined as unknown as maplibregl.Marker,
+          el,
+          tag: item.tag,
+          customClassList: item.classes,
+          lat: item.lat,
+          lng: item.lng,
+          onClick: item.onClick,
+        };
+        if (el instanceof HTMLButtonElement) {
+          el.type = "button";
+          el.addEventListener("click", () => entry.onClick());
+        }
+        el.classList.add(...item.classes);
+        if (item.title !== undefined) el.title = item.title;
+        el.dataset.mapPoint = item.id;
+        el.textContent = item.text;
+        el.setAttribute("aria-label", item.ariaLabel);
+        entry.marker = new maplibregl.Marker({ element: el }).setLngLat([item.lng, item.lat]).addTo(map);
+        markerMap.set(item.key, entry);
+      }
+    }
+
+    for (const [key, entry] of markerMap.entries()) {
+      if (!seenKeys.has(key)) {
+        entry.marker.remove();
+        markerMap.delete(key);
+      }
+    }
+  }
 
   function focusQuestionPreview(padding: maplibregl.PaddingOptions) {
     if (!map || !questionPreview || !styleLoaded) return;
     const { reference, station, targets, radiusMeters } = questionPreview;
-    const bounds = new maplibregl.LngLatBounds();
-    for (const point of [reference, ...(station ? [station] : targets ?? [])]) bounds.extend([point.longitude, point.latitude]);
+    const b = new maplibregl.LngLatBounds();
+    for (const point of [reference, ...(station ? [station] : targets ?? [])]) b.extend([point.longitude, point.latitude]);
     if (radiusMeters !== undefined) {
-      for (const point of circlePolygon(reference, radiusMeters, 16)) bounds.extend(point);
+      for (const point of circlePolygon(reference, radiusMeters, 16)) b.extend(point);
     }
-    map.fitBounds(bounds, { padding, maxZoom: 16, duration: 0 });
+    map.fitBounds(b, { padding, maxZoom: 16, duration: 0 });
   }
 
   function drawQuestionPreview() {
@@ -405,12 +724,17 @@ export function mountBoardMap(options: BoardMapOptions) {
   function initMap(style: maplibregl.StyleSpecification) {
     if (destroyed) return;
     try {
+      const initialPoints: SoloPoint[] = [
+        current.start,
+        ...current.checkpoints,
+        ...(current.radarCircles ?? []).map((circle) => circle.center),
+      ];
       map = new maplibregl.Map({
         container: canvasHost,
         style,
-        center: [start.longitude, start.latitude],
+        center: [current.start.longitude, current.start.latitude],
         zoom: 12.5,
-        ...camera,
+        ...current.camera,
         attributionControl: false,
         transformRequest: (url) => ({ url: absolutizeMapUrl(url) }),
       });
@@ -420,145 +744,27 @@ export function mountBoardMap(options: BoardMapOptions) {
       map.on("load", () => {
         styleLoaded = true;
         if (!map || destroyed) return;
-        const { circleFeatures, bisectorFeatures } = buildOverlayFeatures(radarCircles, deductionOverlays, hidingZone);
-        if (deductionBoundary) {
-          const data = searchArea(deductionBoundary, radarCircles.filter(circle => !circle.preview));
-          if (data.features.length) {
-            map.addSource("radar-search-area", { type: "geojson", data });
-            map.addLayer({
-              id: "radar-search-shading", type: "fill", source: "radar-search-area",
-              paint: {
-                "fill-color": ["case", ["get", "possible"], "#28a981", "#26384e"],
-                "fill-opacity": ["case", ["get", "possible"], 0.27, 0.34],
-              },
-            }, map.getLayer("radar-outline") ? "radar-outline" : undefined);
-          }
-        }
-        const preview = radarCircles.find(circle => circle.preview);
-        if (preview) {
-          const color = preview.preview === "correct" ? "#087b61" : preview.preview === "incorrect" ? "#bc2e29" : "#295c8d";
-          map.addSource("radar-preview", {
-            type: "geojson",
-            data: { type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [circlePolygon(preview.center, preview.radiusMeters)] } },
-          });
-          map.addLayer({ id: "radar-preview-fill", type: "fill", source: "radar-preview", paint: { "fill-color": color, "fill-opacity": 0.12 } });
-          map.addLayer({ id: "radar-preview-outline", type: "line", source: "radar-preview", paint: { "line-color": color, "line-width": 3, "line-dasharray": [2, 2] } });
-        }
-        if (config.mode === "geoapify-vector" && circleFeatures.length > 0 && !map.getSource("radars")) {
-          map.addSource("radars", {
-            type: "geojson",
-            data: { type: "FeatureCollection", features: circleFeatures },
-          });
-          map.addLayer({
-            id: "radar-fill",
-            type: "fill",
-            source: "radars",
-            paint: {
-              "fill-color": ["case", ["get", "inside"], "#0f766e", "#b45309"],
-              "fill-opacity": deductionBoundary ? 0 : 0.16,
-            },
-          });
-          map.addLayer({
-            id: "radar-outline",
-            type: "line",
-            source: "radars",
-            paint: {
-              "line-color": ["case", ["get", "inside"], "#0f766e", "#b45309"],
-              "line-width": 2,
-            },
-          });
-        }
-        if (config.mode === "geoapify-vector" && bisectorFeatures.length > 0 && !map.getSource("bisectors")) {
-          map.addSource("bisectors", {
-            type: "geojson",
-            data: { type: "FeatureCollection", features: bisectorFeatures },
-          });
-          map.addLayer({
-            id: "bisector-lines",
-            type: "line",
-            source: "bisectors",
-            paint: {
-              "line-color": "#7c3aed",
-              "line-width": 2.5,
-              "line-dasharray": [4, 2],
-            },
-          });
-        }
-        if (thermometer?.end) {
-          map.addSource("thermometer-track", {
-            type: "geojson",
-            data: { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [
-              [thermometer.start.longitude, thermometer.start.latitude],
-              [thermometer.end.longitude, thermometer.end.latitude],
-            ] } },
-          });
-          map.addLayer({
-            id: "thermometer-track-line", type: "line", source: "thermometer-track",
-            paint: { "line-color": "#9f214b", "line-width": 4, "line-dasharray": [2, 2] },
-          });
-        }
-        if (hidingZone && deductionBoundary && map.getLayer("radar-fill")) {
-          map.setPaintProperty("radar-fill", "fill-opacity", ["case", ["==", ["get", "id"], "hiding-zone"], 0.16, 0]);
-        }
-        if (!camera && (focusPoints?.length ?? allPoints.length) > 1) {
-          map.fitBounds(bounds, { padding: fitPadding ?? 36, maxZoom: 14.5, duration: 0 });
+        syncSources();
+        syncMarkers();
+        const fitTarget = current.focusPoints ?? initialPoints;
+        if (!current.camera && fitTarget.length > 1) {
+          map.fitBounds(computeFitBounds(fitTarget), { padding: current.fitPadding ?? 36, maxZoom: 14.5, duration: 0 });
         }
         drawQuestionPreview();
         container.dataset.mapReady = "true";
       });
 
       map.on("error", () => {
-        if (!styleLoaded) onError?.("tile-load-failed");
+        if (!styleLoaded) current.onError?.("tile-load-failed");
       });
 
-      // Add accessible start marker (distinct square badge + "A" label).
-      const startEl = document.createElement(startSelectable ? "button" : "span");
-      if (startEl instanceof HTMLButtonElement) {
-        startEl.type = "button";
-        startEl.addEventListener("click", () => (onSelectStart ? onSelectStart() : onSelect?.(start.id)));
-      }
-      startEl.className = [
-        "board-map-pin",
-        "board-map-pin-start",
-        start.id === selectedId ? "board-map-pin-selected" : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      startEl.textContent = startLabel ? `${startLabel} · ${start.name}` : `A · ${start.name}`;
-      startEl.dataset.mapPoint = start.id;
-      startEl.setAttribute("aria-label", `${start.name} (Titik awal)`);
-      markers.push(new maplibregl.Marker({ element: startEl }).setLngLat([start.longitude, start.latitude]).addTo(map));
-
-      // Add accessible checkpoint markers with text/shape ownership indicators (never color-only).
-      checkpoints.forEach((point, index) => {
-        const el = document.createElement(point.selectable ? "button" : "span");
-        if (el instanceof HTMLButtonElement) {
-          el.type = "button";
-          el.addEventListener("click", () => onSelect?.(point.id));
-        }
-        el.className = [
-          "board-map-pin",
-          point.claimed ? "board-map-pin-claimed" : "",
-          point.dimmed ? "board-map-pin-dimmed" : "",
-          point.markerKind ? `board-map-pin-${point.markerKind}` : "",
-          point.statusTag ? `board-map-pin-${point.statusTag}` : "",
-          point.id === selectedId ? "board-map-pin-selected" : "",
-        ]
-          .filter(Boolean)
-          .join(" ");
-        if (point.markerKind === "station") el.title = point.name;
-        el.dataset.mapPoint = point.id;
-        el.textContent = point.markerText ?? (point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`);
-        el.setAttribute(
-          "aria-label",
-          point.label ? `${point.name} (${point.label})` : point.name,
-        );
-        markers.push(new maplibregl.Marker({ element: el }).setLngLat([point.longitude, point.latitude]).addTo(map!));
-      });
+      syncMarkers();
     } catch {
-      onError?.("webgl-unavailable");
+      current.onError?.("webgl-unavailable");
     }
   }
+
+  syncRadarList();
 
   if (config.mode === "geoapify-vector" && config.styleUrl) {
     void fetch(absolutizeMapUrl(config.styleUrl))
@@ -568,14 +774,26 @@ export function mountBoardMap(options: BoardMapOptions) {
         initMap(absolutizeStyleSpec(raw));
       })
       .catch(() => {
-        if (!destroyed) onError?.("tile-load-failed");
+        if (!destroyed) current.onError?.("tile-load-failed");
       });
   } else {
-    initMap(offlineVectorStyle(start, checkpoints, radarCircles, deductionOverlays, hidingZone, !deductionBoundary));
+    initMap(
+      offlineVectorStyle(
+        current.start,
+        current.checkpoints,
+        current.radarCircles ?? [],
+        current.deductionOverlays ?? [],
+        current.hidingZone,
+        !current.deductionBoundary,
+      ),
+    );
   }
 
   return {
-    getCamera: () => map && styleLoaded ? { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() } : undefined,
+    getCamera: () =>
+      map && styleLoaded
+        ? { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() }
+        : undefined,
     setQuestionPreview(preview?: SeekMapPreview, padding?: Required<maplibregl.PaddingOptions>) {
       if (preview === questionPreview) return;
       questionPreview = preview;
@@ -583,11 +801,26 @@ export function mountBoardMap(options: BoardMapOptions) {
       drawQuestionPreview();
     },
     focusQuestionPreview,
+    update(next: BoardMapUpdateOptions) {
+      if (destroyed) return;
+      current = next;
+      syncRadarList();
+      syncSources();
+      syncMarkers();
+      if (map && styleLoaded && next.focusPoints && next.focusPoints.length > 0) {
+        map.fitBounds(computeFitBounds(next.focusPoints), {
+          padding: next.fitPadding ?? 36,
+          maxZoom: 14.5,
+          duration: 0,
+        });
+      }
+    },
     destroy() {
       destroyed = true;
       delete container.dataset.mapReady;
       delete container.dataset.questionPreview;
-      for (const m of markers) m.remove();
+      for (const entry of markerMap.values()) entry.marker.remove();
+      markerMap.clear();
       map?.remove();
       map = undefined;
     },

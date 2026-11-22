@@ -268,6 +268,7 @@ try {
   const markerB = await pageG2.locator('[data-map-point="thermometer-b"]').boundingBox();
   const questionPanel = await pageG2.locator(".sg-dock").boundingBox();
   assert.ok(markerB.y + markerB.height < questionPanel.y);
+  assert.equal(await canvas.evaluate(element => element.isConnected), true);
   await pageG2.screenshot({ path: path.join(results, "rulebook-seek-thermometer.png") });
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
   await refreshSeekRoom(pageCreator);

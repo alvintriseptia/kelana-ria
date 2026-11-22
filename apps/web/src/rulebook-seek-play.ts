@@ -145,6 +145,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     mapHandle = undefined;
     mapHost = null;
     mapKey = "";
+    mapTurn = "";
   }
 
   function clockText(milliseconds: number) {
@@ -413,9 +414,97 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     }
   }
 
-  async function mountMapOverlay(host: HTMLElement, { room, publicBoard }: RoomPayload) {
+  function buildSeekMapState(
+    host: HTMLElement,
+    { room, publicBoard }: RoomPayload,
+    mountSeq: number,
+  ) {
+    const point = (p: SeekBoardPoint) => ({ ...p, x: 50, y: 50 });
+    const anchor = room.role === "hider" && publicBoard.stations.find(station => station.id === room.ownAnchorStationId);
+    const seeker = room.seekerPosition;
+    const clues = room.questions.filter(question => question.askedAt >= (room.deductionResetAt ?? 0));
+    const pending = clues.find(question => question.status === "pending");
+    const overlays = clues.flatMap(question => question.overlay ? [question.overlay] : []);
+    const radarCircles = clues.flatMap(question => question.overlay?.type === "circle" ? [{
+      id: question.id,
+      center: point({ ...question.overlay.center, id: question.id, name: question.label }),
+      radiusMeters: question.overlay.radiusMeters,
+      inside: question.overlay.inside,
+    }] : []);
+    const preview = room.role === "hider" && pending?.radarRadiusMeters && pending.privateComputedAnswer
+      ? [{ id: pending.id, center: point({ ...pending.referencePoint, id: pending.id, name: pending.label }),
+          radiusMeters: pending.radarRadiusMeters, inside: answerChoice === "yes",
+          preview: !answerChoice ? "pending" as const : answerChoice === pending.privateComputedAnswer.code ? "correct" as const : "incorrect" as const }]
+      : [];
+    const lastThermometer = [...clues].reverse().find(question => question.thermometerStart && question.status !== "vetoed");
+    const thermometer = room.thermometerStart ? { start: room.thermometerStart, end: thermometerEnd }
+      : lastThermometer?.thermometerStart ? { start: lastThermometer.thermometerStart, end: lastThermometer.referencePoint } : undefined;
+    const thermKey = thermometer?.end ? JSON.stringify([
+      room.code, room.turnNumber, thermometer.start.latitude, thermometer.start.longitude,
+      thermometer.end.latitude, thermometer.end.longitude,
+    ]) : "";
+    const focusPoints = thermometer?.end && thermKey !== focusedThermometer
+      ? [thermometer.start, thermometer.end] : undefined;
+    focusedThermometer = thermKey;
+    const dockTop = root.querySelector(".sg-dock")?.getBoundingClientRect().top ?? host.clientHeight;
+    const bottom = focusPoints ? Math.max(164, Math.min(host.clientHeight - 178, host.clientHeight - dockTop + 25))
+      : Math.min(228, Math.floor(host.clientHeight / 3));
+    const canHide = room.role === "hider" && ((room.phase === "head_start" && !room.ownAnchorStationId) || room.moveZoneUntil !== undefined);
+    const candidates = room.candidateStationIds && new Set(room.candidateStationIds);
+
+    return {
+      focusPoints,
+      start: point(room.turnStartPoint),
+      startLabel: "Awal",
+      fitPadding: { top: 147, bottom, left: 36, right: 45 },
+      startSelectable: room.role === "seeker" || (canHide && publicBoard.stations.some(station => station.id === room.turnStartPoint.id)),
+      deductionBoundary: publicBoard.boundaryPolygon,
+      thermometer,
+      checkpoints: [
+        ...publicBoard.stations.filter(station => station.id !== room.turnStartPoint.id)
+          .map(station => ({ ...point(station), selectable: canHide || room.role === "seeker", dimmed: candidates ? !candidates.has(station.id) : false,
+            markerKind: "station" as const, markerText: station.id === room.ownAnchorStationId ? "◆" : "•",
+            label: station.id === room.ownAnchorStationId ? "Lokasi terkunci" : undefined })),
+        ...(seeker ? [{ ...point({ ...seeker, id: "seeker", name: seeker.seatId === room.seatId ? "Kamu" : "Pencari" }), markerKind: "seeker" as const, markerText: "◎", label: "Check-in" }] : []),
+        ...(thermometer ? [{ ...point({ ...thermometer.start, id: "thermometer-a", name: "Titik A" }), markerKind: "thermometer" as const, markerText: "A" }] : []),
+        ...(thermometer?.end ? [{ ...point({ ...thermometer.end, id: "thermometer-b", name: "Titik B" }), markerKind: "thermometer" as const, markerText: "B" }] : []),
+      ],
+      radarCircles: [...radarCircles, ...preview],
+      deductionOverlays: overlays.filter(overlay => overlay.type !== "circle"),
+      hidingZone: anchor && room.ownHidingZoneRadiusMeters ? { center: anchor, radiusMeters: room.ownHidingZoneRadiusMeters } : undefined,
+      onSelect: (id: string) => {
+        if (busy || actionPending) return;
+        stationId = id;
+        if (panel === "ask" && family) {
+          void updateDraftPreview();
+          return;
+        }
+        panel = "board";
+        render();
+        root.querySelector<HTMLElement>("#sg-panel-title")?.focus({ preventScroll: true });
+      },
+      onError: () => queueMicrotask(() => {
+        if (mountSeq !== mapRequest || mapFailed) return;
+        mapFailed = true;
+        const latestRoom = live?.room;
+        const latestPending = latestRoom?.questions.find(q => q.status === "pending");
+        if (!latestRoom || latestRoom.role !== "hider" || panel !== "hand" || (!latestPending && !(live?.deck as SeekDeckHiderView | undefined)?.activeDraw)) {
+          panel = "board";
+        }
+        render();
+      }),
+    };
+  }
+
+  async function mountMapOverlay(host: HTMLElement, payload: RoomPayload) {
+    const turn = `${payload.room.code}:${payload.room.turnNumber}`;
+    if (mapHandle && turn === mapTurn) {
+      const nextState = buildSeekMapState(host, payload, mapRequest);
+      mapHandle.update(nextState);
+      mapHandle.setQuestionPreview(activeDraftPreview()?.data, previewPadding(host));
+      return;
+    }
     const current = ++mapRequest;
-    const turn = `${room.code}:${room.turnNumber}`;
     const camera = turn === mapTurn ? mapHandle?.getCamera() : undefined;
     mapTurn = turn;
     mapHandle?.destroy();
@@ -425,83 +514,21 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         import("./board-map"),
         mapConfigRequest ??= fetchMapConfig(lifecycle.signal),
       ]);
+      const latest = live ?? payload;
       if (current !== mapRequest || !host.isConnected) return;
-      const point = (p: SeekBoardPoint) => ({ ...p, x: 50, y: 50 });
-      const anchor = room.role === "hider" && publicBoard.stations.find(station => station.id === room.ownAnchorStationId);
-      const seeker = room.seekerPosition;
-      const clues = room.questions.filter(question => question.askedAt >= (room.deductionResetAt ?? 0));
-      const pending = clues.find(question => question.status === "pending");
-      const overlays = clues.flatMap(question => question.overlay ? [question.overlay] : []);
-      const radarCircles = clues.flatMap(question => question.overlay?.type === "circle" ? [{
-        id: question.id,
-        center: point({ ...question.overlay.center, id: question.id, name: question.label }),
-        radiusMeters: question.overlay.radiusMeters,
-        inside: question.overlay.inside,
-      }] : []);
-      const preview = room.role === "hider" && pending?.radarRadiusMeters && pending.privateComputedAnswer
-        ? [{ id: pending.id, center: point({ ...pending.referencePoint, id: pending.id, name: pending.label }),
-            radiusMeters: pending.radarRadiusMeters, inside: answerChoice === "yes",
-            preview: !answerChoice ? "pending" as const : answerChoice === pending.privateComputedAnswer.code ? "correct" as const : "incorrect" as const }]
-        : [];
-      const lastThermometer = [...clues].reverse().find(question => question.thermometerStart && question.status !== "vetoed");
-      const thermometer = room.thermometerStart ? { start: room.thermometerStart, end: thermometerEnd }
-        : lastThermometer?.thermometerStart ? { start: lastThermometer.thermometerStart, end: lastThermometer.referencePoint } : undefined;
-      const thermKey = thermometer?.end ? JSON.stringify([
-        room.code, room.turnNumber, thermometer.start.latitude, thermometer.start.longitude,
-        thermometer.end.latitude, thermometer.end.longitude,
-      ]) : "";
-      const focusPoints = thermometer?.end && thermKey !== focusedThermometer
-        ? [thermometer.start, thermometer.end] : undefined;
-      focusedThermometer = thermKey;
-      const dockTop = root.querySelector(".sg-dock")?.getBoundingClientRect().top ?? host.clientHeight;
-      const bottom = focusPoints ? Math.max(164, Math.min(host.clientHeight - 178, host.clientHeight - dockTop + 25))
-        : Math.min(228, Math.floor(host.clientHeight / 3));
-      const canHide = room.role === "hider" && ((room.phase === "head_start" && !room.ownAnchorStationId) || room.moveZoneUntil !== undefined);
-      const candidates = room.candidateStationIds && new Set(room.candidateStationIds);
+      const state = buildSeekMapState(host, latest, current);
       const handle = mountBoardMap({
-        container: host, config, start: point(room.turnStartPoint), startLabel: "Awal", camera: focusPoints ? undefined : camera, focusPoints,
-        fitPadding: { top: 147, bottom, left: 36, right: 45 },
-        startSelectable: room.role === "seeker" || (canHide && publicBoard.stations.some(station => station.id === room.turnStartPoint.id)),
-        deductionBoundary: publicBoard.boundaryPolygon,
-        thermometer,
-        checkpoints: [
-          ...publicBoard.stations.filter(station => station.id !== room.turnStartPoint.id)
-            .map(station => ({ ...point(station), selectable: canHide || room.role === "seeker", dimmed: candidates ? !candidates.has(station.id) : false,
-              markerKind: "station" as const, markerText: station.id === room.ownAnchorStationId ? "◆" : "•",
-              label: station.id === room.ownAnchorStationId ? "Lokasi terkunci" : undefined })),
-          ...(seeker ? [{ ...point({ ...seeker, id: "seeker", name: seeker.seatId === room.seatId ? "Kamu" : "Pencari" }), markerKind: "seeker" as const, markerText: "◎", label: "Check-in" }] : []),
-          ...(thermometer ? [{ ...point({ ...thermometer.start, id: "thermometer-a", name: "Titik A" }), markerKind: "thermometer" as const, markerText: "A" }] : []),
-          ...(thermometer?.end ? [{ ...point({ ...thermometer.end, id: "thermometer-b", name: "Titik B" }), markerKind: "thermometer" as const, markerText: "B" }] : []),
-        ],
-        radarCircles: [...radarCircles, ...preview],
-        deductionOverlays: overlays.filter(overlay => overlay.type !== "circle"),
-        hidingZone: anchor && room.ownHidingZoneRadiusMeters ? { center: anchor, radiusMeters: room.ownHidingZoneRadiusMeters } : undefined,
-        onSelect: id => {
-          if (busy || actionPending) return;
-          stationId = id;
-          if (panel === "ask" && family) {
-            void updateDraftPreview();
-            return;
-          }
-          panel = "board";
-          render();
-          root.querySelector<HTMLElement>("#sg-panel-title")?.focus({ preventScroll: true });
-        },
-        onError: () => queueMicrotask(() => {
-          if (current !== mapRequest || mapFailed) return;
-          mapFailed = true;
-          if (room.role !== "hider" || panel !== "hand" || (!pending && !(live?.deck as SeekDeckHiderView | undefined)?.activeDraw)) {
-            panel = "board";
-          }
-          render();
-        }),
+        container: host,
+        config,
+        ...state,
+        camera: state.focusPoints ? undefined : camera,
       });
       mapHandle = handle;
       handle.setQuestionPreview(activeDraftPreview()?.data, previewPadding(host));
     } catch {
       if (current !== mapRequest) return;
       mapFailed = true;
-      if (room.role !== "hider" || panel !== "hand") panel = "board";
+      if (payload.room.role !== "hider" || panel !== "hand") panel = "board";
       render();
     }
   }
