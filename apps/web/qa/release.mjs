@@ -37,6 +37,7 @@ try {
   browser = await chromium.launch({
     channel: "chromium",
     executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
   });
 
   async function openDevice() {
@@ -50,6 +51,7 @@ try {
       page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
       page.click(selector),
     ]);
+    await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
   }
 
   async function launchFromRoot(page, { players, format, board }) {
@@ -190,6 +192,7 @@ try {
       await clickAndWaitPost(host.page, 'button[data-action="start-match"]');
       await host.page.waitForFunction(() => document.body.textContent.includes("Waktu Sembunyi"));
 
+      await host.page.locator('button[data-map-point="mrt-blok-m"]').press("Enter");
       await clickAndWaitPost(host.page, 'button[data-action="lock-anchor"]');
       now += (board === "jakarta-wide" ? 46 : 26) * 60_000;
       await guest.page.click('button[data-action="refresh"]');
@@ -201,6 +204,27 @@ try {
       ]);
       await guest.page.waitForFunction(() => document.body.textContent.includes("Perburuan Makro"));
 
+      await guest.page.locator("[data-map-ready=true]").waitFor();
+      await guest.page.screenshot({ path: join(results, `release-${board}-seek-map.png`) });
+      await guest.page.locator('button[data-map-point="mrt-blok-m"]').press("Enter");
+      await clickAndWaitPost(guest.page, 'button[data-action="trigger-endgame"]');
+      await host.page.click('button[data-action="refresh"]');
+      const code = (await host.page.locator('[data-testid="hider-found-code"]').textContent()).trim();
+      await guest.page.locator("#rb-found-input").fill(code);
+      await clickAndWaitPost(guest.page, 'button[data-action="submit-found-code"]');
+      await host.page.click('button[data-action="refresh"]');
+      for (const page of [host.page, guest.page]) {
+        await clickAndWaitPost(page, 'button[data-action="regroup"]');
+      }
+      await guest.page.locator('.sg-game[data-role="hider"]').waitFor();
+      const secondStart = guest.page.locator('.board-map-pin-start[data-map-point="mrt-blok-m"]');
+      await secondStart.press("Enter");
+      await clickAndWaitPost(guest.page, 'button[data-action="lock-anchor"]');
+      now += 24 * 60 * 60_000;
+      for (const page of [host.page, guest.page]) {
+        await page.click('button[data-action="refresh"]');
+        await page.getByRole("heading", { name: "Hasil permainan" }).waitFor();
+      }
       if (board === "jakarta-wide") {
         await host.page.screenshot({ path: join(results, "release-wide-seek-finish.png"), fullPage: true });
       }
@@ -211,6 +235,7 @@ try {
         mode: "simulated",
         status: "pass",
         persistedOnReload: true,
+        verifiedRoleSwapAndResults: true,
       });
     } finally {
       await host.context.close();

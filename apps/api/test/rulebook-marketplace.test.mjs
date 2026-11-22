@@ -35,8 +35,9 @@ test("Community Hide & Seek pack authoring: clone template, seed GeoSnapshot wit
   try {
     // 1. Official free packs are listed and launchable immediately without checkout
     const initialListings = store.listPublicListings();
-    assert.ok(initialListings.some((l) => l.packId === "official-jakarta-compact-seek" && l.priceIdr === 0));
-    const freeRoom = store.createFreeRoomFromRulebook("official-jakarta-compact-seek", 1, "host-free", "Raka", T0);
+    const official = initialListings.find((l) => l.packId === "official-jakarta-compact-seek" && l.priceIdr === 0);
+    assert.ok(official);
+    const freeRoom = store.createFreeRoomFromRulebook(official.packId, official.version, "host-free", "Raka", T0);
     assert.equal(freeRoom.ok, true);
     assert.equal(freeRoom.pass.paid, false);
 

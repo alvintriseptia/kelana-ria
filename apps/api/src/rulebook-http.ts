@@ -1,3 +1,4 @@
+import { maxBase64Length } from "./seek-photo.js";
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
@@ -49,6 +50,21 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
       return;
     }
 
+    const photoRoute = /^\/api\/rulebooks\/rooms\/([\w-]+)\/photos\/([\w-]+)$/.exec(path);
+    if (request.method === "GET" && photoRoute) {
+      const cred = credential(request, cookieName);
+      const photo = cred && store.viewSeekPhoto(photoRoute[1], cred, photoRoute[2], now());
+      if (!photo) return json(response, 404, { error: "photo-not-found" });
+      response.writeHead(200, {
+        "Content-Type": "image/jpeg",
+        "Content-Length": photo.length,
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+      });
+      response.end(photo);
+      return;
+    }
+
     if (request.method === "GET" && path.startsWith("/api/rulebooks/rooms/")) {
       const roomCode = decodeURIComponent(path.slice("/api/rulebooks/rooms/".length));
       const cred = ensureCred(request, response);
@@ -66,7 +82,7 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
       json(response, 415, { error: "invalid-request" });
       return;
     }
-    const raw = await requestBody(request, 512 * 1024);
+    const raw = await requestBody(request, path === "/api/rulebooks/seek-photo" ? maxBase64Length + 1024 : 512 * 1024);
     if (raw === undefined) return json(response, 413, { error: "invalid-request" });
     let body: unknown;
     try {
@@ -75,6 +91,17 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
       return json(response, 400, { error: "invalid-request" });
     }
     if (!isObject(body)) return json(response, 400, { error: "invalid-request" });
+
+    if (path === "/api/rulebooks/seek-photo") {
+      const { roomCode, questionId, actionId, photoBase64 } = body;
+      const cred = credential(request, cookieName);
+      if (!cred || typeof roomCode !== "string" || typeof questionId !== "string" ||
+          typeof actionId !== "string" || actionId.length < 1 || actionId.length > 100 || typeof photoBase64 !== "string") {
+        return json(response, 400, { error: "invalid-request" });
+      }
+      const reply = await store.answerSeekPhoto(roomCode, cred, questionId, actionId, photoBase64, now);
+      return json(response, reply.error ? 400 : 200, reply);
+    }
 
     if (path === "/api/rulebooks/midtrans-notification") {
       const payload = body as Partial<MidtransNotificationPayload> & { hostName?: string };

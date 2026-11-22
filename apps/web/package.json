@@ -21,7 +21,8 @@
     "@fontsource-variable/dm-sans": "5.3.0",
     "@fontsource/barlow-condensed": "5.3.0",
     "@kelana-ria/contracts": "0.0.0",
-    "maplibre-gl": "6.19.0"
+    "maplibre-gl": "6.19.0",
+    "polygon-clipping": "0.15.7"
   },
   "devDependencies": {
     "@types/geojson": "7946.0.16",

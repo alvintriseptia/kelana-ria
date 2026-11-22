@@ -6,6 +6,7 @@ import type {
   HideSeekPlayPhase,
   HideSeekQuestionFamily,
   HideSeekRulebookPack,
+  SeekBoardPoint,
   SeekDrawBatch,
   SeekEngineAction,
   SeekEngineActionReply,
@@ -24,7 +25,7 @@ import {
   verifyGpsAtPoint,
   verifyGpsFreshAndAccurate,
 } from "./geo-evaluator.js";
-import { validateHideSeekRulebook } from "./rulebook-validator.js";
+import { haversineMeters, validateHideSeekRulebook } from "./rulebook-validator.js";
 
 type InternalSeat = SeekEngineSeat & {
   credentialHash: string;
@@ -63,6 +64,10 @@ export type SeekEngineMatch = {
   questionBlockedUntil: number | null;
   bannedFamilies: Partial<Record<HideSeekQuestionFamily, number>>;
   extraDrawPerQuestion: number;
+  turnStartPoint?: SeekBoardPoint;
+  seekerPosition?: SeekEngineRoomView["seekerPosition"];
+  lastSeekerCheckpoint?: SeekBoardPoint;
+  deductionResetAt?: number;
   // Regroup target between turns
   regroupPoint: { id: string; name: string; latitude: number; longitude: number } | null;
   // Completed turn results and terminal outcome
@@ -112,6 +117,9 @@ function startVerified(seat: InternalSeat, now: number, requireStartCheckIn: boo
 }
 
 function clearTurnState(match: SeekEngineMatch) {
+  delete match.seekerPosition;
+  delete match.lastSeekerCheckpoint;
+  delete match.deductionResetAt;
   match.anchorStationId = null;
   match.hiderLastPosition = null;
   match.hiderOutOfZone = false;
@@ -212,10 +220,14 @@ function pickMatchWinner(turns: SeekEngineTurnResult[]): string | null {
 function resolveRegroupPoint(
   match: SeekEngineMatch,
   completedAnchorStationId: string | null,
-): { id: string; name: string; latitude: number; longitude: number } | null {
+  reason: "found" | "timeout" | "missed_lock",
+): SeekBoardPoint | null {
   const policy = match.pack.session.regroupPolicy;
   if (policy === "anywhere_ready") return null;
-  if (policy === "previous_hiding_station" && completedAnchorStationId) {
+  if (policy === "last_play_checkpoint" && reason !== "found") {
+    return match.lastSeekerCheckpoint ?? match.turnStartPoint ?? match.snapshot.startPoint;
+  }
+  if ((policy === "previous_hiding_station" || policy === "last_play_checkpoint") && completedAnchorStationId) {
     const anchor = findAnchorStation(match, completedAnchorStationId);
     if (anchor) {
       return { id: anchor.id, name: anchor.name, latitude: anchor.latitude, longitude: anchor.longitude };
@@ -267,10 +279,11 @@ function completeTurn(
   });
 
   if (match.turnNumber < totalPlannedTurns(match)) {
+    const point = resolveRegroupPoint(match, completedAnchorId, reason);
     clearTurnState(match);
     match.phase = "regroup";
     match.phaseEndsAt = at + match.pack.timers.regroupLimitMs;
-    match.regroupPoint = resolveRegroupPoint(match, completedAnchorId);
+    match.regroupPoint = point;
     return [];
   }
 
@@ -503,7 +516,7 @@ function buildMenu(match: SeekEngineMatch): SeekEngineMenuEntry[] {
       keepCount: number;
       responseMs?: number;
       availableInPhases: HideSeekPlayPhase[];
-      items: { id: string; label: string; prompt?: string; phase?: HideSeekPlayPhase | "both" }[];
+      items: { id: string; label: string; prompt?: string; phase?: HideSeekPlayPhase | "both"; radiusMeters?: number; minTravelMeters?: number }[];
       allowCustomRadius?: boolean;
     } | undefined,
   ) => {
@@ -533,6 +546,8 @@ function buildMenu(match: SeekEngineMatch): SeekEngineMenuEntry[] {
         lockedSingleUse: locked,
         availableInCurrentPhase: itemAllowedInPhase,
         responseMs,
+        ...(item.radiusMeters !== undefined ? { radiusMeters: item.radiusMeters } : {}),
+        ...(item.minTravelMeters !== undefined ? { minTravelMeters: item.minTravelMeters } : {}),
       });
     }
     if (family === "radar" && cfg.allowCustomRadius) {
@@ -566,6 +581,53 @@ function buildMenu(match: SeekEngineMatch): SeekEngineMenuEntry[] {
   pushFamily("tentacles", families.tentacles);
   pushFamily("photo", families.photo);
   return entries;
+}
+
+function recordSeekerPosition(match: SeekEngineMatch, seatId: string, point: GeoCoordinate, at: number) {
+  const nearest = findNearestStation(point, match.snapshot.stations);
+  const start = match.turnStartPoint ?? match.snapshot.startPoint;
+  const startDistance = haversineMeters(point, start);
+  const limit = match.pack.geography.checkInRadiusMeters;
+  const checkpoint = startDistance <= limit && startDistance <= (nearest?.distanceMeters ?? Infinity)
+    ? start : nearest && nearest.distanceMeters <= limit ? nearest.station : undefined;
+  if (checkpoint) {
+    const { id, name, latitude, longitude } = checkpoint;
+    match.lastSeekerCheckpoint = { id, name, latitude, longitude };
+  }
+  match.seekerPosition = {
+    latitude: point.latitude,
+    longitude: point.longitude,
+    seatId,
+    at,
+    ...(checkpoint ? { stationId: checkpoint.id } : {}),
+  };
+}
+
+const candidateCache = new WeakMap<SeekEngineMatch, { key: string; ids: string[] }>();
+
+function candidateStations(match: SeekEngineMatch): string[] | undefined {
+  const clues = match.questions.filter(question => (question.status === "answered" || question.status === "timeout") && question.family !== "photo" && question.overlay &&
+    question.askedAt >= (match.deductionResetAt ?? 0));
+  if (clues.length === 0) return undefined;
+  const key = clues.map(question => question.id).join(":");
+  const cached = candidateCache.get(match);
+  if (cached?.key === key) return cached.ids;
+  const ids = match.snapshot.stations.filter(station => station.eligibleHidingAnchor && clues.every(question => {
+    if (question.family === "photo") return true;
+    const result = evaluateObjectiveQuestion({
+      pack: match.pack,
+      snapshot: match.snapshot,
+      family: question.family,
+      itemId: question.itemId,
+      seekerPoint: question.referencePoint,
+      hiderAnchor: station,
+      thermometerStart: question.thermometerStart,
+      customRadiusMeters: question.customRadiusMeters,
+    });
+    return !result.ok || result.answer.code === question.answerCode;
+  })).map(station => station.id);
+  candidateCache.set(match, { key, ids });
+  return ids;
 }
 
 export function viewSeekEngineMatch(match: SeekEngineMatch, seatId: string, now: number): SeekEngineRoomView {
@@ -607,12 +669,22 @@ export function viewSeekEngineMatch(match: SeekEngineMatch, seatId: string, now:
     hiderFrozen: match.hiderFrozen,
     canMoveZone: match.phase === "seeking" && match.moveZoneUntil === null,
     regroupPoint: match.regroupPoint,
+    turnStartPoint: match.turnStartPoint ?? match.snapshot.startPoint,
+    ...(playPhase && match.seekerPosition ? { seekerPosition: match.seekerPosition } : {}),
+    ...(playPhase ? { candidateStationIds: candidateStations(match) } : {}),
+    ...(match.deductionResetAt !== undefined ? { deductionResetAt: match.deductionResetAt } : {}),
+    ...(isHider && match.moveZoneUntil !== null ? { moveZoneUntil: match.moveZoneUntil } : {}),
     seats: publicSeats,
     thermometerStart: role === "seeker" ? match.thermometerStart : null,
     questionUseCounts: { ...match.questionUseCounts },
     menu: role === "seeker" ? buildMenu(match) : [],
     questions,
-    turns: match.turns.map((turn) => ({ ...turn, clues: turn.clues.map((c) => ({ ...c })) })),
+    turns: match.turns.map((turn) => ({
+      ...turn,
+      anchorStationId: match.pack.session.regroupPolicy === "last_play_checkpoint" &&
+        turn.reason !== "found" && turn.hiderSeatId !== seatId ? null : turn.anchorStationId,
+      clues: turn.clues.map((c) => ({ ...c })),
+    })),
     outcome: match.outcome,
     ...(playPhase ? { playPhase } : {}),
     ...(isHider
@@ -746,6 +818,7 @@ export function applySeekEngineAction(
       match.hiderOutOfZone = false;
       if (relocating) {
         match.moveZoneUntil = null;
+        match.deductionResetAt = now;
       }
       return finish({ distanceMeters: check.distanceMeters });
     }
@@ -783,6 +856,7 @@ export function applySeekEngineAction(
       if (isHider) return finish({ error: "seeker-only" });
       const fresh = verifyGpsFreshAndAccurate(action.fix, now, match.pack.geography);
       if (!fresh.ok) return finish({ error: fresh.error });
+      recordSeekerPosition(match, seatId, action.fix, now);
       if (match.phase === "seeking" && action.offTransit && match.anchorStationId && match.moveZoneUntil === null) {
         const anchor = findAnchorStation(match, match.anchorStationId);
         if (anchor) {
@@ -807,6 +881,7 @@ export function applySeekEngineAction(
       const fresh = verifyGpsFreshAndAccurate(action.fix, now, match.pack.geography);
       if (!fresh.ok) return finish({ error: fresh.error });
       match.thermometerStart = { latitude: action.fix.latitude, longitude: action.fix.longitude };
+      recordSeekerPosition(match, seatId, action.fix, now);
       return finish();
     }
 
@@ -881,6 +956,8 @@ export function applySeekEngineAction(
         ...(referenceStationId ? { referenceStationId } : {}),
         ...(thermometerStartUsed ? { thermometerStart: thermometerStartUsed } : {}),
         ...(action.customRadiusMeters !== undefined ? { customRadiusMeters: action.customRadiusMeters } : {}),
+        ...(privateComputedAnswer?.overlay.type === "circle"
+          ? { radarRadiusMeters: privateComputedAnswer.overlay.radiusMeters } : {}),
         askedBySeatId: seatId,
         askedAt: now,
         deadline: Math.min(match.phaseEndsAt ?? now + menuEntry.responseMs, now + menuEntry.responseMs),
@@ -890,6 +967,7 @@ export function applySeekEngineAction(
         ...(privateComputedAnswer ? { privateComputedAnswer } : {}),
       };
       match.questions.push(question);
+      recordSeekerPosition(match, seatId, seekerPoint, now);
       return finish();
     }
 
@@ -908,6 +986,9 @@ export function applySeekEngineAction(
         question.answerLabel = "Photo delivered";
       } else {
         if (!question.privateComputedAnswer) return finish({ error: "missing-computed-answer" });
+        if (action.answerCode !== undefined && action.answerCode !== question.privateComputedAnswer.code) {
+          return finish({ error: "incorrect-clue-answer" });
+        }
         question.answerCode = question.privateComputedAnswer.code;
         question.answerLabel = question.privateComputedAnswer.label;
         question.overlay = question.privateComputedAnswer.overlay;
@@ -964,6 +1045,7 @@ export function applySeekEngineAction(
         seat.regrouped = true;
         if (match.seats.every((s) => s.regrouped)) {
           match.turnNumber++;
+          match.turnStartPoint = match.regroupPoint;
           match.regroupPoint = null;
           beginTurn(match, now);
         }

@@ -1,7 +1,7 @@
 {
   "meta": {
     "packId": "official-jakarta-compact-seek",
-    "version": 1,
+    "version": 2,
     "schemaVersion": "hide-seek-rulebook-v1",
     "format": "hide-and-seek",
     "isOfficial": true,
@@ -17,7 +17,7 @@
     "maxPlayers": 4,
     "turnMode": "everyone_hides_once",
     "requireStartCheckIn": true,
-    "regroupPolicy": "previous_hiding_station",
+    "regroupPolicy": "last_play_checkpoint",
     "missedLockPolicy": "void_turn",
     "endgameFreezeGraceSec": 60,
     "maxPathOffsetMeters": 5

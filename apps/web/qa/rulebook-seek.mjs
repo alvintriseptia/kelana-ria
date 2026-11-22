@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
+const results = path.join(root, "qa-results");
+await mkdir(results, { recursive: true });
 
 let now = 1_800_000_000_000;
 const server = createSoloServer({
@@ -21,6 +24,7 @@ const baseUrl = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({
   channel: "chromium",
   executablePath: process.env.CHROMIUM_PATH || undefined,
+    args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
 });
 
 try {
@@ -40,6 +44,7 @@ try {
   // 1. Creator opens Studio from /, selects Hide & Seek, clones Official pack, exercises 4-step stepper + JSON export/import + revision note + publish
   const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageCreator = await ctxCreator.newPage();
+  pageCreator.setDefaultTimeout(20_000);
   await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
   await pageCreator.locator("#chooser").getByText("Grup (2–6)", { exact: true }).click();
   await pageCreator.locator("label").filter({ has: pageCreator.locator('input[value="hide-and-seek"]') }).click();
@@ -133,8 +138,9 @@ try {
   const roomCode = codeMatch[1];
 
   // 2. Two guests join the paid room in isolated browser contexts (3 players total under 1 pass!)
-  const ctxG2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ctxG2 = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
   const pageG2 = await ctxG2.newPage();
+  pageG2.setDefaultTimeout(20_000);
   await pageG2.goto(`${baseUrl}/?play=rulebook-seek`, { waitUntil: "networkidle" });
   await pageG2.fill("#rb-join-code", roomCode);
   await pageG2.fill("#rb-join-name", "Pencari 1");
@@ -143,6 +149,7 @@ try {
 
   const ctxG3 = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageG3 = await ctxG3.newPage();
+  pageG3.setDefaultTimeout(20_000);
   await pageG3.goto(`${baseUrl}/?play=rulebook-seek`, { waitUntil: "networkidle" });
   await pageG3.fill("#rb-join-code", roomCode);
   await pageG3.fill("#rb-join-name", "Pencari 2");
@@ -154,6 +161,7 @@ try {
       page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
       page.click(selector),
     ]);
+    await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
   }
 
   // All 3 check in and mark ready -> Host starts match
@@ -163,8 +171,15 @@ try {
   }
   await clickAndWaitPost(pageCreator, 'button[data-action="start-match"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Waktu Sembunyi"));
+  await pageCreator.locator("[data-map-ready=true]").waitFor();
+  await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-head-start.png") });
 
   // Hider locks mrt-blok-m; Seeker DOM must NOT contain Hider's private anchor or Found Code!
+  const headStart = await pageCreator.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
+  assert.equal(headStart.room.releaseAt - headStart.room.now, 25 * 60_000);
+  assert.match(await pageCreator.locator(".sg-timer").innerText(), /^(25:00|24:[0-5]\d)$/);
+  assert.equal(await pageCreator.locator('button[data-action="select-station"]').count(), 0);
+  await pageCreator.click('button[data-map-point="mrt-blok-m"]');
   await clickAndWaitPost(pageCreator, 'button[data-action="lock-anchor"]');
   now += 26 * 60_000;
   await pageG2.click('button[data-action="refresh"]');
@@ -173,14 +188,82 @@ try {
   assert.equal(seekerBodyBeforeEndgame.includes("hider-found-code"), false);
 
   // Seeker asks a Radar clue, Hider answers & picks drawn card, Seeker triggers Endgame, enters Found Code -> Regroup!
+  const radarCard = pageG2.locator('button[data-action="question-family"][data-family="radar"]');
+  await radarCard.waitFor();
+  await pageG2.locator("[data-map-ready=true]").waitFor();
+  await pageG2.screenshot({ path: path.join(results, "rulebook-seek-question-deck.png") });
+  await radarCard.press("Enter");
+  await pageG2.click('button[data-item="rad-1km"]');
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
   await pageCreator.click('button[data-action="refresh"]');
-  await pageCreator.waitForSelector('button[data-action="answer-pending"]');
+  await pageCreator.click('button[data-answer="no"]');
+  assert.equal(await pageCreator.locator('button[data-action="answer-pending"]').isDisabled(), true);
+  assert.equal(await pageCreator.locator('[data-correct="false"]').isVisible(), true);
+  await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-private-answer.png") });
+  await pageCreator.click('button[data-answer="yes"]');
+  assert.equal(await pageCreator.locator('[data-correct="true"]').isVisible(), true);
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
   await pageCreator.waitForSelector('button[data-action="choose-draw"]');
+  await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-reward-draw.png"), animations: "disabled" });
+  assert.equal(await pageG2.locator('button[data-action="choose-draw"]').count(), 0);
   await clickAndWaitPost(pageCreator, 'button[data-action="choose-draw"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Tangan Penyembunyi (1/"));
 
+  const snapshot = () => pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
+  const initialRadar = (await snapshot()).room.questions[0].overlay;
+  await pageG2.click('button[data-action="refresh"]');
+  await pageG2.locator(".sg-map-result").filter({ hasText: "Radar" }).waitFor();
+  await pageG2.click('button[data-panel="ask"]');
+  await pageG2.click('button[data-family="thermometer"]');
+  await pageG2.click('button[data-item="therm-500m"]');
+  await clickAndWaitPost(pageG2, 'button[data-action="start-thermometer"]');
+  await pageG2.locator('[data-map-point="thermometer-a"]').waitFor();
+  assert.equal(await pageG2.locator('button[data-action="ask-clue"]').isDisabled(), true);
+  await pageG2.click('button[data-map-point="mrt-blok-m"]');
+  await clickAndWaitPost(pageG2, 'button[data-action="mark-thermometer-end"]');
+  await pageG2.locator('[data-map-point="thermometer-b"]').waitFor();
+  await pageG2.locator("[data-map-ready=true]").waitFor();
+  const markerB = await pageG2.locator('[data-map-point="thermometer-b"]').boundingBox();
+  const questionPanel = await pageG2.locator(".sg-dock").boundingBox();
+  assert.ok(markerB.y + markerB.height < questionPanel.y);
+  await pageG2.screenshot({ path: path.join(results, "rulebook-seek-thermometer.png") });
+  await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
+  await pageCreator.click('button[data-action="refresh"]');
+  await pageCreator.click('button[data-answer="hotter"]');
+  await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
+  await clickAndWaitPost(pageCreator, 'button[data-action="choose-draw"]');
+  const afterThermometer = (await snapshot()).room;
+  assert.equal(afterThermometer.questions.at(-1).answerCode, "hotter");
+  assert.deepEqual(afterThermometer.questions[0].overlay, initialRadar);
+  assert.ok(afterThermometer.candidateStationIds.includes("mrt-blok-m"));
+
+  await pageG2.click('button[data-action="refresh"]');
+  await pageG2.locator(".sg-map-result").filter({ hasText: "Termometer" }).waitFor();
+  await pageG2.click('button[data-panel="ask"]');
+  await pageG2.click('button[data-family="photo"]');
+  await pageG2.click('button[data-item="photo-station"]');
+  await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
+  await pageCreator.click('button[data-action="refresh"]');
+  await pageCreator.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
+  await pageCreator.locator("#sg-clue-photo").setInputFiles({
+    name: "test-public-station.png",
+    mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAABAAAAAKCAIAAAAy3EnLAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAFUlEQVQYlWNwyIogCTGMasgakqEEAE4woUHUV2UvAAAAAElFTkSuQmCC", "base64"),
+  });
+  await pageCreator.locator('img[alt="Pratinjau foto petunjuk"]').waitFor();
+  await clickAndWaitPost(pageCreator, 'button[data-action="answer-photo"]');
+  const photoId = (await snapshot()).room.questions.at(-1).photoId;
+  assert.ok(photoId);
+  const photoUrl = `${baseUrl}/api/rulebooks/rooms/${roomCode}/photos/${photoId}`;
+  assert.equal((await ctxG2.request.get(photoUrl)).headers()["content-type"], "image/jpeg");
+  assert.equal((await fetch(photoUrl)).status, 404);
+
+  // Force a live style failure and use the map's fallback to select the same checkpoint.
+  await pageG2.route("**/api/map/config", route => route.fulfill({ json: { mode: "geoapify-vector", styleUrl: "/qa-tiles/style.json" } }));
+  await pageG2.route("**/qa-tiles/style.json", route => route.abort());
+  await pageG2.reload();
+  await pageG2.locator('[data-action="retry-map"]').waitFor();
+  await pageG2.click('button[data-action="select-station"][data-station="mrt-blok-m"]');
   await clickAndWaitPost(pageG2, 'button[data-action="trigger-endgame"]');
   await pageG2.waitForFunction(() => document.body.textContent.includes("ENDGAME"));
   await pageCreator.click('button[data-action="refresh"]');
@@ -191,7 +274,15 @@ try {
   await clickAndWaitPost(pageG2, 'button[data-action="submit-found-code"]');
   await pageG2.waitForFunction(() => document.body.textContent.includes("Berkumpul Kembali"));
 
-  console.log("qa:rulebook-seek passed (3-player paid Hide & Seek RulebookPack + Studio + Endgame Found Code)");
+  for (const page of [pageCreator, pageG3, pageG2]) {
+    await page.click('button[data-action="refresh"]');
+    await clickAndWaitPost(page, 'button[data-action="regroup"]');
+  }
+  await pageG2.locator('.sg-game[data-role="hider"]').waitFor();
+  const next = (await snapshot()).room;
+  assert.equal(next.turnStartPoint.id, "mrt-blok-m");
+  assert.equal(next.phase, "head_start");
+  console.log("qa:rulebook-seek passed (Studio, paid room, clue privacy, Thermometer, photos, map fallback, and role swap)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
