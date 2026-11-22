@@ -164,7 +164,9 @@ try {
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-head-start.png") });
 
   // Hider locks mrt-blok-m; Seeker DOM must NOT contain Hider's private anchor or Found Code!
-  assert.match(await pageCreator.locator(".sg-timer").innerText(), /^25:00$/);
+  const headStart = await pageCreator.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
+  assert.equal(headStart.room.releaseAt - headStart.room.now, 25 * 60_000);
+  assert.match(await pageCreator.locator(".sg-timer").innerText(), /^(25:00|24:[0-5]\d)$/);
   assert.equal(await pageCreator.locator('button[data-action="select-station"]').count(), 0);
   await pageCreator.click('button[data-map-point="mrt-blok-m"]');
   await clickAndWaitPost(pageCreator, 'button[data-action="lock-anchor"]');
