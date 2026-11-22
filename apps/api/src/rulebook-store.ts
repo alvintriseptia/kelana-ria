@@ -922,7 +922,24 @@ export function rulebookStore(
     expireSeekDeckAndCurses(session.deck, session.match, now);
     const room = viewSeekEngineMatch(session.match, seatId, now);
     const deck = viewSeekDeck(session.deck, room.role === "hider");
-    return { format: "hide-and-seek" as const, room, deck, pass: session.pass };
+    return {
+      format: "hide-and-seek" as const,
+      room,
+      deck,
+      publicBoard: {
+        startPoint: session.match.snapshot.startPoint,
+        stations: session.match.snapshot.stations
+          .filter((s) => s.eligibleHidingAnchor)
+          .map((s) => ({
+            id: s.id,
+            name: s.name,
+            latitude: s.latitude,
+            longitude: s.longitude,
+            transitLines: s.transitLines,
+          })),
+      },
+      pass: session.pass,
+    };
   }
 
   async function seedGeoFromOfficialFixture(request: GeoSeedRequest): Promise<GeoSnapshot> {

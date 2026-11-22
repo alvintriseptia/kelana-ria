@@ -64,25 +64,33 @@ function bisectorLine(start: GeoCoordinate, end: GeoCoordinate): [number, number
   ];
 }
 
-function offlineVectorStyle(
-  start: SoloPoint,
-  checkpoints: BoardMapPoint[],
+function absolutizeMapUrl(value: string): string {
+  if (!value.startsWith("/")) return value;
+  return `${window.location.origin}${value}`;
+}
+
+function absolutizeStyleSpec(raw: Record<string, unknown>): maplibregl.StyleSpecification {
+  const cloned = structuredClone(raw);
+  if (typeof cloned.sprite === "string") cloned.sprite = absolutizeMapUrl(cloned.sprite);
+  if (typeof cloned.glyphs === "string") cloned.glyphs = absolutizeMapUrl(cloned.glyphs);
+  if (cloned.sources && typeof cloned.sources === "object") {
+    for (const source of Object.values(cloned.sources as Record<string, unknown>)) {
+      if (!source || typeof source !== "object") continue;
+      const src = source as Record<string, unknown>;
+      if (typeof src.url === "string") src.url = absolutizeMapUrl(src.url);
+      if (Array.isArray(src.tiles)) {
+        src.tiles = src.tiles.map((t) => (typeof t === "string" ? absolutizeMapUrl(t) : t));
+      }
+    }
+  }
+  return cloned as unknown as maplibregl.StyleSpecification;
+}
+
+function buildOverlayFeatures(
   radarCircles: BoardMapRadarCircle[],
   deductionOverlays: SeekDeductionOverlay[],
   hidingZone?: { center: GeoCoordinate; radiusMeters: number },
-): maplibregl.StyleSpecification {
-  const corridorFeatures = checkpoints.map((point) => ({
-    type: "Feature" as const,
-    properties: { id: point.id },
-    geometry: {
-      type: "LineString" as const,
-      coordinates: [
-        [start.longitude, start.latitude],
-        [point.longitude, point.latitude],
-      ],
-    },
-  }));
-
+) {
   const circleFeatures = [
     ...radarCircles.map((circle) => ({
       type: "Feature" as const,
@@ -126,6 +134,30 @@ function offlineVectorStyle(
         coordinates: bisectorLine(overlay.start, overlay.end),
       },
     }));
+
+  return { circleFeatures, bisectorFeatures };
+}
+
+function offlineVectorStyle(
+  start: SoloPoint,
+  checkpoints: BoardMapPoint[],
+  radarCircles: BoardMapRadarCircle[],
+  deductionOverlays: SeekDeductionOverlay[],
+  hidingZone?: { center: GeoCoordinate; radiusMeters: number },
+): maplibregl.StyleSpecification {
+  const corridorFeatures = checkpoints.map((point) => ({
+    type: "Feature" as const,
+    properties: { id: point.id },
+    geometry: {
+      type: "LineString" as const,
+      coordinates: [
+        [start.longitude, start.latitude],
+        [point.longitude, point.latitude],
+      ],
+    },
+  }));
+
+  const { circleFeatures, bisectorFeatures } = buildOverlayFeatures(radarCircles, deductionOverlays, hidingZone);
 
   return {
     version: 8,
@@ -244,115 +276,139 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void }
   for (const p of allPoints) bounds.extend([p.longitude, p.latitude]);
 
   let map: maplibregl.Map | undefined;
+  let destroyed = false;
+  let styleLoaded = false;
   const markers: maplibregl.Marker[] = [];
 
-  try {
-    const style =
-      config.mode === "geoapify-vector" && config.styleUrl
-        ? config.styleUrl
-        : offlineVectorStyle(start, checkpoints, radarCircles, deductionOverlays, hidingZone);
+  function initMap(style: maplibregl.StyleSpecification) {
+    if (destroyed) return;
+    try {
+      map = new maplibregl.Map({
+        container: canvasHost,
+        style,
+        center: [start.longitude, start.latitude],
+        zoom: 12.5,
+        attributionControl: false,
+        transformRequest: (url) => ({ url: absolutizeMapUrl(url) }),
+      });
 
-    map = new maplibregl.Map({
-      container: canvasHost,
-      style,
-      center: [start.longitude, start.latitude],
-      zoom: 12.5,
-      attributionControl: false,
-    });
+      map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+      map.on("load", () => {
+        styleLoaded = true;
+        if (!map || destroyed) return;
+        const { circleFeatures, bisectorFeatures } = buildOverlayFeatures(radarCircles, deductionOverlays, hidingZone);
+        if (config.mode === "geoapify-vector" && circleFeatures.length > 0 && !map.getSource("radars")) {
+          map.addSource("radars", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: circleFeatures },
+          });
+          map.addLayer({
+            id: "radar-fill",
+            type: "fill",
+            source: "radars",
+            paint: {
+              "fill-color": ["case", ["get", "inside"], "#0f766e", "#b45309"],
+              "fill-opacity": 0.16,
+            },
+          });
+          map.addLayer({
+            id: "radar-outline",
+            type: "line",
+            source: "radars",
+            paint: {
+              "line-color": ["case", ["get", "inside"], "#0f766e", "#b45309"],
+              "line-width": 2,
+            },
+          });
+        }
+        if (config.mode === "geoapify-vector" && bisectorFeatures.length > 0 && !map.getSource("bisectors")) {
+          map.addSource("bisectors", {
+            type: "geojson",
+            data: { type: "FeatureCollection", features: bisectorFeatures },
+          });
+          map.addLayer({
+            id: "bisector-lines",
+            type: "line",
+            source: "bisectors",
+            paint: {
+              "line-color": "#7c3aed",
+              "line-width": 2.5,
+              "line-dasharray": [4, 2],
+            },
+          });
+        }
+        if (allPoints.length > 1) {
+          map.fitBounds(bounds, { padding: 36, maxZoom: 14.5, duration: 0 });
+        }
+      });
 
-    map.on("load", () => {
-      if (!map) return;
-      if (config.mode === "geoapify-vector" && radarCircles.length > 0 && !map.getSource("radars")) {
-        map.addSource("radars", {
-          type: "geojson",
-          data: {
-            type: "FeatureCollection",
-            features: radarCircles.map((circle) => ({
-              type: "Feature",
-              properties: { id: circle.id, inside: circle.inside },
-              geometry: {
-                type: "Polygon",
-                coordinates: [circlePolygon(circle.center, circle.radiusMeters)],
-              },
-            })),
-          },
-        });
-        map.addLayer({
-          id: "radar-fill",
-          type: "fill",
-          source: "radars",
-          paint: {
-            "fill-color": ["case", ["get", "inside"], "#0f766e", "#b45309"],
-            "fill-opacity": 0.16,
-          },
-        });
-        map.addLayer({
-          id: "radar-outline",
-          type: "line",
-          source: "radars",
-          paint: {
-            "line-color": ["case", ["get", "inside"], "#0f766e", "#b45309"],
-            "line-width": 2,
-          },
-        });
+      map.on("error", () => {
+        if (!styleLoaded) onError?.("tile-load-failed");
+      });
+
+      // Add accessible start marker (distinct square badge + "A" label).
+      const startEl = document.createElement(startSelectable ? "button" : "span");
+      if (startEl instanceof HTMLButtonElement) {
+        startEl.type = "button";
+        startEl.addEventListener("click", () => (onSelectStart ? onSelectStart() : onSelect?.(start.id)));
       }
-      if (allPoints.length > 1) {
-        map.fitBounds(bounds, { padding: 36, maxZoom: 14.5, duration: 0 });
-      }
-    });
-
-    map.on("error", () => {
-      onError?.("tile-load-failed");
-    });
-
-    // Add accessible start marker (distinct square badge + "A" label).
-    const startEl = document.createElement(startSelectable ? "button" : "span");
-    if (startEl instanceof HTMLButtonElement) {
-      startEl.type = "button";
-      startEl.addEventListener("click", () => (onSelectStart ? onSelectStart() : onSelect?.(start.id)));
-    }
-    startEl.className = [
-      "board-map-pin",
-      "board-map-pin-start",
-      start.id === selectedId ? "board-map-pin-selected" : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-    startEl.textContent = `A · ${start.name}`;
-    startEl.setAttribute("aria-label", `${start.name} (Titik awal)`);
-    markers.push(new maplibregl.Marker({ element: startEl }).setLngLat([start.longitude, start.latitude]).addTo(map));
-
-    // Add accessible checkpoint markers with text/shape ownership indicators (never color-only).
-    checkpoints.forEach((point, index) => {
-      const el = document.createElement(point.selectable ? "button" : "span");
-      if (el instanceof HTMLButtonElement) {
-        el.type = "button";
-        el.addEventListener("click", () => onSelect?.(point.id));
-      }
-      el.className = [
+      startEl.className = [
         "board-map-pin",
-        point.claimed ? "board-map-pin-claimed" : "",
-        point.dimmed ? "board-map-pin-dimmed" : "",
-        point.statusTag ? `board-map-pin-${point.statusTag}` : "",
-        point.id === selectedId ? "board-map-pin-selected" : "",
+        "board-map-pin-start",
+        start.id === selectedId ? "board-map-pin-selected" : "",
       ]
         .filter(Boolean)
         .join(" ");
-      el.textContent = point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`;
-      el.setAttribute(
-        "aria-label",
-        point.label ? `${point.name} (${point.label})` : point.name,
-      );
-      markers.push(new maplibregl.Marker({ element: el }).setLngLat([point.longitude, point.latitude]).addTo(map!));
-    });
-  } catch {
-    onError?.("webgl-unavailable");
+      startEl.textContent = `A · ${start.name}`;
+      startEl.setAttribute("aria-label", `${start.name} (Titik awal)`);
+      markers.push(new maplibregl.Marker({ element: startEl }).setLngLat([start.longitude, start.latitude]).addTo(map));
+
+      // Add accessible checkpoint markers with text/shape ownership indicators (never color-only).
+      checkpoints.forEach((point, index) => {
+        const el = document.createElement(point.selectable ? "button" : "span");
+        if (el instanceof HTMLButtonElement) {
+          el.type = "button";
+          el.addEventListener("click", () => onSelect?.(point.id));
+        }
+        el.className = [
+          "board-map-pin",
+          point.claimed ? "board-map-pin-claimed" : "",
+          point.dimmed ? "board-map-pin-dimmed" : "",
+          point.statusTag ? `board-map-pin-${point.statusTag}` : "",
+          point.id === selectedId ? "board-map-pin-selected" : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        el.textContent = point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`;
+        el.setAttribute(
+          "aria-label",
+          point.label ? `${point.name} (${point.label})` : point.name,
+        );
+        markers.push(new maplibregl.Marker({ element: el }).setLngLat([point.longitude, point.latitude]).addTo(map!));
+      });
+    } catch {
+      onError?.("webgl-unavailable");
+    }
+  }
+
+  if (config.mode === "geoapify-vector" && config.styleUrl) {
+    void fetch(absolutizeMapUrl(config.styleUrl))
+      .then(async (res) => {
+        if (!res.ok) throw new Error(`style-${res.status}`);
+        const raw = (await res.json()) as Record<string, unknown>;
+        initMap(absolutizeStyleSpec(raw));
+      })
+      .catch(() => {
+        if (!destroyed) onError?.("tile-load-failed");
+      });
+  } else {
+    initMap(offlineVectorStyle(start, checkpoints, radarCircles, deductionOverlays, hidingZone));
   }
 
   return {
     destroy() {
+      destroyed = true;
       for (const m of markers) m.remove();
       map?.remove();
       map = undefined;

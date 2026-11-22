@@ -85,6 +85,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let showMap = true;
   let mapFailed = false;
   let mapCleanup: (() => void) | undefined;
+  let mapCfgPromise: Promise<MapConfig> | null = null;
   let seq = 0;
 
   async function apiJson<T>(path: string, body?: unknown): Promise<T> {
@@ -177,9 +178,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     mapCleanup?.();
     mapCleanup = undefined;
     try {
+      if (!mapCfgPromise) mapCfgPromise = apiJson<MapConfig>("/api/map/config");
       const [{ mountBoardMap }, mapCfg] = await Promise.all([
         import("./board-map"),
-        apiJson<MapConfig>("/api/map/config"),
+        mapCfgPromise,
       ]);
       const stateById = new Map(payload.room.landmarks.map((l) => [l.landmarkId, l]));
       const handle = mountBoardMap({

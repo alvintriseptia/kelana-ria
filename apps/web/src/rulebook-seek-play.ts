@@ -36,6 +36,10 @@ type PublicListing = {
 type RoomPayload = {
   room: SeekEngineRoomView;
   deck: SeekDeckPublicView | SeekDeckHiderView;
+  publicBoard?: {
+    startPoint: GeoCoordinate & { id: string; name: string };
+    stations: (GeoCoordinate & { id: string; name: string; transitLines: string[] })[];
+  };
   pass: { roomCode: string; packId: string; version: number; maxPlayers: number; paid: boolean };
 };
 
@@ -75,6 +79,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let showMap = true;
   let mapFailed = false;
   let mapCleanup: (() => void) | undefined;
+  let mapCfgPromise: Promise<MapConfig> | null = null;
   let seq = 0;
 
   async function apiJson<T>(path: string, body?: unknown): Promise<T> {
@@ -199,13 +204,15 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     }
   }
 
-  async function mountMapOverlay(host: HTMLElement, room: SeekEngineRoomView) {
+  async function mountMapOverlay(host: HTMLElement, payload: RoomPayload) {
+    const { room, publicBoard } = payload;
     mapCleanup?.();
     mapCleanup = undefined;
     try {
+      if (!mapCfgPromise) mapCfgPromise = apiJson<MapConfig>("/api/map/config");
       const [{ mountBoardMap }, mapCfg] = await Promise.all([
         import("./board-map"),
-        apiJson<MapConfig>("/api/map/config"),
+        mapCfgPromise,
       ]);
       const overlays: SeekDeductionOverlay[] = room.questions
         .filter((q) => q.overlay)
@@ -216,13 +223,36 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           for (const id of ov.eliminatedStationIds) eliminated.add(id);
         }
       }
-      const center: GeoCoordinate = room.regroupPoint ?? { latitude: -6.23831, longitude: 106.79889 };
+      const startPoint = publicBoard?.startPoint ?? {
+        id: "start",
+        name: "Titik Mulai",
+        latitude: room.regroupPoint?.latitude ?? -6.23831,
+        longitude: room.regroupPoint?.longitude ?? 106.79889,
+      };
+      const stations = (publicBoard?.stations ?? []).map((st) => ({
+        id: st.id,
+        name: st.name,
+        latitude: st.latitude,
+        longitude: st.longitude,
+        x: 50,
+        y: 50,
+        dimmed: eliminated.has(st.id),
+      }));
+      const anchorStation =
+        room.role === "hider" && room.ownAnchorStationId
+          ? publicBoard?.stations.find((s) => s.id === room.ownAnchorStationId)
+          : undefined;
+      const hidingZone =
+        anchorStation && room.ownHidingZoneRadiusMeters
+          ? { center: { latitude: anchorStation.latitude, longitude: anchorStation.longitude }, radiusMeters: room.ownHidingZoneRadiusMeters }
+          : undefined;
       const handle = mountBoardMap({
         container: host,
         config: mapCfg,
-        start: { id: "start", name: "Titik Mulai", latitude: center.latitude, longitude: center.longitude, x: 50, y: 50 },
-        checkpoints: [],
+        start: { ...startPoint, x: 50, y: 50 },
+        checkpoints: stations,
         deductionOverlays: overlays,
+        hidingZone,
         onError: () => {
           mapFailed = true;
           render();
@@ -567,7 +597,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     root.innerHTML = live ? renderRoom(live) : renderCatalog();
     if (live && showMap && !mapFailed && live.room.phase !== "lobby") {
       const host = root.querySelector<HTMLElement>("#rb-map-host");
-      if (host) void mountMapOverlay(host, live.room);
+      if (host) void mountMapOverlay(host, live);
     }
   }
 
