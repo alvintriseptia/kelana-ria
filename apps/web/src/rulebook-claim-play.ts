@@ -5,6 +5,7 @@ import type {
   GeoCoordinate,
   MapConfig,
 } from "@kelana-ria/contracts";
+import type { BoardMapHandle, BoardMapUpdateOptions } from "./board-map";
 import { escapeText } from "./solo-view";
 import "./rulebook-seek-play.css";
 
@@ -84,7 +85,9 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let busy = false;
   let showMap = true;
   let mapFailed = false;
-  let mapCleanup: (() => void) | undefined;
+  let claimMapHandle: BoardMapHandle | undefined;
+  let claimMapRoomCode = "";
+  let claimMapReq = 0;
   let mapCfgPromise: Promise<MapConfig> | null = null;
   let seq = 0;
 
@@ -174,52 +177,75 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     }
   }
 
-  async function mountMapOverlay(host: HTMLElement, payload: ClaimRoomPayload) {
-    mapCleanup?.();
-    mapCleanup = undefined;
+  function destroyClaimMap() {
+    claimMapReq++;
+    claimMapHandle?.destroy();
+    claimMapHandle = undefined;
+    claimMapRoomCode = "";
+  }
+
+  function buildClaimMapState(payload: ClaimRoomPayload): BoardMapUpdateOptions {
+    const stateById = new Map(payload.room.landmarks.map((l) => [l.landmarkId, l]));
+    return {
+      start: {
+        id: payload.publicBoard.startPoint.id,
+        name: payload.publicBoard.startPoint.name,
+        latitude: payload.publicBoard.startPoint.latitude,
+        longitude: payload.publicBoard.startPoint.longitude,
+        x: 50,
+        y: 50,
+      },
+      checkpoints: payload.publicBoard.landmarks.map((lm) => {
+        const st = stateById.get(lm.id);
+        const statusTag =
+          st?.status === "locked" ? "locked" : st?.status === "claimed" ? "claimed" : "unclaimed";
+        return {
+          id: lm.id,
+          name: lm.name,
+          zone: lm.zoneId,
+          latitude: lm.latitude,
+          longitude: lm.longitude,
+          x: 50,
+          y: 50,
+          claimed: st?.status === "locked",
+          statusTag,
+          dimmed: payload.room.ownBurnedLandmarks.includes(lm.id),
+        };
+      }),
+      onError: () => {
+        mapFailed = true;
+        destroyClaimMap();
+        render();
+      },
+    };
+  }
+
+  async function syncClaimMapOverlay(host: HTMLElement, payload: ClaimRoomPayload) {
+    if (claimMapHandle && claimMapRoomCode === payload.room.code) {
+      claimMapHandle.update(buildClaimMapState(payload));
+      return;
+    }
+    const reqId = ++claimMapReq;
+    claimMapHandle?.destroy();
+    claimMapHandle = undefined;
+    claimMapRoomCode = payload.room.code;
     try {
       if (!mapCfgPromise) mapCfgPromise = apiJson<MapConfig>("/api/map/config");
       const [{ mountBoardMap }, mapCfg] = await Promise.all([
         import("./board-map"),
         mapCfgPromise,
       ]);
-      const stateById = new Map(payload.room.landmarks.map((l) => [l.landmarkId, l]));
-      const handle = mountBoardMap({
+      if (reqId !== claimMapReq || !host.isConnected || !live || live.room.code !== payload.room.code) return;
+      claimMapHandle = mountBoardMap({
         container: host,
         config: mapCfg,
-        start: {
-          id: payload.publicBoard.startPoint.id,
-          name: payload.publicBoard.startPoint.name,
-          latitude: payload.publicBoard.startPoint.latitude,
-          longitude: payload.publicBoard.startPoint.longitude,
-          x: 50,
-          y: 50,
-        },
-        checkpoints: payload.publicBoard.landmarks.map((lm) => {
-          const st = stateById.get(lm.id);
-          const statusTag =
-            st?.status === "locked" ? "locked" : st?.status === "claimed" ? "claimed" : "unclaimed";
-          return {
-            id: lm.id,
-            name: lm.name,
-            zone: lm.zoneId,
-            latitude: lm.latitude,
-            longitude: lm.longitude,
-            x: 50,
-            y: 50,
-            claimed: st?.status === "locked",
-            statusTag,
-            dimmed: payload.room.ownBurnedLandmarks.includes(lm.id),
-          };
-        }),
-        onError: () => {
-          mapFailed = true;
-          render();
-        },
+        ...buildClaimMapState(live),
       });
-      mapCleanup = handle.destroy;
     } catch {
+      if (reqId !== claimMapReq) return;
       mapFailed = true;
+      destroyClaimMap();
+      render();
     }
   }
 
@@ -382,7 +408,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       }`;
   }
 
-  function renderRoom(payload: ClaimRoomPayload): string {
+  function renderRoomPreMap(payload: ClaimRoomPayload): string {
     const { room, publicBoard, pass } = payload;
     const lmMetaById = new Map(publicBoard.landmarks.map((l) => [l.id, l]));
     const openToStealLandmarks = room.landmarks.filter(
@@ -391,8 +417,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     const remainingMin =
       room.deadline !== null ? Math.max(0, Math.ceil((room.deadline - room.now) / 60_000)) : null;
 
-    return `<section class="rb-shell" aria-label="Permainan Claim the City">
-      <div class="rb-card">
+    return `<div class="rb-card">
         <div class="rb-badges">
           <span class="rb-badge">Kode: ${escapeText(room.code)}</span>
           <span class="rb-badge">${escapeText(phaseLabels[room.phase])}</span>
@@ -452,17 +477,13 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
               </div>
             </div>`
           : ""
-      }
+      }`;
+  }
 
-      ${
-        showMap && !mapFailed && room.phase !== "lobby"
-          ? `<div class="rb-card"><h3>Peta Wilayah (Belum Diklaim / Rentan / Terkunci)</h3><div id="rb-claim-map-host" class="rb-map-host"></div></div>`
-          : mapFailed
-            ? `<div class="rb-card"><p role="status">Tile peta tidak tersedia — daftar zona dan landmark tetap dapat digunakan penuh.</p></div>`
-            : ""
-      }
-
-      ${
+  function renderRoomPostMap(payload: ClaimRoomPayload): string {
+    const { room, publicBoard } = payload;
+    const lmMetaById = new Map(publicBoard.landmarks.map((l) => [l.id, l]));
+    return `${
         room.phase !== "lobby"
           ? `<div class="rb-card">
               <h3>Papan Skor Zona</h3>
@@ -600,15 +621,47 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
               </ul>
             </div>`
           : ""
-      }
-    </section>`;
+      }`;
   }
 
   function render() {
-    root.innerHTML = live ? renderRoom(live) : renderCatalog();
-    if (live && showMap && !mapFailed && live.room.phase !== "lobby") {
-      const host = root.querySelector<HTMLElement>("#rb-claim-map-host");
-      if (host) void mountMapOverlay(host, live);
+    if (!live) {
+      destroyClaimMap();
+      root.innerHTML = renderCatalog();
+      return;
+    }
+
+    if (!root.querySelector("#rb-claim-pre-map")) {
+      root.innerHTML = `<section class="rb-shell" aria-label="Permainan Claim the City">
+        <div id="rb-claim-pre-map"></div>
+        <div class="rb-card" id="rb-claim-map-card" hidden>
+          <h3>Peta Wilayah (Belum Diklaim / Rentan / Terkunci)</h3>
+          <div id="rb-claim-map-host" class="rb-map-host"></div>
+        </div>
+        <div class="rb-card" id="rb-claim-map-fallback" hidden>
+          <p role="status">Tile peta tidak tersedia — daftar zona dan landmark tetap dapat digunakan penuh.</p>
+        </div>
+        <div id="rb-claim-post-map"></div>
+      </section>`;
+    }
+
+    const preMap = root.querySelector<HTMLElement>("#rb-claim-pre-map")!;
+    const mapCard = root.querySelector<HTMLElement>("#rb-claim-map-card")!;
+    const mapHost = root.querySelector<HTMLElement>("#rb-claim-map-host")!;
+    const fallbackCard = root.querySelector<HTMLElement>("#rb-claim-map-fallback")!;
+    const postMap = root.querySelector<HTMLElement>("#rb-claim-post-map")!;
+
+    preMap.innerHTML = renderRoomPreMap(live);
+    postMap.innerHTML = renderRoomPostMap(live);
+
+    const shouldShowMap = showMap && !mapFailed && live.room.phase !== "lobby";
+    mapCard.hidden = !shouldShowMap;
+    fallbackCard.hidden = !mapFailed || live.room.phase === "lobby";
+
+    if (shouldShowMap) {
+      void syncClaimMapOverlay(mapHost, live);
+    } else {
+      destroyClaimMap();
     }
   }
 
@@ -821,6 +874,6 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
   void loadCatalog();
   return () => {
-    mapCleanup?.();
+    destroyClaimMap();
   };
 }

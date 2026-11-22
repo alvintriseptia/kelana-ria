@@ -19,6 +19,7 @@ const baseUrl = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({
   channel: "chromium",
   executablePath: process.env.CHROMIUM_PATH || undefined,
+  args: ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"],
 });
 
 async function clickAndWaitPost(page, selector) {
@@ -83,8 +84,43 @@ try {
   await page.fill("#st-price", "25000");
   await clickAndWaitPost(page, 'button[data-action="clone"]');
 
-  // Step 2: add zone & landmark
+  // Step 2: add zone & landmark, asserting persistent MapLibre canvas & single style.json fetch
+  let styleFetchCount = 0;
+  await page.route("**/api/map/config", (route) =>
+    route.fulfill({
+      json: {
+        mode: "geoapify-vector",
+        styleUrl: "/api/map/style.json",
+        attribution: "© Geoapify · © OpenStreetMap",
+        mapLibreLicenseUrl: "/licenses/maplibre-gl.txt",
+        tileCreditCost: 0.25,
+        routingCreditCost: 1,
+        freeDailyCredits: 3000,
+      },
+    }),
+  );
+  await page.route("**/api/map/style.json", (route) => {
+    styleFetchCount += 1;
+    return route.fulfill({
+      json: {
+        version: 8,
+        sources: {},
+        layers: [{ id: "bg", type: "background", paint: { "background-color": "#f3f4eb" } }],
+      },
+    });
+  });
+
   await page.click('button[data-step="2"]');
+  const canvas = await page.locator("#st-map-host .maplibregl-canvas").elementHandle();
+  assert.ok(canvas, "Expected MapLibre canvas on Studio Step 2");
+  await page.waitForFunction(() => Boolean(window.document.querySelector("#st-map-host .maplibregl-ctrl-zoom-in")));
+  assert.equal(styleFetchCount, 1, "Expected exactly 1 style.json fetch on Step 2 entry");
+
+  // Zoom in once to verify camera scale is preserved across Studio interactions
+  await page.click("#st-map-host .maplibregl-ctrl-zoom-in");
+  await page.click('button[data-map-mode="add"]');
+  await page.click('button[data-map-mode="move"]');
+  await page.click('button[data-map-mode="select"]');
   await page.click('button[data-map-tab="secondary"]');
   await page.fill("#ed-new-zone-id", "kemang");
   await page.fill("#ed-new-zone-name", "Kemang");
@@ -92,6 +128,18 @@ try {
   await clickAndWaitPost(page, 'button[data-map-action="add-zone"]');
   await page.click('button[data-map-tab="primary"]');
   await clickAndWaitPost(page, 'button[data-map-action="add-landmark"]');
+  await page.fill("#ed-claim-landmark-name", "Taman Literasi QA Persistent");
+  await clickAndWaitPost(page, 'button[data-map-action="apply-selected"]');
+  await page.click('button[data-map-action="recenter"]');
+
+  assert.equal(styleFetchCount, 1, "Interactions on Step 2 must not re-fetch /api/map/style.json");
+  assert.equal(
+    await canvas.evaluate((el) => el.isConnected && document.querySelector("#st-map-host .maplibregl-canvas") === el),
+    true,
+    "Same MapLibre canvas DOM element must remain mounted across Step 2 interactions",
+  );
+  await page.unroute("**/api/map/config");
+  await page.unroute("**/api/map/style.json");
 
   // Step 3: add Call Your Shot challenge & Sabotage Curse card
   await page.click('button[data-step="3"]');

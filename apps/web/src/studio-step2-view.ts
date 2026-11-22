@@ -181,7 +181,22 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
   return "";
 }
 
-export function renderStep2View(
+export function renderStep2Top(
+  record: StudioVersionRecord,
+  state: Step2State,
+  editable: boolean,
+): string {
+  return `<h3>2. Peta &amp; Lokasi · ${escapeText(record.pack.meta.title)}</h3>
+    <div class="rb-actions" aria-label="Mode interaksi peta">
+      <button type="button" class="${state.mapMode === "select" ? "primary" : "secondary"}" data-map-mode="select">Pilih Titik</button>
+      ${editable ? `<button type="button" class="${state.mapMode === "add" ? "primary" : "secondary"}" data-map-mode="add">+ Tambah di Peta</button>` : ""}
+      ${editable ? `<button type="button" class="${state.mapMode === "move" ? "primary" : "secondary"}" data-map-mode="move">Pindahkan Terpilih</button>` : ""}
+      ${editable ? `<button type="button" class="${state.mapMode === "boundary" ? "primary" : "secondary"}" data-map-mode="boundary">+ Titik Batas</button>` : ""}
+      <button type="button" class="secondary" data-map-action="recenter">Pusatkan Peta</button>
+    </div>`;
+}
+
+export function renderStep2Bottom(
   record: StudioVersionRecord,
   state: Step2State,
   editable: boolean,
@@ -191,26 +206,11 @@ export function renderStep2View(
   const claim = Boolean(claimPack);
   const dis = editable ? "" : "disabled";
 
-  return `<div class="rb-card" data-studio-slot="map-editor">
-    <h3>2. Peta &amp; Lokasi · ${escapeText(record.pack.meta.title)}</h3>
-    <div class="rb-actions" aria-label="Mode interaksi peta">
-      <button type="button" class="${state.mapMode === "select" ? "primary" : "secondary"}" data-map-mode="select">Pilih Titik</button>
-      ${editable ? `<button type="button" class="${state.mapMode === "add" ? "primary" : "secondary"}" data-map-mode="add">+ Tambah di Peta</button>` : ""}
-      ${editable ? `<button type="button" class="${state.mapMode === "move" ? "primary" : "secondary"}" data-map-mode="move">Pindahkan Terpilih</button>` : ""}
-      ${editable ? `<button type="button" class="${state.mapMode === "boundary" ? "primary" : "secondary"}" data-map-mode="boundary">+ Titik Batas</button>` : ""}
-    </div>
-
-    ${
-      state.mapFailed
-        ? `<p role="status" data-testid="studio-map-fallback">Tile peta tidak tersedia — seluruh daftar dan editor koordinat teks tetap dapat digunakan penuh.</p>`
-        : `<div id="st-map-host" class="rb-map-host" data-testid="studio-map-host"></div>`
-    }
-
-    ${
-      state.lastClickedCoord
-        ? `<p><small>Koordinat klik terakhir: <code>${state.lastClickedCoord.latitude}, ${state.lastClickedCoord.longitude}</code></small></p>`
-        : ""
-    }
+  return `${
+    state.lastClickedCoord
+      ? `<p><small>Koordinat klik terakhir: <code>${state.lastClickedCoord.latitude}, ${state.lastClickedCoord.longitude}</code></small></p>`
+      : ""
+  }
 
     ${renderInspector(record, selected, editable)}
 
@@ -325,7 +325,19 @@ export function renderStep2View(
       <button type="button" class="secondary" data-step="1">← Draf &amp; Info</button>
       ${editable ? `<button type="button" class="secondary" data-action="save-draft" ${dis}>Simpan Peta &amp; Validasi</button>` : ""}
       <button type="button" class="primary" data-step="3">Lanjut: Aturan &amp; Kartu →</button>
-    </div>
+    </div>`;
+}
+
+export function renderStep2View(
+  record: StudioVersionRecord,
+  state: Step2State,
+  editable: boolean,
+): string {
+  return `<div class="rb-card" data-studio-slot="map-editor">
+    <div id="st-step2-top">${renderStep2Top(record, state, editable)}</div>
+    <div id="st-map-host" class="rb-map-host" data-testid="studio-map-host" ${state.mapFailed ? "hidden" : ""}></div>
+    <p id="st-map-fallback" role="status" data-testid="studio-map-fallback" ${state.mapFailed ? "" : "hidden"}>Tile peta tidak tersedia — seluruh daftar dan editor koordinat teks tetap dapat digunakan penuh.</p>
+    <div id="st-step2-bottom">${renderStep2Bottom(record, state, editable)}</div>
   </div>`;
 }
 
