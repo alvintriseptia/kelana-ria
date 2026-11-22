@@ -8,6 +8,7 @@ import type {
   HideSeekRulebookPack,
   RulebookFormat,
   SeekEngineAction,
+  SeekMapPreviewRequest,
 } from "@kelana-ria/contracts";
 import { credential, hasJsonBody, isObject, json, requestBody, setCredential } from "./http.js";
 import type { MidtransNotificationPayload } from "./midtrans-adapter.js";
@@ -128,6 +129,18 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
 
     const cred = ensureCred(request, response);
     const ts = now();
+
+    if (path === "/api/rulebooks/question-preview") {
+      const { roomCode, family, itemId } = body;
+      if (typeof roomCode !== "string" || typeof itemId !== "string" ||
+          (family !== "radar" && family !== "matching" && family !== "measuring" && family !== "tentacles")) {
+        return json(response, 400, { error: "invalid-request" });
+      }
+      const roomTs = store.roomTime(roomCode, ts);
+      if (!resolveQaFix(body, roomCode, cred, roomTs)) return json(response, 400, { error: "invalid-qa-location" });
+      const reply = store.previewSeekQuestion(roomCode, cred, body as SeekMapPreviewRequest, roomTs);
+      return json(response, reply.error ? 400 : 200, reply);
+    }
 
     if (path === "/api/rulebooks/seed-geo") {
       const seeded = await store.seedGeoFromOfficialFixture(body as unknown as GeoSeedRequest);
