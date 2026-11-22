@@ -138,12 +138,22 @@ try {
   await clickAndWaitPost(pageCreator, 'button[data-action="clone"]');
   await pageCreator.waitForSelector("#st-draft-select");
 
-  // Step 2: rename first landmark & save
+  // Step 2: interactive map editor — rename first landmark, add custom Zone & Landmark, verify orphan-zone guardrail
   await pageCreator.click('button[data-step="2"]');
+  await pageCreator.waitForSelector('[data-testid="studio-map-host"]');
   await pageCreator.waitForSelector("#ed-claim-landmark-name");
   await pageCreator.fill("#ed-claim-landmark-name", "Taman Literasi Senopati");
   await clickAndWaitPost(pageCreator, 'button[data-action="save-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
+  await pageCreator.click('button[data-map-tab="secondary"]');
+  await pageCreator.fill("#ed-new-zone-id", "senopati-baru");
+  await pageCreator.fill("#ed-new-zone-name", "Senopati Baru");
+  await pageCreator.fill("#ed-new-zone-label", "SB");
+  await clickAndWaitPost(pageCreator, 'button[data-map-action="add-zone"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Zona Senopati Baru ditambahkan"));
+  await pageCreator.click('button[data-map-tab="primary"]');
+  await clickAndWaitPost(pageCreator, 'button[data-map-action="add-landmark"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Landmark Baru"));
 
   // Step 3: add custom photo_proof challenge & save
   await pageCreator.click('button[data-step="3"]');
