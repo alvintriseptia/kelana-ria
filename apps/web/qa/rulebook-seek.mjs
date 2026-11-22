@@ -48,12 +48,18 @@ try {
   await pageCreator.click('button[data-action="clone"]');
   await pageCreator.waitForSelector("#st-draft-select");
 
-  // Step 2: rename first station & save
+  // Step 2: interactive map editor — rename first station, add custom station & POI, verify validator passes
   await pageCreator.click('button[data-step="2"]');
+  await pageCreator.waitForSelector('[data-testid="studio-map-host"]');
   await pageCreator.waitForSelector("#ed-station-name");
   await pageCreator.fill("#ed-station-name", "Stasiun Blok M BCA (Edisi Kopi)");
   await pageCreator.click('button[data-action="save-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
+  await pageCreator.click('button[data-map-action="add-station"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Stasiun Baru"));
+  await pageCreator.click('button[data-map-tab="secondary"]');
+  await pageCreator.click('button[data-map-action="add-poi"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("POI Publik"));
 
   // Step 3: add custom photo curse & save
   await pageCreator.click('button[data-step="3"]');

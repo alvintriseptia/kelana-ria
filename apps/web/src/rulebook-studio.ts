@@ -1,7 +1,7 @@
 import type {
-  ClaimRulebookPack,
+  GeoCoordinate,
   GeoSnapshot,
-  HideSeekRulebookPack,
+  MapConfig,
   RulebookFormat,
   RulebookValidationIssue,
 } from "@kelana-ria/contracts";
@@ -11,6 +11,17 @@ import {
   serializeStudioBundle,
   triggerStudioBundleDownload,
 } from "./studio-json";
+import {
+  createNewLandmark,
+  createNewPoi,
+  createNewStation,
+  createNewZone,
+  ensureStep2Selection,
+  parseAttributes,
+  renderStep2View,
+  type Step2State,
+} from "./studio-step2-view";
+import type { StudioMapMode } from "./studio-map-editor";
 import {
   isClaimStudioPack,
   type StudioEarningsRecord,
@@ -55,6 +66,156 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let dryRunSummary = "";
   let statusMsg = "";
   let errorMsg = "";
+  let mapCleanup: (() => void) | undefined;
+  let mapCfgPromise: Promise<MapConfig> | null = null;
+  const step2: Step2State = {
+    mapMode: "select",
+    subTab: "primary",
+    selected: null,
+    mapFailed: false,
+    lastClickedCoord: null,
+  };
+
+  async function persistDraft(
+    updatedPack: StudioPack,
+    updatedSnapshot: GeoSnapshot,
+    successMessage?: string,
+  ): Promise<boolean> {
+    const res = await apiJson<{
+      ok?: boolean;
+      record?: StudioVersionRecord;
+      validation?: { ok: boolean; errors: RulebookValidationIssue[] };
+      error?: string;
+    }>("/api/rulebooks", {
+      type: "save-draft",
+      pack: updatedPack,
+      snapshot: updatedSnapshot,
+      rehashSnapshot: true,
+    });
+    if (res.ok) {
+      if (res.record) selectedKey = `${res.record.packId}@${res.record.version}`;
+      validationErrors = res.validation?.errors ?? [];
+      statusMsg =
+        successMessage ??
+        (res.validation?.ok
+          ? "Draf tersimpan dan lolos validator otomatis."
+          : "Draf tersimpan dengan kesalahan validasi.");
+      await refresh();
+      return true;
+    }
+    errorMsg = res.error ?? "Gagal menyimpan draf.";
+    render();
+    return false;
+  }
+
+  async function mountStep2Map(host: HTMLElement, active: StudioVersionRecord) {
+    mapCleanup?.();
+    mapCleanup = undefined;
+    try {
+      if (!mapCfgPromise) mapCfgPromise = apiJson<MapConfig>("/api/map/config");
+      const [{ mountStudioMapEditor }, cfg] = await Promise.all([
+        import("./studio-map-editor"),
+        mapCfgPromise,
+      ]);
+      const selected = ensureStep2Selection(active, step2);
+      const handle = mountStudioMapEditor({
+        container: host,
+        config: cfg,
+        record: active,
+        mode: step2.mapMode,
+        selectedTarget: selected,
+        onSelectTarget: (target) => {
+          step2.selected = target;
+          render();
+        },
+        onMapClick: (coord: GeoCoordinate) => {
+          step2.lastClickedCoord = coord;
+          if (!isEditable(active) || step2.mapMode === "select") {
+            render();
+            return;
+          }
+          const pack = structuredClone(active.pack);
+          const snap = structuredClone(active.snapshot);
+          if (step2.mapMode === "boundary") {
+            snap.boundaryPolygon.push(coord);
+            void persistDraft(pack, snap, `Sudut batas ditambahkan (${coord.latitude}, ${coord.longitude}).`);
+            return;
+          }
+          if (step2.mapMode === "add") {
+            if (isClaimStudioPack(pack)) {
+              const emptyZone = pack.geography.zones.find(
+                (z) => !pack.geography.landmarks.some((l) => l.zoneId === z.id),
+              );
+              const zoneId = emptyZone?.id ?? pack.geography.zones[0]?.id ?? "zone-1";
+              const lm = createNewLandmark(coord, zoneId, pack.geography.landmarks.length);
+              pack.geography.landmarks.push(lm);
+              pack.challenges.landmarkChallenges[lm.id] = [
+                {
+                  id: `chal-${lm.id}`,
+                  title: `Tantangan ${lm.name}`,
+                  verificationNotes: "Terverifikasi dari ruang publik.",
+                  reviewed: true,
+                  reviewedAt: new Date().toISOString().slice(0, 10),
+                  payload: {
+                    primitive: "photo_proof",
+                    prompt: `Ambil foto publik di ${lm.name}.`,
+                    verificationMode: "rival_or_timeout",
+                    autoApproveMs: 120_000,
+                  },
+                },
+              ];
+              step2.selected = { kind: "landmark", id: lm.id };
+              void persistDraft(pack, snap, `Landmark ${lm.name} ditambahkan di peta.`);
+            } else if (step2.subTab === "secondary") {
+              const poi = createNewPoi(coord, snap.pois.length);
+              snap.pois.push(poi);
+              step2.selected = { kind: "poi", id: poi.id };
+              void persistDraft(pack, snap, `POI ${poi.name} ditambahkan di peta.`);
+            } else {
+              const st = createNewStation(coord, snap.stations.length);
+              snap.stations.push(st);
+              step2.selected = { kind: "station", id: st.id };
+              void persistDraft(pack, snap, `Stasiun ${st.name} ditambahkan di peta.`);
+            }
+            return;
+          }
+          if (step2.mapMode === "move" && step2.selected) {
+            if (step2.selected.kind === "start") {
+              snap.startPoint.latitude = coord.latitude;
+              snap.startPoint.longitude = coord.longitude;
+            } else if (step2.selected.kind === "station") {
+              const st = snap.stations.find((s) => s.id === step2.selected!.id);
+              if (st) {
+                st.latitude = coord.latitude;
+                st.longitude = coord.longitude;
+              }
+            } else if (step2.selected.kind === "poi") {
+              const poi = snap.pois.find((p) => p.id === step2.selected!.id);
+              if (poi) {
+                poi.latitude = coord.latitude;
+                poi.longitude = coord.longitude;
+              }
+            } else if (step2.selected.kind === "landmark" && isClaimStudioPack(pack)) {
+              const lm = pack.geography.landmarks.find((l) => l.id === step2.selected!.id);
+              if (lm) {
+                lm.latitude = coord.latitude;
+                lm.longitude = coord.longitude;
+              }
+            }
+            void persistDraft(pack, snap, `Titik dipindahkan ke (${coord.latitude}, ${coord.longitude}).`);
+          }
+        },
+        onError: () => {
+          step2.mapFailed = true;
+          render();
+        },
+      });
+      mapCleanup = handle.destroy;
+    } catch {
+      step2.mapFailed = true;
+      render();
+    }
+  }
 
   async function apiJson<T>(path: string, body?: unknown): Promise<T> {
     const res = await fetch(path, {
@@ -221,63 +382,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (!active) {
       return `<div class="rb-card"><p>Pilih atau kloning draf di Tahap 1 terlebih dahulu.</p><button type="button" class="primary" data-step="1">← Kembali ke Tahap 1</button></div>`;
     }
-    const editable = isEditable(active);
-    if (isClaimStudioPack(active.pack)) {
-      const claimPack = active.pack;
-      const firstLm = claimPack.geography.landmarks[0];
-      return `<div class="rb-card" data-studio-slot="map-editor">
-        <h3>2. Peta &amp; Lokasi Claim · ${escapeText(claimPack.meta.title)}</h3>
-        <div class="rb-badges">
-          <span class="rb-badge">Titik Awal: ${escapeText(active.snapshot.startPoint.name)}</span>
-          <span class="rb-badge">${claimPack.geography.zones.length} zona</span>
-          <span class="rb-badge">${claimPack.geography.landmarks.length} landmark</span>
-          <span class="rb-badge">Radius check-in ${claimPack.geography.checkInRadiusMeters} m</span>
-        </div>
-        <label class="rb-field">
-          <span>Override Nama Landmark Pertama</span>
-          <input id="ed-claim-landmark-name" value="${escapeText(firstLm?.name ?? "")}" ${!editable ? "disabled" : ""}>
-        </label>
-        <ul class="rb-list">
-          ${claimPack.geography.zones
-            .map((z) => {
-              const count = claimPack.geography.landmarks.filter((l) => l.zoneId === z.id).length;
-              return `<li><strong>${escapeText(z.label)} · ${escapeText(z.name)}</strong> <small>${count} landmark</small></li>`;
-            })
-            .join("")}
-        </ul>
-        <div class="rb-step-footer">
-          <button type="button" class="secondary" data-step="1">← Draf &amp; Info</button>
-          ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan &amp; Validasi</button>` : ""}
-          <button type="button" class="primary" data-step="3">Lanjut: Aturan &amp; Kartu →</button>
-        </div>
-      </div>`;
-    }
-
-    const firstStation = active.snapshot.stations[0];
-    return `<div class="rb-card" data-studio-slot="map-editor">
-      <h3>2. Peta &amp; Lokasi Hide &amp; Seek · ${escapeText(active.pack.meta.title)}</h3>
-      <div class="rb-badges">
-        <span class="rb-badge">Titik Awal: ${escapeText(active.snapshot.startPoint.name)}</span>
-        <span class="rb-badge">${active.snapshot.stations.length} stasiun</span>
-        <span class="rb-badge">${active.snapshot.pois.length} POI</span>
-        <span class="rb-badge">Zona Sembunyi ${active.pack.geography.hidingZoneRadiusMeters} m</span>
-      </div>
-      <label class="rb-field">
-        <span>Override Nama Stasiun Pertama</span>
-        <input id="ed-station-name" value="${escapeText(firstStation?.name ?? "")}" ${!editable ? "disabled" : ""}>
-      </label>
-      <ul class="rb-list">
-        ${active.snapshot.stations
-          .slice(0, 6)
-          .map((s) => `<li><strong>${escapeText(s.name)}</strong> <small>${s.latitude.toFixed(4)}, ${s.longitude.toFixed(4)} · ${escapeText(s.transitLines.join(", "))}</small></li>`)
-          .join("")}
-      </ul>
-      <div class="rb-step-footer">
-        <button type="button" class="secondary" data-step="1">← Draf &amp; Info</button>
-        ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan &amp; Validasi</button>` : ""}
-        <button type="button" class="primary" data-step="3">Lanjut: Aturan &amp; Kartu →</button>
-      </div>
-    </div>`;
+    return renderStep2View(active, step2, isEditable(active));
   }
 
   function renderStep3(active?: StudioVersionRecord): string {
@@ -442,6 +547,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             </div>`
       }
     </section>`;
+
+    if (tab === "writer" && step === 2 && active && !step2.mapFailed) {
+      const host = root.querySelector<HTMLElement>("#st-map-host");
+      if (host) void mountStep2Map(host, active);
+    } else {
+      mapCleanup?.();
+      mapCleanup = undefined;
+    }
   }
 
   function applyFormEdits(active: StudioVersionRecord): { pack: StudioPack; snapshot: GeoSnapshot } {
@@ -535,6 +648,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     const target = event.target as HTMLElement | null;
     if (target instanceof HTMLSelectElement && target.id === "st-draft-select") {
       selectedKey = target.value;
+      step2.selected = null;
       dryRunSummary = "";
       validationErrors = [];
       statusMsg = "";
@@ -570,6 +684,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (btn.dataset.format === "hide-and-seek" || btn.dataset.format === "claim-the-city") {
       format = btn.dataset.format;
       selectedKey = "";
+      step2.selected = null;
+      step2.subTab = "primary";
+      step2.mapMode = "select";
       step = 1;
       showCloneForm = false;
       showJsonTools = false;
@@ -591,6 +708,209 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         step = nextStep;
         render();
       }
+      return;
+    }
+    if (btn.dataset.mapMode) {
+      step2.mapMode = btn.dataset.mapMode as StudioMapMode;
+      render();
+      return;
+    }
+    if (btn.dataset.mapTab) {
+      step2.subTab = btn.dataset.mapTab as Step2State["subTab"];
+      render();
+      return;
+    }
+    if (btn.dataset.selectKind && btn.dataset.selectId) {
+      step2.selected = {
+        kind: btn.dataset.selectKind as "start" | "station" | "poi" | "landmark",
+        id: btn.dataset.selectId,
+      };
+      render();
+      return;
+    }
+
+    const mapAction = btn.dataset.mapAction;
+    if (mapAction) {
+      void (async () => {
+        const active = currentDraft();
+        if (!active || !isEditable(active)) return;
+        errorMsg = "";
+        validationErrors = [];
+        const pack = structuredClone(active.pack);
+        const snap = structuredClone(active.snapshot);
+        const centerCoord = step2.lastClickedCoord ?? {
+          latitude: Number((snap.startPoint.latitude - 0.002).toFixed(5)),
+          longitude: Number((snap.startPoint.longitude + 0.002).toFixed(5)),
+        };
+
+        if (mapAction === "apply-selected" && step2.selected) {
+          if (step2.selected.kind === "start") {
+            snap.startPoint.name = root.querySelector<HTMLInputElement>("#ed-sp-name")?.value.trim() || snap.startPoint.name;
+            snap.startPoint.accessNotes = root.querySelector<HTMLInputElement>("#ed-sp-notes")?.value.trim() || snap.startPoint.accessNotes;
+            snap.startPoint.latitude = Number(root.querySelector<HTMLInputElement>("#ed-sp-lat")?.value ?? snap.startPoint.latitude);
+            snap.startPoint.longitude = Number(root.querySelector<HTMLInputElement>("#ed-sp-lng")?.value ?? snap.startPoint.longitude);
+          } else if (step2.selected.kind === "station") {
+            const st = snap.stations.find((s) => s.id === step2.selected!.id);
+            if (st) {
+              st.name = root.querySelector<HTMLInputElement>('input[data-field="name"]')?.value.trim() || st.name;
+              const lines = (root.querySelector<HTMLInputElement>("#ed-st-lines")?.value ?? "")
+                .split(",")
+                .map((x) => x.trim())
+                .filter(Boolean);
+              if (lines.length) st.transitLines = lines;
+              st.latitude = Number(root.querySelector<HTMLInputElement>("#ed-st-lat")?.value ?? st.latitude);
+              st.longitude = Number(root.querySelector<HTMLInputElement>("#ed-st-lng")?.value ?? st.longitude);
+              st.attributes = parseAttributes(root.querySelector<HTMLInputElement>("#ed-st-attrs")?.value ?? "");
+              st.publicHours = root.querySelector<HTMLInputElement>("#ed-st-hours")?.value.trim() || st.publicHours;
+              st.estimatedTravelFromStartMs =
+                Number(root.querySelector<HTMLInputElement>("#ed-st-travel")?.value ?? 10) * 60_000;
+              st.eligibleHidingAnchor = root.querySelector<HTMLSelectElement>("#ed-st-anchor")?.value === "true";
+              st.accessNotes = root.querySelector<HTMLInputElement>("#ed-st-notes")?.value.trim() || st.accessNotes;
+            }
+          } else if (step2.selected.kind === "poi") {
+            const poi = snap.pois.find((p) => p.id === step2.selected!.id);
+            if (poi) {
+              poi.name = root.querySelector<HTMLInputElement>("#ed-poi-name")?.value.trim() || poi.name;
+              poi.category = root.querySelector<HTMLInputElement>("#ed-poi-cat")?.value.trim() || poi.category;
+              poi.latitude = Number(root.querySelector<HTMLInputElement>("#ed-poi-lat")?.value ?? poi.latitude);
+              poi.longitude = Number(root.querySelector<HTMLInputElement>("#ed-poi-lng")?.value ?? poi.longitude);
+            }
+          } else if (step2.selected.kind === "landmark" && isClaimStudioPack(pack)) {
+            const lm = pack.geography.landmarks.find((l) => l.id === step2.selected!.id);
+            if (lm) {
+              lm.name = root.querySelector<HTMLInputElement>('input[data-field="name"]')?.value.trim() || lm.name;
+              lm.zoneId = root.querySelector<HTMLSelectElement>("#ed-lm-zone")?.value || lm.zoneId;
+              lm.latitude = Number(root.querySelector<HTMLInputElement>("#ed-lm-lat")?.value ?? lm.latitude);
+              lm.longitude = Number(root.querySelector<HTMLInputElement>("#ed-lm-lng")?.value ?? lm.longitude);
+              lm.transitSummary = root.querySelector<HTMLInputElement>("#ed-lm-transit")?.value.trim() || lm.transitSummary;
+              lm.publicHours = root.querySelector<HTMLInputElement>("#ed-lm-hours")?.value.trim() || lm.publicHours;
+              lm.estimatedTravelFromStartMs =
+                Number(root.querySelector<HTMLInputElement>("#ed-lm-travel")?.value ?? 10) * 60_000;
+              lm.estimatedChallengeMs =
+                Number(root.querySelector<HTMLInputElement>("#ed-lm-chal")?.value ?? 4) * 60_000;
+              lm.accessNotes = root.querySelector<HTMLInputElement>("#ed-lm-notes")?.value.trim() || lm.accessNotes;
+            }
+          }
+          await persistDraft(pack, snap);
+          return;
+        }
+        if (mapAction === "delete-selected" && step2.selected) {
+          if (step2.selected.kind === "station") {
+            snap.stations = snap.stations.filter((s) => s.id !== step2.selected!.id);
+          } else if (step2.selected.kind === "poi") {
+            snap.pois = snap.pois.filter((p) => p.id !== step2.selected!.id);
+          } else if (step2.selected.kind === "landmark" && isClaimStudioPack(pack)) {
+            pack.geography.landmarks = pack.geography.landmarks.filter((l) => l.id !== step2.selected!.id);
+            delete pack.challenges.landmarkChallenges[step2.selected.id];
+          }
+          step2.selected = null;
+          await persistDraft(pack, snap, "Titik berhasil dihapus dari draf.");
+          return;
+        }
+        if (mapAction === "add-station") {
+          const st = createNewStation(centerCoord, snap.stations.length);
+          snap.stations.push(st);
+          step2.selected = { kind: "station", id: st.id };
+          await persistDraft(pack, snap, `Stasiun ${st.name} ditambahkan.`);
+          return;
+        }
+        if (mapAction === "add-poi") {
+          const poi = createNewPoi(centerCoord, snap.pois.length);
+          snap.pois.push(poi);
+          step2.selected = { kind: "poi", id: poi.id };
+          await persistDraft(pack, snap, `POI ${poi.name} ditambahkan.`);
+          return;
+        }
+        if (mapAction === "add-landmark" && isClaimStudioPack(pack)) {
+          const emptyZone = pack.geography.zones.find(
+            (z) => !pack.geography.landmarks.some((l) => l.zoneId === z.id),
+          );
+          const zoneId = emptyZone?.id ?? pack.geography.zones[0]?.id ?? "zone-1";
+          const lm = createNewLandmark(centerCoord, zoneId, pack.geography.landmarks.length);
+          pack.geography.landmarks.push(lm);
+          pack.challenges.landmarkChallenges[lm.id] = [
+            {
+              id: `chal-${lm.id}`,
+              title: `Tantangan ${lm.name}`,
+              verificationNotes: "Terverifikasi dari area publik pejalan kaki.",
+              reviewed: true,
+              reviewedAt: new Date().toISOString().slice(0, 10),
+              payload: {
+                primitive: "photo_proof",
+                prompt: `Ambil foto publik di ${lm.name}.`,
+                verificationMode: "rival_or_timeout",
+                autoApproveMs: 120_000,
+              },
+            },
+          ];
+          step2.selected = { kind: "landmark", id: lm.id };
+          await persistDraft(pack, snap, `Landmark ${lm.name} ditambahkan.`);
+          return;
+        }
+        if (mapAction === "add-zone" && isClaimStudioPack(pack)) {
+          const zId = root.querySelector<HTMLInputElement>("#ed-new-zone-id")?.value.trim();
+          const zName = root.querySelector<HTMLInputElement>("#ed-new-zone-name")?.value.trim();
+          const zLabel = root.querySelector<HTMLInputElement>("#ed-new-zone-label")?.value.trim() ?? "";
+          const zIcon = root.querySelector<HTMLInputElement>("#ed-new-zone-icon")?.value.trim() ?? "pin";
+          if (!zId || !zName) {
+            errorMsg = "ID zona dan nama zona wajib diisi.";
+            render();
+            return;
+          }
+          if (pack.geography.zones.some((z) => z.id === zId)) {
+            errorMsg = `ID zona '${zId}' sudah ada.`;
+            render();
+            return;
+          }
+          pack.geography.zones.push(createNewZone(zId, zName, zLabel, zIcon));
+          await persistDraft(pack, snap, `Zona ${zName} ditambahkan.`);
+          return;
+        }
+        if (mapAction === "delete-zone" && isClaimStudioPack(pack)) {
+          const zId = btn.dataset.zoneId ?? "";
+          if (pack.geography.landmarks.some((l) => l.zoneId === zId)) {
+            errorMsg = `Zona '${zId}' masih digunakan oleh landmark. Pindahkan atau hapus landmark terlebih dahulu.`;
+            render();
+            return;
+          }
+          pack.geography.zones = pack.geography.zones.filter((z) => z.id !== zId);
+          await persistDraft(pack, snap, `Zona ${zId} dihapus.`);
+          return;
+        }
+        if (mapAction === "add-vertex") {
+          const lat = Number(root.querySelector<HTMLInputElement>("#ed-v-lat")?.value);
+          const lng = Number(root.querySelector<HTMLInputElement>("#ed-v-lng")?.value);
+          if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            snap.boundaryPolygon.push({ latitude: lat, longitude: lng });
+            await persistDraft(pack, snap, "Sudut batas ditambahkan.");
+          }
+          return;
+        }
+        if (mapAction === "remove-vertex") {
+          const idx = Number(btn.dataset.vertexIndex ?? -1);
+          if (idx >= 0 && snap.boundaryPolygon.length > 3) {
+            snap.boundaryPolygon.splice(idx, 1);
+            await persistDraft(pack, snap, "Sudut batas dihapus.");
+          }
+          return;
+        }
+        if (mapAction === "seed-geo") {
+          const seeded = await apiJson<{ ok?: boolean; snapshot?: GeoSnapshot; error?: string }>(
+            "/api/rulebooks/seed-geo",
+            {
+              snapshotId: snap.id,
+              boundaryPolygon: snap.boundaryPolygon,
+              startPoint: snap.startPoint,
+            },
+          );
+          if (seeded.ok && seeded.snapshot) {
+            await persistDraft(pack, seeded.snapshot, "GeoSnapshot berhasil di-seed ulang dari fixture.");
+          } else {
+            errorMsg = seeded.error ?? "Gagal seed ulang geo.";
+            render();
+          }
+        }
+      })();
       return;
     }
 
@@ -791,5 +1111,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   });
 
   void refresh();
-  return () => {};
+  return () => {
+    mapCleanup?.();
+  };
 }

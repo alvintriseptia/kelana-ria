@@ -36,7 +36,7 @@ export type BoardMapOptions = {
   onError?: (reason: string) => void;
 };
 
-function circlePolygon(center: GeoCoordinate, radiusMeters: number, steps = 48): [number, number][] {
+export function circlePolygon(center: GeoCoordinate, radiusMeters: number, steps = 48): [number, number][] {
   const earthRadius = 6_371_000;
   const latRad = (center.latitude * Math.PI) / 180;
   const ring: [number, number][] = [];
@@ -64,12 +64,12 @@ function bisectorLine(start: GeoCoordinate, end: GeoCoordinate): [number, number
   ];
 }
 
-function absolutizeMapUrl(value: string): string {
+export function absolutizeMapUrl(value: string): string {
   if (!value.startsWith("/")) return value;
   return `${window.location.origin}${value}`;
 }
 
-function absolutizeStyleSpec(raw: Record<string, unknown>): maplibregl.StyleSpecification {
+export function absolutizeStyleSpec(raw: Record<string, unknown>): maplibregl.StyleSpecification {
   const cloned = structuredClone(raw);
   if (typeof cloned.sprite === "string") cloned.sprite = absolutizeMapUrl(cloned.sprite);
   if (typeof cloned.glyphs === "string") cloned.glyphs = absolutizeMapUrl(cloned.glyphs);
