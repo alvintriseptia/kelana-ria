@@ -22,7 +22,7 @@ Read the claimed issue and use the [GitHub delivery skill](.agents/skills/github
 
 | When the issue touches | Load |
 | --- | --- |
-| Player screens, maps, accessibility or loading performance | [Mobile PWA](.agents/skills/mobile-pwa/SKILL.md) |
+| Player and Creator Studio screens, cards, motion, maps, accessibility or loading performance | [Mobile PWA](.agents/skills/mobile-pwa/SKILL.md) |
 | Sessions, clocks, claims, clues or scores | [Game rules](.agents/skills/game-rules/SKILL.md) |
 | AI, routing, content providers or payments | [Integration evidence](.agents/skills/integration-evidence/SKILL.md) |
 
