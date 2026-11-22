@@ -40,6 +40,7 @@ import {
   type DryRunState,
 } from "./studio-dry-run";
 import {
+  buildTransitOverlayPins,
   createNewLandmark,
   createNewPoi,
   createNewStation,
@@ -49,9 +50,17 @@ import {
   renderStep2Bottom,
   renderStep2Top,
   renderStep2View,
+  syncBoundaryTransitStationsInDraft,
+  syncModeStationsInDraft,
+  toggleCatalogStationInDraft,
+  type JakartaTransitCatalog,
   type Step2State,
 } from "./studio-step2-view";
-import type { StudioMapEditorHandle, StudioMapMode } from "./studio-map-editor";
+import type {
+  StudioMapEditorHandle,
+  StudioMapMode,
+  StudioTransitMode,
+} from "./studio-map-editor";
 import {
   isClaimStudioPack,
   type StudioEarningsRecord,
@@ -101,12 +110,22 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let studioMapKey = "";
   let studioMapReq = 0;
   let mapCfgPromise: Promise<MapConfig> | null = null;
+  let transitCatalogPromise: Promise<JakartaTransitCatalog | null> | null = null;
   const step2: Step2State = {
     mapMode: "select",
     subTab: "primary",
     selected: null,
     mapFailed: false,
     lastClickedCoord: null,
+    transitCatalog: null,
+    enabledTransitModes: {
+      mrt: true,
+      lrt: true,
+      krl: true,
+      transjakarta: true,
+    },
+    excludedTransitIds: new Set<string>(),
+    transitQuery: "",
   };
   const seekStep3: SeekStep3State = {
     subTab: "timers",
@@ -171,6 +190,35 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     studioMapKey = "";
   }
 
+  function ensureTransitCatalog() {
+    if (step2.transitCatalog) return;
+    if (!transitCatalogPromise) {
+      transitCatalogPromise = apiJson<JakartaTransitCatalog>("/api/transit/jakarta")
+        .then((catalog) => (Array.isArray(catalog?.stations) ? catalog : null))
+        .catch(() => null);
+    }
+    void transitCatalogPromise.then((catalog) => {
+      if (catalog && !step2.transitCatalog) {
+        step2.transitCatalog = catalog;
+        if (step === 2) render();
+      }
+    });
+  }
+
+  async function handleToggleTransitStation(stationId: string) {
+    const latest = currentDraft();
+    if (!latest || !isEditable(latest)) return;
+    const pack = structuredClone(latest.pack);
+    const snap = structuredClone(latest.snapshot);
+    const toggled = toggleCatalogStationInDraft(pack, snap, step2, stationId);
+    if (!toggled) return;
+    await persistDraft(
+      pack,
+      snap,
+      `${toggled.name} ${toggled.included ? "diaktifkan ke" : "dikeluarkan dari"} draf.`,
+    );
+  }
+
   function handleStep2SelectTarget(target: { kind: "start" | "station" | "poi" | "landmark"; id: string }) {
     step2.selected = target;
     render();
@@ -187,6 +235,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     const snap = structuredClone(latest.snapshot);
     if (step2.mapMode === "boundary") {
       snap.boundaryPolygon.push(coord);
+      syncBoundaryTransitStationsInDraft(pack, snap, step2);
       void persistDraft(pack, snap, `Sudut batas ditambahkan (${coord.latitude}, ${coord.longitude}).`);
       return;
     }
@@ -257,6 +306,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   async function mountStep2Map(host: HTMLElement, active: StudioVersionRecord, draftKey: string) {
     const reqId = ++studioMapReq;
+    ensureTransitCatalog();
     try {
       if (!mapCfgPromise) mapCfgPromise = apiJson<MapConfig>("/api/map/config");
       const [{ mountStudioMapEditor }, cfg] = await Promise.all([
@@ -273,6 +323,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         record: latest,
         mode: step2.mapMode,
         selectedTarget: selected,
+        transitStations: buildTransitOverlayPins(latest, step2),
+        onToggleTransitStation: (stationId) => {
+          void handleToggleTransitStation(stationId);
+        },
         onSelectTarget: handleStep2SelectTarget,
         onMapClick: handleStep2MapClick,
         onError: () => {
@@ -634,6 +688,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
 
     if (step === 2 && active) {
+      ensureTransitCatalog();
       const editable = isEditable(active);
       const draftKey = `${active.packId}@${active.version}`;
       const topSlot = bodySlot.querySelector<HTMLElement>("#st-step2-top");
@@ -653,6 +708,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             record: active,
             mode: step2.mapMode,
             selectedTarget: ensureStep2Selection(active, step2),
+            transitStations: buildTransitOverlayPins(active, step2),
+            onToggleTransitStation: (stationId) => {
+              void handleToggleTransitStation(stationId);
+            },
             onSelectTarget: handleStep2SelectTarget,
             onMapClick: handleStep2MapClick,
           });
@@ -801,6 +860,17 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLElement | null;
     if (!target || !target.id) return;
+    if (target instanceof HTMLInputElement && target.id === "st-transit-search") {
+      const pos = target.selectionStart ?? target.value.length;
+      step2.transitQuery = target.value;
+      render();
+      const refreshed = root.querySelector<HTMLInputElement>("#st-transit-search");
+      if (refreshed) {
+        refreshed.focus();
+        refreshed.setSelectionRange(pos, pos);
+      }
+      return;
+    }
     if (target.id.startsWith("ed-card-") || target.id.startsWith("ed-curse-") || target.id.startsWith("ed-ccard-")) {
       updateLiveCardPreview();
     }
@@ -977,6 +1047,30 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         render();
         return;
       }
+    }
+    const transitModeBtn = btn.dataset.transitMode as StudioTransitMode | undefined;
+    if (transitModeBtn) {
+      const nextEnabled = !step2.enabledTransitModes[transitModeBtn];
+      step2.enabledTransitModes[transitModeBtn] = nextEnabled;
+      render();
+      const active = currentDraft();
+      if (active && isEditable(active) && step2.transitCatalog) {
+        const pack = structuredClone(active.pack);
+        const snap = structuredClone(active.snapshot);
+        syncModeStationsInDraft(pack, snap, step2, transitModeBtn, nextEnabled);
+        void persistDraft(
+          pack,
+          snap,
+          `Moda ${transitModeBtn.toUpperCase()} ${nextEnabled ? "diaktifkan" : "dinonaktifkan"} (${snap.stations.length} stasiun).`,
+        );
+      } else {
+        render();
+      }
+      return;
+    }
+    if (btn.dataset.toggleTransitId) {
+      void handleToggleTransitStation(btn.dataset.toggleTransitId);
+      return;
     }
     if (btn.dataset.mapMode) {
       step2.mapMode = btn.dataset.mapMode as StudioMapMode;
@@ -1336,6 +1430,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           const lng = Number(root.querySelector<HTMLInputElement>("#ed-v-lng")?.value);
           if (Number.isFinite(lat) && Number.isFinite(lng)) {
             snap.boundaryPolygon.push({ latitude: lat, longitude: lng });
+            syncBoundaryTransitStationsInDraft(pack, snap, step2);
             await persistDraft(pack, snap, "Sudut batas ditambahkan.");
           }
           return;
@@ -1344,6 +1439,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           const idx = Number(btn.dataset.vertexIndex ?? -1);
           if (idx >= 0 && snap.boundaryPolygon.length > 3) {
             snap.boundaryPolygon.splice(idx, 1);
+            syncBoundaryTransitStationsInDraft(pack, snap, step2);
             await persistDraft(pack, snap, "Sudut batas dihapus.");
           }
           return;

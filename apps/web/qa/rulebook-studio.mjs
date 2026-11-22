@@ -231,16 +231,49 @@ try {
     });
   });
 
-  // Verify Hide & Seek Step 2 sub-tabs have zero horizontal overflow on 390px and keep style fetch = 1
+  // Verify Hide & Seek Step 2 sub-tabs, preloaded built-in Jakarta transit map pins/chips, zero overflow, and style fetch = 1
   await page.click('button[data-step="2"]');
   await page.waitForSelector('[data-testid="studio-map-host"]');
   await page.waitForFunction(() => Boolean(window.document.querySelector("#st-map-host .maplibregl-ctrl-zoom-in")));
+  await page.waitForSelector('[data-testid="jakarta-transit-panel"] button[data-toggle-transit-id]');
   assert.equal(styleFetchCount, 1, "Expected 1 style.json fetch on first Step 2 entry");
+  assert.equal(await page.locator('button[data-transit-mode]').count(), 4, "Expected 4 transit mode chips (MRT/LRT/KRL/TJ)");
+  assert.match(await page.textContent('[data-testid="jakarta-transit-panel"]'), /OpenStreetMap.*Transjakarta/);
+
+  const seekCanvas = await page.locator("#st-map-host .maplibregl-canvas").elementHandle();
+  assert.ok(seekCanvas, "Expected MapLibre canvas on Hide & Seek Step 2");
+
+  // Toggle TJ mode OFF then back ON + toggle a built-in transit station without re-creating the map
+  await clickAndWaitStudioSave(page, 'button[data-transit-mode="transjakarta"]');
+  await page.waitForFunction(
+    () => document.querySelector('button[data-transit-mode="transjakarta"]')?.getAttribute("aria-pressed") === "false",
+  );
+  await clickAndWaitStudioSave(page, 'button[data-transit-mode="transjakarta"]');
+  await page.waitForFunction(
+    () => document.querySelector('button[data-transit-mode="transjakarta"]')?.getAttribute("aria-pressed") === "true",
+  );
+
+  const firstToggleBtn = page.locator('button[data-toggle-transit-id]').first();
+  const targetTransitId = await firstToggleBtn.getAttribute("data-toggle-transit-id");
+  const prevPressed = await firstToggleBtn.getAttribute("aria-pressed");
+  const expectedPressed = prevPressed === "true" ? "false" : "true";
+  await clickAndWaitStudioSave(page, `button[data-toggle-transit-id="${targetTransitId}"]`);
+  await page.waitForFunction(
+    ({ id, expected }) =>
+      document.querySelector(`button[data-toggle-transit-id="${id}"]`)?.getAttribute("aria-pressed") === expected,
+    { id: targetTransitId, expected: expectedPressed },
+  );
+
   for (const mapTab of ["primary", "secondary", "start", "boundary"]) {
     await page.click(`button[data-map-tab="${mapTab}"]`);
     await assertNoHorizontalOverflow(page, `Hide & Seek Step 2 tab=${mapTab}`);
   }
-  assert.equal(styleFetchCount, 1, "Hide & Seek Step 2 tab switches must not re-fetch style.json");
+  assert.equal(styleFetchCount, 1, "Hide & Seek Step 2 transit toggles & tabs must not re-fetch style.json");
+  assert.equal(
+    await seekCanvas.evaluate((el) => el.isConnected && document.querySelector("#st-map-host .maplibregl-canvas") === el),
+    true,
+    "Same MapLibre canvas DOM element must remain mounted across built-in transit toggles",
+  );
 
   // Trigger intentional validation error (hidingZoneRadiusMeters = 10)
   await page.click('button[data-step="3"]');
