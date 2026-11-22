@@ -280,6 +280,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void; 
     onError,
   } = options;
 
+  delete container.dataset.mapReady;
   container.innerHTML = `<div class="board-map-shell">
     <div class="board-map-canvas" role="region" aria-label="Peta interaktif papan permainan"></div>
     <p class="board-map-attribution">
@@ -422,6 +423,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void; 
         if (!camera && (focusPoints?.length ?? allPoints.length) > 1) {
           map.fitBounds(bounds, { padding: fitPadding ?? 36, maxZoom: 14.5, duration: 0 });
         }
+        container.dataset.mapReady = "true";
       });
 
       map.on("error", () => {
@@ -495,6 +497,7 @@ export function mountBoardMap(options: BoardMapOptions): { destroy: () => void; 
     getCamera: () => map && styleLoaded ? { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() } : undefined,
     destroy() {
       destroyed = true;
+      delete container.dataset.mapReady;
       for (const m of markers) m.remove();
       map?.remove();
       map = undefined;

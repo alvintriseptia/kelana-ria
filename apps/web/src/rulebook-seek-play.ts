@@ -222,7 +222,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       clockBase = performance.now();
       live = data;
       syncRoomUrl(roomCode);
-      if (background && unchanged) return;
+      if (unchanged) return;
     } else if (allowInvitePrompt) {
       statusMsg = `Undangan ruang ${roomCode} terdeteksi. Masukkan namamu lalu tekan Gabung Ruang.`;
       errorMsg = "";
@@ -323,7 +323,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       const lastThermometer = [...clues].reverse().find(question => question.thermometerStart && question.status !== "vetoed");
       const thermometer = room.thermometerStart ? { start: room.thermometerStart, end: thermometerEnd }
         : lastThermometer?.thermometerStart ? { start: lastThermometer.thermometerStart, end: lastThermometer.referencePoint } : undefined;
-      const thermKey = thermometer?.end ? JSON.stringify(thermometer) : "";
+      const thermKey = thermometer?.end ? JSON.stringify([
+        room.code, room.turnNumber, thermometer.start.latitude, thermometer.start.longitude,
+        thermometer.end.latitude, thermometer.end.longitude,
+      ]) : "";
       const focusPoints = thermometer?.end && thermKey !== focusedThermometer
         ? [thermometer.start, thermometer.end] : undefined;
       focusedThermometer = thermKey;
@@ -702,6 +705,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     }
     const controls = root.querySelector<HTMLElement>("#sg-controls")!;
     root.querySelector<HTMLElement>(".sg-game")!.dataset.role = room.role;
+    const panelScroll = controls.querySelector(".sg-sheet")?.scrollTop ?? 0;
     const focused = document.activeElement instanceof HTMLElement && controls.contains(document.activeElement) ? document.activeElement : null;
     const previousInput = focused instanceof HTMLInputElement ? { id: focused.id, value: focused.value } : null;
     const activeButton = focused instanceof HTMLButtonElement ? focused.dataset : null;
@@ -747,6 +751,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         !button.disabled && Object.keys(activeButton).length > 0 && Object.keys(activeButton).every(key => button.dataset[key] === activeButton[key]));
       (replacement ?? controls.querySelector<HTMLElement>("#sg-panel-title"))?.focus({ preventScroll: true });
     }
+    const sheet = controls.querySelector<HTMLElement>(".sg-sheet");
+    if (sheet && !deal && !incoming && focused) sheet.scrollTop = panelScroll;
     const radius = controls.querySelector<HTMLInputElement>("#sg-radius");
     if (radius) radius.value = radiusDraft;
     updateClock();

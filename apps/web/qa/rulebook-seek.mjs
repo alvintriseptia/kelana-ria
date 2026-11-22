@@ -160,7 +160,7 @@ try {
   }
   await clickAndWaitPost(pageCreator, 'button[data-action="start-match"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Waktu Sembunyi"));
-  await pageCreator.locator(".sg-board canvas").first().waitFor();
+  await pageCreator.locator("[data-map-ready=true]").waitFor();
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-head-start.png") });
 
   // Hider locks mrt-blok-m; Seeker DOM must NOT contain Hider's private anchor or Found Code!
@@ -177,6 +177,7 @@ try {
   // Seeker asks a Radar clue, Hider answers & picks drawn card, Seeker triggers Endgame, enters Found Code -> Regroup!
   const radarCard = pageG2.locator('button[data-action="question-family"][data-family="radar"]');
   await radarCard.waitFor();
+  await pageG2.locator("[data-map-ready=true]").waitFor();
   await pageG2.screenshot({ path: path.join(results, "rulebook-seek-question-deck.png") });
   await radarCard.press("Enter");
   await pageG2.click('button[data-item="rad-1km"]');
@@ -208,6 +209,10 @@ try {
   await pageG2.click('button[data-map-point="mrt-blok-m"]');
   await clickAndWaitPost(pageG2, 'button[data-action="mark-thermometer-end"]');
   await pageG2.locator('[data-map-point="thermometer-b"]').waitFor();
+  await pageG2.locator("[data-map-ready=true]").waitFor();
+  const markerB = await pageG2.locator('[data-map-point="thermometer-b"]').boundingBox();
+  const questionPanel = await pageG2.locator(".sg-dock").boundingBox();
+  assert.ok(markerB.y + markerB.height < questionPanel.y);
   await pageG2.screenshot({ path: path.join(results, "rulebook-seek-thermometer.png") });
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
   await pageCreator.click('button[data-action="refresh"]');
@@ -226,11 +231,13 @@ try {
   await pageG2.click('button[data-item="photo-station"]');
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
   await pageCreator.click('button[data-action="refresh"]');
+  await pageCreator.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
   await pageCreator.locator("#sg-clue-photo").setInputFiles({
     name: "test-public-station.png",
     mimeType: "image/png",
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAABAAAAAKCAIAAAAy3EnLAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAFUlEQVQYlWNwyIogCTGMasgakqEEAE4woUHUV2UvAAAAAElFTkSuQmCC", "base64"),
   });
+  await pageCreator.locator('img[alt="Pratinjau foto petunjuk"]').waitFor();
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-photo"]');
   const photoId = (await snapshot()).room.questions.at(-1).photoId;
   assert.ok(photoId);
