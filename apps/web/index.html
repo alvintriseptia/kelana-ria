@@ -65,13 +65,18 @@
     <div id="play" hidden></div>
   </main>
   <dialog id="guide" aria-labelledby="guide-heading">
-    <div class="dialog-body">
-      <h2 id="guide-heading" tabindex="-1" autofocus>Panduan bermain</h2>
-      <h3 lang="en">Claim the City</h3><p>Kunjungi tempat di papan, lakukan check-in, lalu selesaikan tantangannya. Saat bermain berdua, kuasai zona terbanyak untuk menang.</p>
-      <h3 lang="en">Hide &amp; Seek</h3><p>Dua pemain bergantian sembunyi. Selidiki titik di papan untuk menemukan temanmu. Bandingkan waktu sembunyi setelah kedua giliran selesai.</p>
-      <p>Perjalanan memakai data seluler dan tarif transportasi biasa. Lokasi diperlukan saat check-in.</p>
-      <p class="credit">Terinspirasi oleh <a href="https://nebula.tv/jetlag" lang="en">Jet Lag: The Game</a>, karya Adam Chase, Sam Denby, dan Ben Doyle. Kelana Ria adalah proyek independen.</p>
-      <form method="dialog"><button class="secondary" data-copy="dialog.close">Tutup</button></form>
+    <div class="dialog-body ig-dialog-body">
+      <div class="ig-dialog-header">
+        <h2 id="guide-heading" tabindex="-1" autofocus>Panduan bermain</h2>
+        <form method="dialog"><button class="ig-close-x" aria-label="Tutup panduan">&times;</button></form>
+      </div>
+      <div id="guide-interactive">
+        <h3 lang="en">Claim the City</h3><p>Kunjungi tempat di papan, lakukan check-in, lalu selesaikan tantangannya. Saat bermain berdua, kuasai zona terbanyak untuk menang.</p>
+        <h3 lang="en">Hide &amp; Seek</h3><p>Dua pemain bergantian sembunyi. Selidiki titik di papan untuk menemukan temanmu. Bandingkan waktu sembunyi setelah kedua giliran selesai.</p>
+        <p>Perjalanan memakai data seluler dan tarif transportasi biasa. Lokasi diperlukan saat check-in.</p>
+      </div>
+      <p class="credit">Terinspirasi oleh <a href="https://nebula.tv/jetlag" lang="en">Jet Lag: The Game</a>, karya Adam Chase, Sam Denby, dan Ben Doyle, serta aturan komunitas <a href="https://jetlagoxford.co.uk/" target="_blank" rel="noopener noreferrer" lang="en">jetlagoxford.co.uk</a>. Kelana Ria adalah proyek independen.</p>
+      <form method="dialog"><button class="secondary ig-close-bottom" data-copy="dialog.close">Tutup</button></form>
     </div>
   </dialog>
   <dialog id="summary" aria-labelledby="summary-heading">

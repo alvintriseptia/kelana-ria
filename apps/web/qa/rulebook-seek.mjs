@@ -157,9 +157,22 @@ try {
   await pageG3.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (3/4)"));
 
   async function refreshSeekRoom(page) {
-    await page.locator(".sg-room-menu summary").click();
-    await page.locator('button[data-action="refresh"]').click();
-    await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const isOpen = await page
+          .locator(".sg-room-menu")
+          .evaluate((el) => el.hasAttribute("open"))
+          .catch(() => false);
+        if (!isOpen) {
+          await page.locator(".sg-room-menu summary").click({ timeout: 3000 });
+        }
+        await page.locator('button[data-action="refresh"]').click({ timeout: 3000 });
+        await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
+        return;
+      } catch (error) {
+        if (attempt === 3) throw error;
+      }
+    }
   }
 
   async function clickAndWaitPost(page, selector) {

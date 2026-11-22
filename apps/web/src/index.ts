@@ -200,7 +200,20 @@ form.addEventListener("submit", event => {
   event.preventDefault();
   summary.showModal();
 });
-document.getElementById("guide-open")!.addEventListener("click", () => guide.showModal());
+let guideHandle:
+  | { setTrack: (track: "hide-and-seek" | "claim-the-city" | "safety") => void }
+  | undefined;
+document.getElementById("guide-open")!.addEventListener("click", () => {
+  const track = selection().format;
+  guide.showModal();
+  if (guideHandle) {
+    guideHandle.setTrack(track);
+  } else {
+    void import("./interactive-guide").then(({ mountInteractiveGuide }) => {
+      guideHandle = mountInteractiveGuide(guide, track);
+    });
+  }
+});
 playButton.addEventListener("click", () => {
   const url = new URL(location.href);
   const game = selection();
