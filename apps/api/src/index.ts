@@ -126,6 +126,13 @@ export {
   wideSeekTrial,
 } from "./seek-rules.js";
 export {
+  computeGeoSnapshotHash,
+  haversineMeters,
+  isValidCoordinate,
+  pointInPolygon,
+  validateHideSeekRulebook,
+} from "./seek-engine/rulebook-validator.js";
+export {
   isFreshSoloEdition,
   prepareSoloFixture,
   toSoloCandidate,
