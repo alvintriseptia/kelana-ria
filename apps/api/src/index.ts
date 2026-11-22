@@ -134,6 +134,32 @@ export {
 } from "./seek-engine/rulebook-validator.js";
 export { validateClaimRulebook } from "./claim-engine/claim-rulebook-validator.js";
 export {
+  evaluateLeafSubmission,
+  resolveActiveLeafChallenge,
+  sanitizeClaimChallenge,
+  sanitizeLeafChallenge,
+} from "./claim-engine/challenge-evaluator.js";
+export {
+  applyClaimEngineAction,
+  createClaimEngineMatch,
+  expireClaimEngineMatch,
+  findClaimEngineSeat,
+  joinClaimEngineMatch,
+  viewClaimEngineMatch,
+  type ClaimEngineMatch,
+} from "./claim-engine/claim-engine.js";
+export {
+  clearClaimCurseByGps,
+  clearClaimCurseByHonor,
+  createClaimTacticalDeck,
+  drawClaimTacticalCard,
+  expireClaimCurses,
+  hasActiveClaimCurseBlocker,
+  reviewClaimCursePhoto,
+  submitClaimCursePhoto,
+  type ClaimTacticalDeckState,
+} from "./claim-engine/tactical-deck.js";
+export {
   evaluateMatching,
   evaluateMeasuring,
   evaluateObjectiveQuestion,
