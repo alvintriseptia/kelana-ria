@@ -29,6 +29,14 @@ async function clickAndWaitPost(page, selector) {
   ]);
 }
 
+async function clickAndWaitStudioSave(page, selector) {
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
+    page.waitForResponse((r) => r.url().includes("/api/rulebooks?role=reviewer") && r.request().method() === "GET"),
+    page.click(selector),
+  ]);
+}
+
 try {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await ctx.newPage();
@@ -41,13 +49,13 @@ try {
 
   await page.fill("#st-pack-id", "pack-seek-alpha");
   await page.fill("#st-title", "Alpha Seek Draft");
-  await clickAndWaitPost(page, 'button[data-action="clone"]');
+  await clickAndWaitStudioSave(page, 'button[data-action="clone"]');
   await page.waitForSelector("#st-draft-select");
 
   await page.click('button[data-action="toggle-clone"]');
   await page.fill("#st-pack-id", "pack-seek-beta");
   await page.fill("#st-title", "Beta Seek Draft");
-  await clickAndWaitPost(page, 'button[data-action="clone"]');
+  await clickAndWaitStudioSave(page, 'button[data-action="clone"]');
 
   // Switch back to Alpha draft
   await page.selectOption("#st-draft-select", "pack-seek-alpha@1");
@@ -57,7 +65,7 @@ try {
   await page.click('button[data-step="3"]');
   await page.waitForSelector("#ed-zone");
   await page.fill("#ed-zone", "10");
-  await clickAndWaitPost(page, 'button[data-action="save-draft"]');
+  await clickAndWaitStudioSave(page, 'button[data-action="save-draft"]');
   await page.waitForSelector('button[data-jump-path]');
 
   // Navigate away to Step 1, then click Validator Jump Link -> returns to Step 3 #ed-zone!
@@ -65,7 +73,7 @@ try {
   await page.click('button[data-jump-path]');
   await page.waitForSelector("#ed-zone");
   await page.fill("#ed-zone", "400");
-  await clickAndWaitPost(page, 'button[data-action="save-draft"]');
+  await clickAndWaitStudioSave(page, 'button[data-action="save-draft"]');
   await page.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
 
   // Step 4: interactive Hide & Seek clue dry-run simulator
@@ -82,7 +90,7 @@ try {
   await page.fill("#st-pack-id", "pack-claim-studio-qa");
   await page.fill("#st-title", "Studio QA Claim Pack");
   await page.fill("#st-price", "25000");
-  await clickAndWaitPost(page, 'button[data-action="clone"]');
+  await clickAndWaitStudioSave(page, 'button[data-action="clone"]');
 
   // Step 2: add zone & landmark, asserting persistent MapLibre canvas & single style.json fetch
   let styleFetchCount = 0;
@@ -125,11 +133,12 @@ try {
   await page.fill("#ed-new-zone-id", "kemang");
   await page.fill("#ed-new-zone-name", "Kemang");
   await page.fill("#ed-new-zone-label", "KM");
-  await clickAndWaitPost(page, 'button[data-map-action="add-zone"]');
+  await clickAndWaitStudioSave(page, 'button[data-map-action="add-zone"]');
   await page.click('button[data-map-tab="primary"]');
-  await clickAndWaitPost(page, 'button[data-map-action="add-landmark"]');
-  await page.fill("#ed-claim-landmark-name", "Taman Literasi QA Persistent");
-  await clickAndWaitPost(page, 'button[data-map-action="apply-selected"]');
+  await clickAndWaitStudioSave(page, 'button[data-map-action="add-landmark"]');
+  await page.waitForSelector('[data-testid="step2-inspector"] input[data-field="name"]');
+  await page.fill('[data-testid="step2-inspector"] input[data-field="name"]', "Landmark Kemang QA Persistent");
+  await clickAndWaitStudioSave(page, 'button[data-map-action="apply-selected"]');
   await page.click('button[data-map-action="recenter"]');
 
   assert.equal(styleFetchCount, 1, "Interactions on Step 2 must not re-fetch /api/map/style.json");
@@ -145,10 +154,10 @@ try {
   await page.click('button[data-step="3"]');
   await page.click('button[data-c3-tab="challenges"]');
   await page.fill("#ed-chal-title", "Uji Call Your Shot Kemang");
-  await clickAndWaitPost(page, 'button[data-c3-action="add-challenge"]');
+  await clickAndWaitStudioSave(page, 'button[data-c3-action="add-challenge"]');
   await page.click('button[data-c3-tab="deck"]');
   await page.fill("#ed-ccard-title", "Sabotase Kemang");
-  await clickAndWaitPost(page, 'button[data-c3-action="add-claim-card"]');
+  await clickAndWaitStudioSave(page, 'button[data-c3-action="add-claim-card"]');
 
   // Step 4: interactive Claim challenge test modal on m-bloc (observation_input answer = "2")
   await page.click('button[data-step="4"]');
