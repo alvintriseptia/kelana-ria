@@ -29,11 +29,28 @@ async function clickAndWaitPost(page, selector) {
     page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
     page.click(selector),
   ]);
+  await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
 }
+
+async function selectLandmark(page, id) {
+  await page.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
+  await page.locator(`button[data-map-point="${id}"]`).press("Enter");
+}
+
+async function checkIn(page, id) {
+  await selectLandmark(page, id);
+  await clickAndWaitPost(page, `.cg-selected[data-landmark-id="${id}"] button[data-action="checkin-landmark"]`);
+}
+
+const proof = {
+  name: "landmark.png",
+  mimeType: "image/png",
+  buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAABAAAAAKCAIAAAAy3EnLAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAFUlEQVQYlWNwyIogCTGMasgakqEEAE4woUHUV2UvAAAAAElFTkSuQmCC", "base64"),
+};
 
 try {
   // 1. Solo Official Jakarta Compact Claim launched directly from /
-  const ctxSolo = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ctxSolo = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
   const pageSolo = await ctxSolo.newPage();
   await pageSolo.goto(baseUrl, { waitUntil: "networkidle" });
   await pageSolo.getByRole("button", { name: "Lihat ringkasan" }).click();
@@ -46,6 +63,12 @@ try {
   await pageSolo.waitForFunction(() => document.body.textContent.includes("Permainan Aktif"));
   await pageSolo.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
   const claimCanvas = await pageSolo.locator("#rb-claim-map-host .maplibregl-canvas").elementHandle();
+  assert.equal(await pageSolo.getByRole("list", { name: "Daftar Landmark" }).count(), 0);
+  assert.ok(await pageSolo.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await pageSolo.getByRole("button", { name: "Skor", exact: true }).click();
+  assert.match(await pageSolo.locator(".cg-score-grid").innerText(), /0\/4.*0\/2/s);
+  await pageSolo.getByRole("button", { name: "Kartu", exact: true }).click();
+  assert.equal(await pageSolo.locator('button[data-nav="catalog"]').filter({ visible: true }).count(), 0);
 
   // Zero hidden challenge prompt / answer key leakage before check-in
   const preCheckInText = await pageSolo.textContent("body");
@@ -53,32 +76,58 @@ try {
   assert.equal(preCheckInText.includes("correctChoiceId"), false, "Answer keys must never leak");
 
   // Lock m-bloc via observation_input ("2")
-  await clickAndWaitPost(pageSolo, 'li[data-landmark-id="m-bloc"] button[data-action="checkin-landmark"]');
+  await checkIn(pageSolo, "m-bloc");
   await pageSolo.waitForSelector("#claim-input-answer");
   await pageSolo.fill("#claim-input-answer", "2");
   await clickAndWaitPost(pageSolo, 'button[data-action="submit-input"]');
-  await pageSolo.waitForFunction(() => document.body.textContent.includes("1/4 landmark terkunci"));
+  await pageSolo.waitForFunction(() => document.body.textContent.includes("1/4 terkunci"));
   assert.equal(
     await claimCanvas.evaluate((el) => el.isConnected && document.querySelector("#rb-claim-map-host .maplibregl-canvas") === el),
     true,
     "Claim play MapLibre canvas must stay continuously mounted across check-in actions",
   );
 
+  // The player must choose a target before a map-targeted card can be played.
+  await pageSolo.getByRole("button", { name: "Kartu", exact: true }).click();
+  await pageSolo.locator(".cg-tactic").first().click();
+  const play = pageSolo.getByRole("button", { name: "Mainkan Kartu" });
+  assert.equal(await play.isDisabled(), true);
+  const eligible = pageSolo.locator("button.board-map-pin-eligible");
+  if (await eligible.count()) {
+    const target = await eligible.first().getAttribute("data-map-point");
+    await selectLandmark(pageSolo, target);
+    assert.equal(await play.getAttribute("data-landmark"), target);
+    assert.equal(await play.isEnabled(), true);
+  }
+  await pageSolo.getByRole("button", { name: "Tantangan", exact: true }).click();
+
   // Lock taman-ayodya via photo_proof (2nd zone!)
-  await clickAndWaitPost(pageSolo, 'li[data-landmark-id="taman-ayodya"] button[data-action="checkin-landmark"]');
+  await checkIn(pageSolo, "taman-ayodya");
   await pageSolo.waitForSelector('button[data-action="submit-photo"]');
+  await pageSolo.locator("input[data-cg-photo]").setInputFiles(proof);
   await clickAndWaitPost(pageSolo, 'button[data-action="submit-photo"]');
-  await pageSolo.waitForFunction(() => document.body.textContent.includes("2/4 landmark terkunci"));
+  await pageSolo.waitForFunction(() => document.body.textContent.includes("2/4 terkunci"));
 
   // Bail on blok-m-plaza -> Solo burn-on-fail marks landmark Hangus (Burned)
-  await clickAndWaitPost(pageSolo, 'li[data-landmark-id="blok-m-plaza"] button[data-action="checkin-landmark"]');
+  await checkIn(pageSolo, "blok-m-plaza");
   await pageSolo.waitForSelector('button[data-action="bail-challenge"]');
   await clickAndWaitPost(pageSolo, 'button[data-action="bail-challenge"]');
-  await pageSolo.waitForFunction(() => document.body.textContent.includes("Hangus (Burned)"));
+  assert.match(await pageSolo.locator(".cg-selected").innerText(), /hangus/);
 
   // Reload persistence
   await pageSolo.reload({ waitUntil: "networkidle" });
-  await pageSolo.waitForFunction(() => document.body.textContent.includes("2/4 landmark terkunci"));
+  await pageSolo.waitForFunction(() => document.body.textContent.includes("2/4 terkunci"));
+  await pageSolo.route("**/api/map/config", route => route.fulfill({ json: {
+    mode: "geoapify-vector", styleUrl: "/qa-unavailable-claim-map", mapLibreLicenseUrl: "/licenses/maplibre-gl.txt",
+  } }));
+  await pageSolo.route("**/qa-unavailable-claim-map", route => route.abort());
+  await pageSolo.reload();
+  await pageSolo.getByRole("list", { name: "Daftar Landmark" }).getByRole("button", { name: /Blok M Plaza/i }).click();
+  assert.match(await pageSolo.locator(".cg-selected").innerText(), /hangus/);
+  await pageSolo.unroute("**/api/map/config");
+  await pageSolo.getByRole("button", { name: "Coba Lagi" }).click();
+  await pageSolo.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
+  assert.equal(await pageSolo.getByRole("list", { name: "Daftar Landmark" }).count(), 0);
   await ctxSolo.close();
 
   // 2. 3-player Claim the City FFA launched directly from / + invite link join
@@ -120,19 +169,34 @@ try {
   await pageP1.waitForFunction(() => document.body.textContent.includes("Permainan Aktif"));
 
   // P1 checks in taman-literasi (vulnerable claim) then Bails -> broadcasts "Terbuka untuk direbut!"
-  await clickAndWaitPost(pageP1, 'li[data-landmark-id="taman-literasi"] button[data-action="checkin-landmark"]');
+  await checkIn(pageP1, "taman-literasi");
   await pageP1.waitForSelector('button[data-action="bail-challenge"]');
   await clickAndWaitPost(pageP1, 'button[data-action="bail-challenge"]');
 
   // P2 refreshes -> sees "Open to steal!" alert -> steals & locks taman-literasi immediately
-  await pageP2.click('button[data-action="refresh"]');
   await pageP2.waitForSelector('[data-testid="open-to-steal-alert"]');
-  await clickAndWaitPost(pageP2, 'li[data-landmark-id="taman-literasi"] button[data-action="checkin-landmark"]');
+  await pageP2.getByLabel("Lainnya").click();
+  await pageP2.click('button[data-action="refresh"]');
+  await pageP2.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
+  await checkIn(pageP2, "taman-literasi");
   await pageP2.waitForSelector('button[data-action="submit-mcq"]');
   await clickAndWaitPost(pageP2, 'button[data-action="submit-mcq"]');
   await pageP2.waitForFunction(() =>
-    document.querySelector('li[data-landmark-id="taman-literasi"]')?.textContent?.includes("Terkunci"),
+    document.querySelector('.cg-selected[data-landmark-id="taman-literasi"]')?.textContent?.includes("Terkunci"),
   );
+  await checkIn(pageP1, "taman-ayodya");
+  await pageP1.locator("input[data-cg-photo]").setInputFiles(proof);
+  await clickAndWaitPost(pageP1, 'button[data-action="submit-photo"]');
+  const rivalProof = pageP2.getByAltText("Foto bukti untuk ditinjau");
+  await rivalProof.waitFor();
+  await pageP2.waitForFunction(() => document.querySelector(".cg-proof")?.naturalWidth > 0);
+  const proofPath = await rivalProof.getAttribute("src");
+  assert.equal((await fetch(new URL(proofPath, baseUrl))).status, 404);
+  await clickAndWaitPost(pageP2, 'button[data-action="review-rival-photo"][data-approve="false"]');
+  assert.equal((await ctxP2.request.get(new URL(proofPath, baseUrl).href)).status(), 404);
+  now += 3 * 60 * 60 * 1000;
+  await pageP2.getByTestId("claim-outcome").waitFor();
+  assert.match(await pageP2.getByTestId("claim-outcome").innerText(), /Pemenang · Penantang 2.*Landmark yang terkunci/s);
   await ctxP1.close();
   await ctxP2.close();
   await ctxP3.close();

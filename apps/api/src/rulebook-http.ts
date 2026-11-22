@@ -63,7 +63,7 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
     const photoRoute = /^\/api\/rulebooks\/rooms\/([\w-]+)\/photos\/([\w-]+)$/.exec(path);
     if (request.method === "GET" && photoRoute) {
       const cred = credential(request, cookieName);
-      const photo = cred && store.viewSeekPhoto(photoRoute[1], cred, photoRoute[2], store.roomTime(photoRoute[1], now()));
+      const photo = cred && store.viewRoomPhoto(photoRoute[1], cred, photoRoute[2], store.roomTime(photoRoute[1], now()));
       if (!photo) return json(response, 404, { error: "photo-not-found" });
       response.writeHead(200, {
         "Content-Type": "image/jpeg",
@@ -92,7 +92,8 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
       json(response, 415, { error: "invalid-request" });
       return;
     }
-    const raw = await requestBody(request, path === "/api/rulebooks/seek-photo" ? maxBase64Length + 1024 : 512 * 1024);
+    const photoUpload = path === "/api/rulebooks/seek-photo" || path === "/api/rulebooks/claim-photo";
+    const raw = await requestBody(request, photoUpload ? maxBase64Length + 1024 : 512 * 1024);
     if (raw === undefined) return json(response, 413, { error: "invalid-request" });
     let body: unknown;
     try {
@@ -110,6 +111,19 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
         return json(response, 400, { error: "invalid-request" });
       }
       const reply = await store.answerSeekPhoto(roomCode, cred, questionId, actionId, photoBase64, () => store.roomTime(roomCode, now()));
+      return json(response, reply.error ? 400 : 200, reply);
+    }
+
+    if (path === "/api/rulebooks/claim-photo") {
+      const { roomCode, landmarkId, curseInstanceId, actionId, photoBase64 } = body;
+      const cred = credential(request, cookieName);
+      const validId = (id: unknown): id is string => typeof id === "string" && id.length > 0;
+      const target = validId(landmarkId) && curseInstanceId === undefined ? { landmarkId }
+        : validId(curseInstanceId) && landmarkId === undefined ? { curseInstanceId } : null;
+      if (!cred || !validId(roomCode) || !target || !validId(actionId) || actionId.length > 100 || typeof photoBase64 !== "string") {
+        return json(response, 400, { error: "invalid-request" });
+      }
+      const reply = await store.submitClaimPhoto(roomCode, cred, actionId, photoBase64, target, now);
       return json(response, reply.error ? 400 : 200, reply);
     }
 
