@@ -5,6 +5,7 @@ A started Codex session owns one GitHub issue at a time. The PRD in [docs](docs/
 ## Factory rules for planning and game design
 - **Put plans into GitHub delivery issues.** Do not write standalone unlinked design/plan specs into the repository. Convert approved plans into ordered GitHub issues using [`.github/ISSUE_TEMPLATE/work.yml`](.github/ISSUE_TEMPLATE/work.yml) (`## Outcome`, strict `## Dependencies` containing only `None` or `#N, #M`, `## Requirements`, `## Verification`) with `ready` and `priority:1` or `priority:2` labels so `factory/agent.py pickup` can claim them automatically.
 - **Keep game rules data-driven, never hardcoded.** Game engines must stay generic and free of hardcoded city names, stations, timers, question catalogs, decks, powerups, or curses. Official POC games must be authored as validated `RulebookPack` + `GeoSnapshot` data using the exact same schema and pre-publish validator that community marketplace creators use.
+- **Autonomous merge through the ready queue.** Do not pause for maintainer review after each individual issue PR. Once you self-review the diff and all required `Factory CI` checks (`factory` and `workspace`) pass on a PR, squash-merge it into `main` (pinning the reviewed head SHA), clean up the finished worktree, pull `main`, and immediately claim the next ready issue. Continue until the ready queue is empty (or only `blocked` external-input issues remain), then present one consolidated review summary at the end. Never merge with failing or pending CI checks.
 
 ## Start a session
 
@@ -30,7 +31,7 @@ For workspace changes, run `npm ci` and `npm run build` with the Node version in
 
 Run `python3 -m unittest discover -s factory -v` from the issue worktree. Add the issue-specific checks from the relevant skill. Open a PR against main with a standalone `Closes #N` line and links to evidence. Monitor CI and fix recoverable failures.
 
-From clean current main, use `python3 factory/agent.py merge PR_NUMBER REVIEWED_SHA` only for supporting documentation or edits to approved neutral copy. Read the diff for accuracy and meaning first. You review gameplay, code, payments, CI, skills, policy and PRD changes as maintainer. The session can continue with other ready issues while a PR awaits your review.
+Once all `Factory CI` checks succeed on the current PR head SHA and you have reviewed the full diff for accuracy and scope, squash-merge the PR into `main` (pinning the head SHA), pull `main`, and immediately continue to the next ready issue in the queue. Only stop for maintainer review after all ready tasks are complete (or when an issue requires external human input and is labeled `blocked`). Never bypass a failed CI gate.
 
 ## Recover work
 
