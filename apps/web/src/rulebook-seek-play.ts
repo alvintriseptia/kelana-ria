@@ -495,6 +495,17 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     `;
   }
 
+  function renderRoomMenu(): string {
+    const open = root.querySelector<HTMLDetailsElement>(".sg-room-menu")?.open;
+    return `<details class="sg-room-menu" ${open ? "open" : ""}>
+      <summary class="sg-quiet" aria-label="Menu permainan" title="Menu permainan"><span aria-hidden="true">⋯</span></summary>
+      <div class="sg-room-menu-actions">
+        <button type="button" data-action="refresh">Muat ulang</button>
+        <button type="button" data-nav="catalog">Keluar ke katalog</button>
+      </div>
+    </details>`;
+  }
+
   function renderRoom(payload: RoomPayload): string {
     const { room, pass } = payload;
     const isHider = room.role === "hider";
@@ -502,23 +513,22 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
     return `<section class="rb-shell" aria-label="Permainan Hide & Seek">
       <div class="rb-card">
-        <div class="rb-badges">
-          <span class="rb-badge">Kode: ${escapeText(room.code)}</span>
-          <span class="rb-badge">${escapeText(phaseLabels[room.phase])}</span>
-          <span class="rb-badge">Giliran ${room.turnNumber}/${room.totalPlannedTurns}</span>
-          <span class="rb-badge">Peran: ${escapeText(isHider ? "Penyembunyi (Hider)" : room.role === "seeker" ? "Pencari (Seeker)" : "Lobi")}</span>
-          ${payload.qa ? '<span class="rb-badge sg-qa-badge" data-testid="seek-qa-badge">Ruang QA</span>' : ""}
-          ${pass.paid ? '<span class="rb-badge rb-badge-paid">Pass Berbayar</span>' : '<span class="rb-badge">Resmi Gratis</span>'}
+        <div class="sg-room-header">
+          <div class="rb-badges">
+            <span class="rb-badge">Kode: ${escapeText(room.code)}</span>
+            <span class="rb-badge">${escapeText(phaseLabels[room.phase])}</span>
+            <span class="rb-badge">Giliran ${room.turnNumber}/${room.totalPlannedTurns}</span>
+            <span class="rb-badge">Peran: ${escapeText(isHider ? "Penyembunyi (Hider)" : room.role === "seeker" ? "Pencari (Seeker)" : "Lobi")}</span>
+            ${payload.qa ? '<span class="rb-badge sg-qa-badge" data-testid="seek-qa-badge">Ruang QA</span>' : ""}
+            ${pass.paid ? '<span class="rb-badge rb-badge-paid">Pass Berbayar</span>' : '<span class="rb-badge">Resmi Gratis</span>'}
+          </div>
+          ${renderRoomMenu()}
         </div>
         <h2>${escapeText(room.packMeta.title)}</h2>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
-        <div class="rb-actions">
-          <button type="button" class="secondary" data-action="refresh">Muat Ulang State</button>
-          <button type="button" class="secondary" data-nav="catalog">Kembali ke Katalog</button>
-          ${allowHideSeekQa && !payload.qa && !pass.paid && room.phase === "lobby" && room.seats.some(seat => seat.seatId === room.seatId && seat.isHost)
-            ? `<button type="button" class="secondary" data-action="start-qa" data-pack="${escapeText(pass.packId)}" data-version="${pass.version}" ${busy ? "disabled" : ""}>Buat Ruang QA dari Paket Ini</button>` : ""}
-        </div>
+        ${allowHideSeekQa && !payload.qa && !pass.paid && room.phase === "lobby" && room.seats.some(seat => seat.seatId === room.seatId && seat.isHost)
+          ? `<div class="rb-actions"><button type="button" class="secondary" data-action="start-qa" data-pack="${escapeText(pass.packId)}" data-version="${pass.version}" ${busy ? "disabled" : ""}>Buat Ruang QA dari Paket Ini</button></div>` : ""}
       </div>
 
       ${payload.qa && !room.outcome ? `<section class="rb-card" aria-label="Kontrol QA">${renderQaControls(payload)}</section>` : ""}
@@ -718,11 +728,13 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
   function render() {
     if (lifecycle.signal.aborted) return;
+    const menuFocused = document.activeElement === root.querySelector(".sg-room-menu summary");
     const room = live?.room;
     if (!live || !room || !isBoardPhase(room)) {
       closeMap();
       renderedTurn = "";
       root.innerHTML = live ? renderRoom(live) : renderCatalog();
+      if (menuFocused) root.querySelector<HTMLElement>(".sg-room-menu summary")?.focus({ preventScroll: true });
       updateClock();
       return;
     }
@@ -782,7 +794,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       <div class="sg-hud-actions">
         ${live.qa ? `<button type="button" class="sg-quiet sg-qa-badge" data-testid="seek-qa-badge" data-action="game-panel" data-panel="qa" aria-label="Mode QA" aria-expanded="${panel === "qa"}">QA</button>` : ""}
         ${room.phaseEndsAt === null ? "" : `<span class="sg-timer" aria-label="${room.phase === "head_start" ? "Waktu hingga pencarian dimulai" : "Sisa waktu"}" data-deadline="${room.phaseEndsAt}"></span>`}
-        <button type="button" class="sg-quiet" data-action="refresh" aria-label="Muat ulang permainan" title="Muat ulang permainan">↻</button>
+        ${renderRoomMenu()}
       </div>
     </header>
     ${room.phase !== "head_start" ? `<p class="sg-location">${room.seekerPosition ? `${room.seekerPosition.seatId === room.seatId ? "Kamu" : "Pencari"} · ${station ? escapeText(station.name) : "Check-in terverifikasi"} · <span id="sg-position-age"></span>` : "Belum ada check-in pencari"}</p>` : ""}
@@ -797,11 +809,12 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         <button type="button" data-action="game-panel" data-panel="${selectedNav}" aria-pressed="${panel === selectedNav}"><span class="sg-nav-icon" aria-hidden="true">${isHider ? "▤" : "✦"}</span>${isHider ? `Kartu ${live.deck.hiderHandCount}` : "Tanya"}</button>
         <button type="button" data-action="game-panel" data-panel="history" aria-pressed="${panel === "history"}"><span class="sg-nav-icon" aria-hidden="true">◷</span>Riwayat</button>
         <button type="button" data-action="game-panel" data-panel="board" aria-pressed="${panel === "board"}"><span class="sg-nav-icon" aria-hidden="true">◇</span>Titik</button>
-        <button type="button" data-nav="catalog" aria-label="Kembali ke katalog">×</button>
       </nav>
     </div>`;
     if (deal || incoming) {
       controls.querySelector<HTMLElement>("#sg-panel-title")?.focus({ preventScroll: true });
+    } else if (menuFocused) {
+      controls.querySelector<HTMLElement>(".sg-room-menu summary")?.focus({ preventScroll: true });
     } else if (previousInput) {
       const input = document.getElementById(previousInput.id);
       if (input instanceof HTMLInputElement) {
@@ -902,6 +915,13 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
     const action = btn.dataset.action;
     if (!action) return;
+    if (action === "refresh") {
+      const menu = btn.closest<HTMLDetailsElement>(".sg-room-menu");
+      if (menu) {
+        menu.open = false;
+        menu.querySelector("summary")?.focus({ preventScroll: true });
+      }
+    }
     if (action === "game-panel") {
       const next = btn.dataset.panel as Panel;
       panel = next === panel ? null : next;
@@ -1146,6 +1166,20 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       actionPending = false;
       root.removeAttribute("aria-busy");
     });
+  }, { signal: lifecycle.signal });
+
+  document.addEventListener("pointerdown", event => {
+    const menu = root.querySelector<HTMLDetailsElement>(".sg-room-menu[open]");
+    if (menu && event.target instanceof Node && !menu.contains(event.target)) menu.open = false;
+  }, { signal: lifecycle.signal });
+
+  document.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+    const menu = root.querySelector<HTMLDetailsElement>(".sg-room-menu[open]");
+    if (!menu) return;
+    menu.open = false;
+    menu.querySelector("summary")?.focus({ preventScroll: true });
+    event.preventDefault();
   }, { signal: lifecycle.signal });
 
   const ticker = window.setInterval(updateClock, 1000);

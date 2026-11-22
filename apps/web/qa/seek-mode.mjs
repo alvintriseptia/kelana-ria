@@ -114,6 +114,35 @@ try {
   assert.equal((await view(host, normalCode)).room.now, initialTime);
   await host.screenshot({ path: join(results, "seek-qa-head-start.png") });
 
+  const menu = host.locator('summary[aria-label="Menu permainan"]');
+  const refresh = host.getByRole("button", { name: "Muat ulang", exact: true });
+  const exit = host.getByRole("button", { name: "Keluar ke katalog" });
+  assert.equal(await host.locator(".sg-nav button").count(), 3);
+  assert.equal(await refresh.isVisible(), false);
+  assert.equal(await exit.isVisible(), false);
+  await host.locator("[data-map-ready=true]").waitFor();
+  const canvas = await host.locator(".maplibregl-canvas").elementHandle();
+  await menu.press("Enter");
+  await refresh.waitFor();
+  assert.equal(await exit.isVisible(), true);
+  assert.equal(await host.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+  await host.screenshot({ path: join(results, "seek-more-menu.png") });
+  await host.setViewportSize({ width: 320, height: 700 });
+  const narrowMenu = await exit.boundingBox();
+  assert.ok(narrowMenu.x >= 0 && narrowMenu.x + narrowMenu.width <= 320);
+  await host.setViewportSize(opts.viewport);
+  await refresh.press("Escape");
+  assert.equal(await refresh.isVisible(), false);
+  assert.equal(await menu.evaluate(element => document.activeElement === element), true);
+  await menu.click();
+  await Promise.all([
+    host.waitForResponse(r => r.url().endsWith(`/api/rulebooks/rooms/${code}`) && r.request().method() === "GET"),
+    refresh.click(),
+  ]);
+  await host.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
+  assert.equal(await canvas.evaluate(element => element.isConnected), true);
+  assert.equal(await refresh.isVisible(), false);
+
   const jumpToRelease = await advance(host, "phase-end");
   const seeking = (await view(guest, code)).room;
   assert.equal(seeking.phase, "seeking");
@@ -160,7 +189,11 @@ try {
   assert.equal(next.role, "hider");
   assert.equal(next.turnStartPoint.id, "mrt-blok-a");
   assert.equal(next.releaseAt - next.now, 25 * 60_000);
-  console.log("Hide & Seek QA passed location changes, host-only time jumps, clock isolation, Thermometer, and role swap.");
+  await guest.locator('summary[aria-label="Menu permainan"]').click();
+  await guest.getByRole("button", { name: "Keluar ke katalog" }).click();
+  await guest.getByRole("heading", { name: "Hide & Seek · Rulebook Packs (2–6 Pemain)" }).waitFor();
+  assert.equal(new URL(guest.url()).searchParams.has("room"), false);
+  console.log("Hide & Seek QA passed location changes, time jumps, Thermometer, role swap, and the More menu.");
 } finally {
   await browser?.close();
   await Promise.all([enabled, disabled].map(({ server }) => new Promise(resolve => server.close(resolve))));

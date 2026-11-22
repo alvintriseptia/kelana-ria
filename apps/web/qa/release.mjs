@@ -54,6 +54,12 @@ try {
     await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
   }
 
+  async function refreshSeekRoom(page) {
+    await page.locator(".sg-room-menu summary").click();
+    await page.locator('button[data-action="refresh"]').click();
+    await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
+  }
+
   async function launchFromRoot(page, { players, format, board }) {
     await page.goto(origin, { waitUntil: "networkidle" });
     await page.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
@@ -195,7 +201,7 @@ try {
       await host.page.locator('button[data-map-point="mrt-blok-m"]').press("Enter");
       await clickAndWaitPost(host.page, 'button[data-action="lock-anchor"]');
       now += (board === "jakarta-wide" ? 46 : 26) * 60_000;
-      await guest.page.click('button[data-action="refresh"]');
+      await refreshSeekRoom(guest.page);
       await guest.page.waitForFunction(() => document.body.textContent.includes("Perburuan Makro"));
 
       await Promise.all([
@@ -208,11 +214,11 @@ try {
       await guest.page.screenshot({ path: join(results, `release-${board}-seek-map.png`) });
       await guest.page.locator('button[data-map-point="mrt-blok-m"]').press("Enter");
       await clickAndWaitPost(guest.page, 'button[data-action="trigger-endgame"]');
-      await host.page.click('button[data-action="refresh"]');
+      await refreshSeekRoom(host.page);
       const code = (await host.page.locator('[data-testid="hider-found-code"]').textContent()).trim();
       await guest.page.locator("#rb-found-input").fill(code);
       await clickAndWaitPost(guest.page, 'button[data-action="submit-found-code"]');
-      await host.page.click('button[data-action="refresh"]');
+      await refreshSeekRoom(host.page);
       for (const page of [host.page, guest.page]) {
         await clickAndWaitPost(page, 'button[data-action="regroup"]');
       }
@@ -222,7 +228,7 @@ try {
       await clickAndWaitPost(guest.page, 'button[data-action="lock-anchor"]');
       now += 24 * 60 * 60_000;
       for (const page of [host.page, guest.page]) {
-        await page.click('button[data-action="refresh"]');
+        await refreshSeekRoom(page);
         await page.getByRole("heading", { name: "Hasil permainan" }).waitFor();
       }
       if (board === "jakarta-wide") {

@@ -156,6 +156,12 @@ try {
   await pageG3.click('button[data-action="join-room"]');
   await pageG3.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (3/4)"));
 
+  async function refreshSeekRoom(page) {
+    await page.locator(".sg-room-menu summary").click();
+    await page.locator('button[data-action="refresh"]').click();
+    await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
+  }
+
   async function clickAndWaitPost(page, selector) {
     await Promise.all([
       page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
@@ -182,7 +188,7 @@ try {
   await pageCreator.click('button[data-map-point="mrt-blok-m"]');
   await clickAndWaitPost(pageCreator, 'button[data-action="lock-anchor"]');
   now += 26 * 60_000;
-  await pageG2.click('button[data-action="refresh"]');
+  await refreshSeekRoom(pageG2);
   await pageG2.waitForFunction(() => document.body.textContent.includes("Perburuan Makro"));
   const seekerBodyBeforeEndgame = await pageG2.textContent("body");
   assert.equal(seekerBodyBeforeEndgame.includes("hider-found-code"), false);
@@ -195,7 +201,7 @@ try {
   await radarCard.press("Enter");
   await pageG2.click('button[data-item="rad-1km"]');
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
-  await pageCreator.click('button[data-action="refresh"]');
+  await refreshSeekRoom(pageCreator);
   await pageCreator.click('button[data-answer="no"]');
   assert.equal(await pageCreator.locator('button[data-action="answer-pending"]').isDisabled(), true);
   assert.equal(await pageCreator.locator('[data-correct="false"]').isVisible(), true);
@@ -211,7 +217,7 @@ try {
 
   const snapshot = () => pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
   const initialRadar = (await snapshot()).room.questions[0].overlay;
-  await pageG2.click('button[data-action="refresh"]');
+  await refreshSeekRoom(pageG2);
   await pageG2.locator(".sg-map-result").filter({ hasText: "Radar" }).waitFor();
   await pageG2.click('button[data-panel="ask"]');
   await pageG2.click('button[data-family="thermometer"]');
@@ -228,7 +234,7 @@ try {
   assert.ok(markerB.y + markerB.height < questionPanel.y);
   await pageG2.screenshot({ path: path.join(results, "rulebook-seek-thermometer.png") });
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
-  await pageCreator.click('button[data-action="refresh"]');
+  await refreshSeekRoom(pageCreator);
   await pageCreator.click('button[data-answer="hotter"]');
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
   await clickAndWaitPost(pageCreator, 'button[data-action="choose-draw"]');
@@ -237,13 +243,13 @@ try {
   assert.deepEqual(afterThermometer.questions[0].overlay, initialRadar);
   assert.ok(afterThermometer.candidateStationIds.includes("mrt-blok-m"));
 
-  await pageG2.click('button[data-action="refresh"]');
+  await refreshSeekRoom(pageG2);
   await pageG2.locator(".sg-map-result").filter({ hasText: "Termometer" }).waitFor();
   await pageG2.click('button[data-panel="ask"]');
   await pageG2.click('button[data-family="photo"]');
   await pageG2.click('button[data-item="photo-station"]');
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
-  await pageCreator.click('button[data-action="refresh"]');
+  await refreshSeekRoom(pageCreator);
   await pageCreator.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
   await pageCreator.locator("#sg-clue-photo").setInputFiles({
     name: "test-public-station.png",
@@ -266,7 +272,7 @@ try {
   await pageG2.click('button[data-action="select-station"][data-station="mrt-blok-m"]');
   await clickAndWaitPost(pageG2, 'button[data-action="trigger-endgame"]');
   await pageG2.waitForFunction(() => document.body.textContent.includes("ENDGAME"));
-  await pageCreator.click('button[data-action="refresh"]');
+  await refreshSeekRoom(pageCreator);
   const foundCode = (await pageCreator.textContent('[data-testid="hider-found-code"]')).trim();
   assert.match(foundCode, /^\d{4}$/);
 
@@ -275,7 +281,7 @@ try {
   await pageG2.waitForFunction(() => document.body.textContent.includes("Berkumpul Kembali"));
 
   for (const page of [pageCreator, pageG3, pageG2]) {
-    await page.click('button[data-action="refresh"]');
+    await refreshSeekRoom(page);
     await clickAndWaitPost(page, 'button[data-action="regroup"]');
   }
   await pageG2.locator('.sg-game[data-role="hider"]').waitFor();
