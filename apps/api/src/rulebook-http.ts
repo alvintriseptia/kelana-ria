@@ -20,7 +20,9 @@ const cookieName = "kelana_rulebook";
 
 type Store = ReturnType<typeof rulebookStore>;
 
-export function rulebookHandler(store: Store, now: () => number, secureCookie = false, allowHideSeekQa = false) {
+export function rulebookHandler(
+  store: Store, now: () => number, secureCookie = false, allowHideSeekQa = false, allowSandboxCheckout = false,
+) {
   function resolveQaFix(action: Record<string, unknown>, roomCode: string, cred: string, ts: number): boolean {
     if (!isObject(action.fix) || !("qaLocationId" in action.fix)) return true;
     if (!allowHideSeekQa || typeof action.fix.qaLocationId !== "string") return false;
@@ -40,6 +42,10 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
 
   return async function handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const path = url.pathname;
+    if (request.method === "GET" && path === "/api/rulebooks/catalog") {
+      json(response, 200, { editions: store.listPublicListings(undefined, true), allowSandboxCheckout });
+      return;
+    }
     if (request.method === "GET" && path === "/api/rulebooks") {
       const role = url.searchParams.get("role") ?? "public";
       const rawFormat = url.searchParams.get("format");
@@ -56,7 +62,7 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
         });
         return;
       }
-      json(response, 200, { role: "public", listings, orders: store.listOrders(), allowHideSeekQa });
+      json(response, 200, { role: "public", listings, orders: store.listOrders(), allowHideSeekQa, allowSandboxCheckout });
       return;
     }
 
@@ -132,7 +138,7 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
       if (typeof payload.order_id !== "string") return json(response, 400, { error: "invalid-request" });
       const res = await store.settleVerifiedOrder(
         payload.order_id,
-        `webhook:${payload.order_id}`,
+        undefined,
         payload.hostName ?? "Host",
         payload,
         now(),
@@ -143,6 +149,35 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
 
     const cred = ensureCred(request, response);
     const ts = now();
+
+    if (path === "/api/rulebooks/catalog") {
+      const { type, edition, version, mode, requestId } = body;
+      if (typeof edition !== "string" || !edition || typeof version !== "number" ||
+          !Number.isSafeInteger(version) || version < 1 || (mode !== "solo" && mode !== "group") ||
+          typeof requestId !== "string" || !/^[\w-]{16,80}$/.test(requestId)) {
+        return json(response, 400, { error: "invalid-request" });
+      }
+      if (type === "play") {
+        const result = store.createFreeRoomFromRulebook(edition, version, cred, "Tuan Rumah", ts, false, mode, requestId);
+        return json(response, result.ok ? 200 : 400, result);
+      }
+      if (type !== "buy" && type !== "check-payment" && type !== "simulate-payment") {
+        return json(response, 400, { error: "invalid-request" });
+      }
+      if (!allowSandboxCheckout) return json(response, 403, { error: "checkout-unavailable" });
+      if (type === "buy") {
+        const result = await store.createOrder(cred, edition, version, ts, mode, requestId);
+        return json(response, result.ok ? 200 : 400, result);
+      }
+      const order = store.viewCatalogOrder(cred, edition, version, mode, requestId);
+      if (!order) return json(response, 404, { error: "order-not-found" });
+      if (type === "simulate-payment" && order.paymentMode !== "recorded-sandbox") {
+        return json(response, 400, { error: "simulation-unavailable" });
+      }
+      const settlement = await store.settleVerifiedOrder(order.orderId, cred, "Tuan Rumah",
+        type === "simulate-payment" ? { transaction_status: "settlement", status_code: "200" } : undefined, ts);
+      return json(response, settlement.ok ? 200 : 400, settlement);
+    }
 
     if (path === "/api/rulebooks/question-preview") {
       const { roomCode, family, itemId } = body;
@@ -224,11 +259,13 @@ export function rulebookHandler(store: Store, now: () => number, secureCookie = 
         return;
       }
       if (type === "create-order") {
+        if (!allowSandboxCheckout) return json(response, 403, { error: "checkout-unavailable" });
         const res = await store.createOrder(cred, String(body.packId ?? ""), Number(body.version ?? 1), ts);
         json(response, res.ok ? 200 : 400, res);
         return;
       }
       if (type === "verify-settlement") {
+        if (!allowSandboxCheckout) return json(response, 403, { error: "checkout-unavailable" });
         const res = await store.settleVerifiedOrder(
           String(body.orderId ?? ""),
           cred,

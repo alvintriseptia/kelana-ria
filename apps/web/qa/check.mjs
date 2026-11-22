@@ -5,6 +5,8 @@ import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import { once } from 'node:events';
+import { createSoloServer } from '../../api/dist/index.js';
 import { preview } from 'vite';
 import { exerciseChooser } from './browser.mjs';
 import { budgets, measure, phoneOptions, profile } from './profile.mjs';
@@ -35,7 +37,13 @@ const report = {
   buildSha256: await buildDigest(),
   profile, budgets, runs: [],
 };
-const server = await preview({ root, preview: { host: '127.0.0.1', port: 0, open: false } });
+const api = createSoloServer({ databasePath: ':memory:' });
+api.listen(0, '127.0.0.1');
+await once(api, 'listening');
+const server = await preview({ root, preview: {
+  host: '127.0.0.1', port: 0, open: false,
+  proxy: { '/api': `http://127.0.0.1:${api.address().port}` },
+} });
 let browser;
 try {
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
@@ -64,4 +72,5 @@ try {
   await writeFile(join(results, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   await browser?.close();
   await server.close();
+  await new Promise(resolve => api.close(resolve));
 }

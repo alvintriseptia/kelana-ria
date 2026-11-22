@@ -5,6 +5,7 @@ import type {
   ClaimLandmarkState,
   ClaimSanitizedLeafChallenge,
   GeoCoordinate,
+  RulebookPlayMode,
 } from "@kelana-ria/contracts";
 import type { BoardMapHandle, BoardMapUpdateOptions } from "./board-map";
 import { getLocation } from "./device-location";
@@ -54,7 +55,10 @@ type ClaimRoomPayload = {
     startPoint: GeoCoordinate & { id: string; name: string };
     landmarks: PublicLandmark[];
   };
-  pass: { roomCode: string; packId: string; version: number; maxPlayers: number; paid: boolean };
+  pass: {
+    roomCode: string; packId: string; version: number; maxPlayers: number; paid: boolean;
+    minPlayers?: number; mode?: RulebookPlayMode;
+  };
 };
 
 const phaseLabels: Record<ClaimEngineRoomView["phase"], string> = {
@@ -119,6 +123,7 @@ function photoPicker(target: string): string {
 }
 
 export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): () => void {
+  let allowSandboxCheckout = false;
   let listings: ClaimPublicListing[] = [];
   let roomCode = new URLSearchParams(location.search).get("room") ?? "";
   let live: ClaimRoomPayload | null = null;
@@ -186,7 +191,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   }
 
   async function loadCatalog() {
-    const data = await apiJson<{ listings?: ClaimPublicListing[] }>("/api/rulebooks?format=claim-the-city");
+    const data = await apiJson<{ listings?: ClaimPublicListing[]; allowSandboxCheckout?: boolean }>("/api/rulebooks?format=claim-the-city");
+    allowSandboxCheckout = data.allowSandboxCheckout === true;
     listings = (data.listings ?? []).filter((l) => l.format === "claim-the-city");
     const params = new URLSearchParams(location.search);
     const launchPackId = params.get("pack");
@@ -261,6 +267,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       "cooldown": "Tunggu hingga percobaan ulang tersedia.",
       "wrong-answer": "Jawaban kurang tepat.",
       "target-curse-limit-reached": "Lawan ini sudah mencapai batas sabotase.",
+      "not-enough-players": "Undang pemain lagi sebelum memulai permainan grup.",
+      "players-not-ready": "Tunggu sampai semua pemain siap sebelum memulai.",
     };
     if (res.error) {
       errorMsg = (errors[res.error] ?? res.error) +
@@ -457,7 +465,9 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
               ${
                 item.priceIdr === 0
                   ? `<button type="button" class="primary" data-action="start-free" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Buat Ruang Gratis</button>`
-                  : `<button type="button" class="primary" data-action="buy-pack" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Beli Pass Sesi (${escapeText(idr(item.priceIdr))} · Test Payment)</button>`
+                  : allowSandboxCheckout
+                    ? `<button type="button" class="primary" data-action="buy-pack" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Beli Pass Sesi (${escapeText(idr(item.priceIdr))} · Test Payment)</button>`
+                    : "<p>Edisi berbayar belum tersedia pada uji publik ini.</p>"
               }
             </div>
           </article>`,
@@ -647,6 +657,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   function renderLobby(payload: ClaimRoomPayload): string {
     const { room, pass } = payload;
     const invite = `${location.origin}/?play=rulebook-claim&room=${encodeURIComponent(room.code)}`;
+    const enoughPlayers = !pass.minPlayers || room.seats.length >= pass.minPlayers;
+    const isHost = room.seats.some(seat => seat.seatId === room.seatId && seat.isHost);
     return `<section class="rb-shell" aria-label="Ruang Claim the City">
       <div class="rb-card">
         <div class="rb-actions cg-lobby-head">
@@ -654,6 +666,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
             <div class="rb-badges">
               <span class="rb-badge">Kode: ${escapeText(room.code)}</span>
               <span class="rb-badge">${phaseLabels[room.phase]}</span>
+              ${pass.mode ? `<span class="rb-badge">${pass.mode === "solo" ? "Solo" : "Grup"}</span>` : ""}
               ${pass.paid ? '<span class="rb-badge rb-badge-paid">Pass Berbayar</span>' : ""}
             </div>
             <h2>${escapeText(room.packMeta.title)}</h2>
@@ -663,15 +676,16 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
         <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
-        <p><a href="${escapeText(invite)}" data-testid="invite-link">Tautan undangan ruang ${escapeText(room.code)}</a></p>
+        ${pass.mode !== "solo" ? `<p><a href="${escapeText(invite)}" data-testid="invite-link">Tautan undangan ruang ${escapeText(room.code)}</a></p>` : ""}
         <ul class="rb-list">
           ${room.seats.map(seat => `<li><strong>${escapeText(seat.name)}</strong>${seat.isHost ? " · Host" : ""} · ${seat.ready ? "Siap" : "Belum siap"}</li>`).join("")}
         </ul>
         <div class="rb-actions">
           <button type="button" class="secondary" data-action="sim-start-checkin">${demoLocation ? "Simulasikan Check-in Titik Awal" : "Check-in Titik Awal"}</button>
           <button type="button" class="primary" data-action="mark-ready">Tandai Siap</button>
-          ${room.seats.some(seat => seat.seatId === room.seatId && seat.isHost) ? '<button type="button" class="primary" data-action="start-match">Mulai Permainan</button>' : ""}
+          ${isHost ? `<button type="button" class="primary" data-action="start-match" ${enoughPlayers ? "" : "disabled"}>Mulai Permainan</button>` : ""}
         </div>
+        ${!enoughPlayers ? `<p>Undang pemain hingga ruang berisi setidaknya ${pass.minPlayers} pemain.</p>` : ""}
       </div>
     </section>`;
   }
@@ -962,6 +976,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       return;
     }
     if (nav === "catalog") {
+      if (live?.pass.mode) return onBack();
       live = null;
       roomCode = "";
       selectedId = selectedCardId = selectedRivalId = challengeHandId = "";

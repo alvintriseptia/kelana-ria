@@ -4,6 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
+import { openEdition } from "./catalog.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -17,6 +18,7 @@ const server = createSoloServer({
   staticDir: distDir,
   midtrans: createRecordedMidtransAdapter(),
   allowSimulatedLocation: true,
+  allowRulebookSandboxCheckout: true,
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -32,10 +34,8 @@ try {
   const ctxRoot = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageRoot = await ctxRoot.newPage();
   await pageRoot.goto(baseUrl, { waitUntil: "networkidle" });
-  await pageRoot.locator("#chooser").getByText("Grup (2–6)", { exact: true }).click();
-  await pageRoot.locator("label").filter({ has: pageRoot.locator('input[value="hide-and-seek"]') }).click();
-  await pageRoot.getByRole("button", { name: "Lihat ringkasan" }).click();
-  await pageRoot.getByRole("button", { name: "Main Hide & Seek", exact: true }).click();
+  await openEdition(pageRoot, "hide-and-seek");
+  await pageRoot.getByRole("button", { name: "Main Grup", exact: true }).click();
   await pageRoot.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
   const rootInvite = await pageRoot.getAttribute('[data-testid="invite-link"]', "href");
   assert.ok(rootInvite && rootInvite.includes("room=RB-"), "Root launch should create Hide & Seek room with invite link");
@@ -46,9 +46,8 @@ try {
   const pageCreator = await ctxCreator.newPage();
   pageCreator.setDefaultTimeout(20_000);
   await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
-  await pageCreator.locator("#chooser").getByText("Grup (2–6)", { exact: true }).click();
-  await pageCreator.locator("label").filter({ has: pageCreator.locator('input[value="hide-and-seek"]') }).click();
   await pageCreator.click("#chooser-studio");
+  await pageCreator.locator('[data-format="hide-and-seek"]').click();
   await pageCreator.waitForSelector('button[data-action="clone"]');
   await pageCreator.click('button[data-action="clone"]');
   await pageCreator.waitForSelector("#st-draft-select");

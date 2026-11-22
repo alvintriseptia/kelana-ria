@@ -77,7 +77,7 @@ try {
   await host.page.goto(origin + explicitSolo);
   await host.page.waitForFunction(() => !new URLSearchParams(location.search).has("play"));
   await heading(host, "Pilih permainan").waitFor();
-  assert.equal(await host.page.locator('input[value="claim-the-city"]').isChecked(), true);
+  await host.page.getByRole("heading", { name: "Claim the City", exact: true }).waitFor();
   const explicitUnsupportedBoard = "/?play=hide-and-seek&players=2&format=hide-and-seek&board=bandung";
   await host.page.goto(origin + explicitUnsupportedBoard);
   await host.page.waitForFunction(() => !new URLSearchParams(location.search).has("play"));

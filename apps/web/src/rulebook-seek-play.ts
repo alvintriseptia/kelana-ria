@@ -46,7 +46,7 @@ type RoomPayload = {
   publicBoard: SeekPublicBoard;
   qa?: true;
   deck: SeekDeckPublicView | SeekDeckHiderView;
-  pass: { roomCode: string; packId: string; version: number; maxPlayers: number; paid: boolean };
+  pass: { roomCode: string; packId: string; version: number; maxPlayers: number; paid: boolean; mode?: "group" };
 };
 
 type CapturedLocation = LocationFix & { qaLocationId?: string };
@@ -96,6 +96,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let live: RoomPayload | null = null;
   let activeOrderId: string | null = null;
   let allowHideSeekQa = false;
+  let allowSandboxCheckout = false;
   let qaStationId = "";
   let qaAdvanceRetry: { roomCode: string; step: string; expectedDeadline: number | null; actionId: string } | undefined;
   let statusMsg = "";
@@ -294,8 +295,9 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   }
 
   async function loadCatalog() {
-    const data = await apiJson<{ listings?: PublicListing[]; allowHideSeekQa?: boolean }>("/api/rulebooks?format=hide-and-seek");
+    const data = await apiJson<{ listings?: PublicListing[]; allowHideSeekQa?: boolean; allowSandboxCheckout?: boolean }>("/api/rulebooks?format=hide-and-seek");
     allowHideSeekQa = data.allowHideSeekQa === true;
+    allowSandboxCheckout = data.allowSandboxCheckout === true;
     listings = (data.listings ?? []).filter((l) => l.format === "hide-and-seek");
     const params = new URLSearchParams(location.search);
     const launchPackId = params.get("pack");
@@ -578,7 +580,9 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               ${
                 item.priceIdr === 0
                   ? `<button type="button" class="primary" data-action="start-free" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Buat Ruang Gratis</button>`
-                  : `<button type="button" class="primary" data-action="buy-pack" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Beli Pass Sesi (${escapeText(idr(item.priceIdr))} · Test Payment)</button>`
+                  : allowSandboxCheckout
+                    ? `<button type="button" class="primary" data-action="buy-pack" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Beli Pass Sesi (${escapeText(idr(item.priceIdr))} · Test Payment)</button>`
+                    : "<p>Edisi berbayar belum tersedia pada uji publik ini.</p>"
               }
             </div>
             ${allowHideSeekQa && item.priceIdr === 0
@@ -1071,6 +1075,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       return;
     }
     if (nav === "catalog") {
+      if (live?.pass.mode) return onBack();
       live = null;
       drawKey = "";
       pendingId = "";

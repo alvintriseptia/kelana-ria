@@ -271,3 +271,4 @@ export type HideSeekRulebookValidationResult = {
   warnings: RulebookValidationIssue[];
   summary: HideSeekRulebookValidationSummary;
 };
+export type RulebookPlayMode = "solo" | "group";

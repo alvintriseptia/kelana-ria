@@ -1,85 +1,31 @@
-import type { GameConfiguration } from "@kelana-ria/contracts";
+import type { RulebookFormat } from "@kelana-ria/contracts";
 import copy from "./locales/id.json" with { type: "json" };
+import { mountRulebookCatalog } from "./rulebook-catalog";
 
 export type { GameConfiguration } from "@kelana-ria/contracts";
 
-const form = document.querySelector<HTMLFormElement>("#chooser")!;
-const board = document.querySelector<HTMLSelectElement>("#board")!;
-const hide = form.querySelector<HTMLInputElement>('[value="hide-and-seek"]')!;
-const claim = form.querySelector<HTMLInputElement>('[value="claim-the-city"]')!;
-const solo = form.querySelector<HTMLInputElement>('[value="1"]')!;
-const duo = form.querySelector<HTMLInputElement>('[value="2"]')!;
-const summary = document.querySelector<HTMLDialogElement>("#summary")!;
 const guide = document.querySelector<HTMLDialogElement>("#guide")!;
-const feedback = document.getElementById("feedback")!;
 const setup = document.getElementById("setup")!;
 const play = document.getElementById("play")!;
-const playButton = document.querySelector<HTMLButtonElement>("#summary-play")!;
-const packsButton = document.querySelector<HTMLButtonElement>("#summary-packs")!;
-const studioButton = document.querySelector<HTMLButtonElement>("#chooser-studio")!;
 let unmountPlay: (() => void) | undefined;
 let navigation = 0;
 let routeEvents = new AbortController();
+let guideHandle: { setTrack: (track: RulebookFormat | "safety") => void } | undefined;
 
-function selection(): GameConfiguration {
-  const area = board.value === "jakarta-wide" ? "jakarta-wide" : "compact";
-  if (duo.checked && hide.checked) return { board: area, players: 2, format: "hide-and-seek" };
-  return { board: area, players: duo.checked ? 2 : 1, format: "claim-the-city" };
-}
-
-function update(writeUrl = false) {
-  feedback.classList.add("sr-only");
-  hide.disabled = solo.checked;
-  if (hide.disabled && hide.checked) {
-    claim.checked = true;
-    feedback.textContent = "Hide & Seek perlu dua pemain. Claim the City dipilih untuk solo.";
+function openGuide(format: RulebookFormat) {
+  guide.showModal();
+  if (guideHandle) {
+    guideHandle.setTrack(format);
   } else {
-    feedback.textContent = "";
-  }
-
-  const game = selection();
-  const wide = game.board === "jakarta-wide";
-  const seeking = game.format === "hide-and-seek";
-  const goal = game.players === 1
-    ? `Kunci ${wide ? 5 : 4} landmark di setidaknya ${wide ? 3 : 2} zona sebelum waktu habis.`
-    : "Kuasai zona terbanyak dengan Klaim–Kunci–Rebut dan kartu taktis.";
-  const duration = seeking
-    ? `Hingga ${wide ? 6 : 3} jam + waktu berkumpul kembali`
-    : `${wide ? 150 : 90} menit`;
-  document.getElementById("extent")!.textContent = wide
-    ? "Jangkauan lebih luas hingga Manggarai dan Jakarta Kota."
-    : "Sekitar Blok M, Senayan, dan Palmerah.";
-  document.getElementById("claim-objective")!.textContent = goal;
-  document.getElementById("duration")!.textContent = duration;
-  document.getElementById("summary-format")!.textContent = seeking ? "Hide & Seek" : "Claim the City";
-  document.getElementById("summary-goal")!.textContent = seeking
-    ? "Bergantian sembunyi dan mencari dengan zona sembunyi, dek kartu & Endgame. Waktu sembunyi terlama menang." : goal;
-  document.getElementById("summary-time")!.textContent = duration;
-  document.getElementById("summary-players")!.textContent = game.players === 1 ? "Solo" : "Grup (2–6)";
-  document.getElementById("summary-board")!.textContent = board.selectedOptions[0]!.textContent;
-  playButton.hidden = false;
-  packsButton.hidden = false;
-  playButton.textContent = seeking ? "Main Hide & Seek" : game.players === 2 ? "Main Grup (2–6)" : "Main Solo";
-  document.getElementById("summary-travel")!.hidden = false;
-  document.getElementById("summary-note")!.textContent =
-    "Gratis dimainkan di Jakarta dengan GPS perangkat.";
-  if (writeUrl) {
-    const url = new URL(location.href);
-    url.searchParams.set("players", String(game.players));
-    url.searchParams.set("format", game.format);
-    url.searchParams.set("board", game.board);
-    history.replaceState(history.state, "", url);
+    void import("./interactive-guide").then(({ mountInteractiveGuide }) => {
+      guideHandle = mountInteractiveGuide(guide, format);
+    });
   }
 }
 
-function restoreSelection() {
-  const params = new URLSearchParams(location.search);
-  duo.checked = params.get("players") === "2";
-  solo.checked = !duo.checked;
-  hide.checked = params.get("format") === "hide-and-seek";
-  claim.checked = !hide.checked;
-  board.value = params.get("board") === "jakarta-wide" ? "jakarta-wide" : "compact";
-  update(["format", "players", "board"].some(key => params.has(key)));
+function navigateCatalog(href: string) {
+  history.pushState(null, "", href);
+  void showRoute(true);
 }
 
 function returnToSetup() {
@@ -87,18 +33,12 @@ function returnToSetup() {
     history.back();
     return;
   }
-  const url = new URL(location.href);
-  url.searchParams.delete("play");
-  url.searchParams.delete("room");
-  url.searchParams.delete("pack");
-  url.searchParams.delete("launch");
-  history.replaceState(null, "", url);
-  void showRoute();
+  history.replaceState(null, "", "/");
+  void showRoute(true);
 }
 
-async function showRoute() {
+async function showRoute(focusCatalog = false) {
   const currentNavigation = ++navigation;
-  const wasPlaying = !play.hidden;
   routeEvents.abort();
   routeEvents = new AbortController();
   unmountPlay?.();
@@ -123,7 +63,6 @@ async function showRoute() {
     params.set("board", rawBoard === "jakarta-wide" ? "jakarta-wide" : "compact");
     history.replaceState(history.state, "", url);
   }
-  restoreSelection();
   const mode = params.get("play");
   const seeking = mode === "hide-and-seek";
   const rulebookSeek = mode === "rulebook-seek";
@@ -140,16 +79,26 @@ async function showRoute() {
   setup.hidden = playing;
   play.hidden = !playing;
   if (!playing) {
-    document.title = "Pilih permainan · Kelana Ria";
     play.replaceChildren();
-    if (unsupportedSeek) {
-      feedback.textContent = "Hide & Seek tersedia untuk dua pemain di Jakarta (Compact) atau Jakarta (Wide). Pilih pengaturan itu untuk bermain.";
-      feedback.classList.remove("sr-only");
-    }
-    if (wasPlaying) form.querySelector<HTMLButtonElement>('button[type="submit"]')?.focus();
+    unmountPlay = mountRulebookCatalog(setup, {
+      navigate: navigateCatalog,
+      openRoom: (format, code) => {
+        const query = new URLSearchParams({
+          play: format === "hide-and-seek" ? "rulebook-seek" : "rulebook-claim",
+          room: code,
+        });
+        history.pushState({ fromCatalog: true }, "", `/?${query}`);
+        void showRoute();
+      },
+      openGuide,
+      openStudio: () => {
+        history.pushState({ fromChooser: true }, "", "/?play=rulebook-studio&format=claim-the-city");
+        void showRoute();
+      },
+    }, focusCatalog);
     return;
   }
-  if (summary.open) summary.close();
+  setup.replaceChildren();
   const format = seeking || rulebookSeek ? "Hide & Seek" : "Claim the City";
   const boardLabel = params.get("board") === "jakarta-wide" ? "Jakarta (Wide)" : "Jakarta (Compact)";
   document.title =
@@ -194,65 +143,10 @@ async function showRoute() {
 for (const [key, value] of Object.entries(copy)) {
   document.querySelectorAll<HTMLElement>(`[data-copy="${key}"]`).forEach(el => { el.textContent = value; });
 }
-form.addEventListener("change", () => update(true));
-board.addEventListener("change", () => update(true));
-form.addEventListener("submit", event => {
-  event.preventDefault();
-  summary.showModal();
-});
-let guideHandle:
-  | { setTrack: (track: "hide-and-seek" | "claim-the-city" | "safety") => void }
-  | undefined;
 document.getElementById("guide-open")!.addEventListener("click", () => {
-  const track = selection().format;
-  guide.showModal();
-  if (guideHandle) {
-    guideHandle.setTrack(track);
-  } else {
-    void import("./interactive-guide").then(({ mountInteractiveGuide }) => {
-      guideHandle = mountInteractiveGuide(guide, track);
-    });
-  }
-});
-playButton.addEventListener("click", () => {
-  const url = new URL(location.href);
-  const game = selection();
-  const wide = game.board === "jakarta-wide";
-  const seeking = game.format === "hide-and-seek";
-  const packId = seeking
-    ? wide
-      ? "official-jakarta-wide-seek"
-      : "official-jakarta-compact-seek"
-    : wide
-      ? "official-jakarta-wide-claim"
-      : "official-jakarta-compact-claim";
-  url.searchParams.set("play", seeking ? "rulebook-seek" : "rulebook-claim");
-  url.searchParams.set("pack", packId);
-  url.searchParams.set("launch", "1");
-  url.searchParams.delete("room");
-  history.pushState({ fromChooser: true }, "", url);
-  void showRoute();
-});
-packsButton.addEventListener("click", () => {
-  const url = new URL(location.href);
-  const game = selection();
-  url.searchParams.set("play", game.format === "hide-and-seek" ? "rulebook-seek" : "rulebook-claim");
-  url.searchParams.delete("pack");
-  url.searchParams.delete("launch");
-  url.searchParams.delete("room");
-  history.pushState({ fromChooser: true }, "", url);
-  void showRoute();
-});
-studioButton.addEventListener("click", () => {
-  const url = new URL(location.href);
-  const game = selection();
-  url.searchParams.set("play", "rulebook-studio");
-  url.searchParams.set("format", game.format);
-  url.searchParams.delete("pack");
-  url.searchParams.delete("launch");
-  url.searchParams.delete("room");
-  history.pushState({ fromChooser: true }, "", url);
-  void showRoute();
+  const { play: current, format } = Object.fromEntries(new URLSearchParams(location.search));
+  openGuide(current === "hide-and-seek" || current === "rulebook-seek" || format === "hide-and-seek"
+    ? "hide-and-seek" : "claim-the-city");
 });
 window.addEventListener("popstate", () => void showRoute());
 void showRoute();

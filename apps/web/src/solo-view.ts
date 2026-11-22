@@ -1,10 +1,7 @@
 import type { SoloCheckpoint, SoloPoint, SoloSession } from "@kelana-ria/contracts";
 
-export function escapeText(value: string) {
-  return value.replace(/[&<>"']/g, character => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
-  })[character]!);
-}
+import { escapeText } from "./escape-text";
+export { escapeText } from "./escape-text";
 
 const jakartaTime = new Intl.DateTimeFormat("id-ID", {
   timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,

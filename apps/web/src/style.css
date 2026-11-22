@@ -86,10 +86,6 @@ dialog::backdrop { background: rgb(11 33 26 / 62%); }
 .dialog-body p { margin: 9px 0 16px; }
 .dialog-body a { color: var(--ink); text-underline-offset: .16em; }
 .dialog-body .credit, .preview-note { border-top: 1px dashed var(--line); padding-top: 14px; font-size: .9rem; }
-#summary-play { margin-bottom: 10px; }
-#summary-play[hidden], #summary-packs[hidden] { display: none; }
-#chooser-studio, #summary-packs { width: 100%; margin-top: 10px; }
-#summary-packs { margin-bottom: 10px; }
 dl { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; padding: 12px 0; border-block: 1px dashed var(--line); }
 dd { margin: 0; font-weight: 650; }
 @media (max-width: 700px) {
