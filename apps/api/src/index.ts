@@ -133,6 +133,32 @@ export {
   validateHideSeekRulebook,
 } from "./seek-engine/rulebook-validator.js";
 export {
+  evaluateMatching,
+  evaluateMeasuring,
+  evaluateObjectiveQuestion,
+  evaluateRadar,
+  evaluateTentacles,
+  evaluateThermometer,
+  findNearestStation,
+  isInsideHidingZone,
+  verifyGpsAtPoint,
+  verifyGpsFreshAndAccurate,
+} from "./seek-engine/geo-evaluator.js";
+export {
+  activeHiderSeatId,
+  applySeekEngineAction,
+  cancelPendingQuestionForVeto,
+  createSeekEngineMatch,
+  expireSeekEngineMatch,
+  findSeekEngineSeat,
+  joinSeekEngineMatch,
+  randomizePendingQuestion,
+  recordTurnScoreAdjustment,
+  startMoveZoneRelocation,
+  viewSeekEngineMatch,
+  type SeekEngineMatch,
+} from "./seek-engine/seek-engine.js";
+export {
   isFreshSoloEdition,
   prepareSoloFixture,
   toSoloCandidate,
