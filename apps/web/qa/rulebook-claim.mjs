@@ -129,18 +129,31 @@ try {
   await ctxP2.close();
   await ctxP3.close();
 
-  // 3. Creator opens unified Studio directly from /, clones Official Claim pack, publishes, buys via Midtrans
+  // 3. Creator opens unified Studio directly from /, clones Official Claim pack, walks 4-step stepper, publishes, buys via Midtrans
   const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageCreator = await ctxCreator.newPage();
   await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
   await pageCreator.click("#chooser-studio");
   await pageCreator.waitForSelector('button[data-action="clone"]');
   await clickAndWaitPost(pageCreator, 'button[data-action="clone"]');
-  await pageCreator.waitForSelector("#ed-claim-photo-title");
-  await pageCreator.fill("#ed-claim-photo-title", "Foto Mural Senopati");
+  await pageCreator.waitForSelector("#st-draft-select");
+
+  // Step 2: rename first landmark & save
+  await pageCreator.click('button[data-step="2"]');
+  await pageCreator.waitForSelector("#ed-claim-landmark-name");
   await pageCreator.fill("#ed-claim-landmark-name", "Taman Literasi Senopati");
   await clickAndWaitPost(pageCreator, 'button[data-action="save-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
+
+  // Step 3: add custom photo_proof challenge & save
+  await pageCreator.click('button[data-step="3"]');
+  await pageCreator.waitForSelector("#ed-claim-photo-title");
+  await pageCreator.fill("#ed-claim-photo-title", "Foto Mural Senopati");
+  await clickAndWaitPost(pageCreator, 'button[data-action="save-draft"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
+
+  // Step 4: dry-run & submit -> Reviewer publish
+  await pageCreator.click('button[data-step="4"]');
   await pageCreator.click('button[data-action="dry-run"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Dry-Run OK"));
   await clickAndWaitPost(pageCreator, 'button[data-action="submit-draft"]');
