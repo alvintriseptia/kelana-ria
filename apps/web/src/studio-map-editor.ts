@@ -357,6 +357,7 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
         btn.classList.add(...classes);
         btn.textContent = item.label;
         btn.dataset.mapPoint = item.target.id;
+        btn.dataset.studioKind = item.target.kind;
         btn.setAttribute("aria-label", item.label);
         const entry: MarkerEntry = {
           marker: new maplibregl.Marker({ element: btn }).setLngLat([item.coord.longitude, item.coord.latitude]).addTo(map),

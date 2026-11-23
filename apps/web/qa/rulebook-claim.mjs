@@ -248,7 +248,7 @@ try {
   await pageCreator.waitForSelector('[data-testid="studio-map-host"]');
   await pageCreator.waitForSelector("#ed-claim-landmark-name");
   await pageCreator.fill("#ed-claim-landmark-name", "Taman Literasi Senopati");
-  await clickAndWaitPost(pageCreator, 'button[data-action="save-draft"]');
+  await clickAndWaitPost(pageCreator, 'button[data-map-action="apply-selected"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
   await pageCreator.click('button[data-map-tab="secondary"]');
   await pageCreator.fill("#ed-new-zone-id", "senopati-baru");

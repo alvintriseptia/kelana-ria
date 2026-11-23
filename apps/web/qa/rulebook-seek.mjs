@@ -59,7 +59,7 @@ try {
   await pageCreator.waitForSelector('[data-testid="studio-map-host"]');
   await pageCreator.waitForSelector("#ed-station-name");
   await pageCreator.fill("#ed-station-name", "Stasiun Blok M BCA (Edisi Kopi)");
-  await pageCreator.click('button[data-action="save-draft"]');
+  await pageCreator.click('button[data-map-action="apply-selected"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
   await pageCreator.click('button[data-map-action="add-station"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Stasiun Baru"));
