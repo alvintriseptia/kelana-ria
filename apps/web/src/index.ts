@@ -78,6 +78,11 @@ async function showRoute(focusCatalog = false) {
     rulebookSeek ||
     rulebookClaim ||
     rulebookStudio;
+  if (!playing && params.has("play")) {
+    params.delete("play");
+    params.delete("room");
+    history.replaceState(history.state, "", url);
+  }
   setup.hidden = playing;
   play.hidden = !playing;
   if (!playing) {
@@ -112,16 +117,13 @@ async function showRoute(focusCatalog = false) {
       : rulebookStudio
         ? "Studio Rulebook · Kelana Ria"
         : `${format} · Kelana Ria`;
+  const hasOwnShell = rulebookStudio || rulebookSeek || rulebookClaim;
   const heading = mode === "creator-packs"
     ? '<h1>Paket Kreator Jakarta</h1><p class="intro">Jakarta (Compact) · Claim the City · Tinjauan &amp; Katalog</p>'
-    : rulebookStudio
-      ? '<h1>Studio Kreator</h1>'
-      : rulebookSeek
-        ? '<h1 lang="en">Hide &amp; Seek · Rulebook</h1><p class="intro">2–6 Pemain · Zona Sembunyi, Endgame &amp; Dek Kartu</p>'
-        : rulebookClaim
-          ? '<h1 lang="en">Claim the City · Rulebook</h1><p class="intro">1–6 Pemain · Klaim–Kunci–Rebut &amp; Dek Taktis</p>'
-          : `<h1 lang="en">${format}</h1><p class="intro">${boardLabel} · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Gratis</p>`;
-  play.innerHTML = `${heading}<p role="status">Membuka permainan…</p>`;
+    : hasOwnShell
+      ? ""
+      : `<h1 lang="en">${format}</h1><p class="intro">${boardLabel} · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Gratis</p>`;
+  play.innerHTML = `${heading}<p class="catalog-loading" role="status">Membuka permainan…</p>`;
   try {
     const mount = seeking ? (await import("./seek-play")).mountSeekPlay
       : rulebookSeek ? (await import("./rulebook-seek-play")).mountRulebookSeekPlay
@@ -133,7 +135,8 @@ async function showRoute(focusCatalog = false) {
     if (currentNavigation === navigation) unmountPlay = mount(play, returnToSetup);
   } catch {
     if (currentNavigation !== navigation) return;
-    play.innerHTML = `${heading}
+    const fallbackHeading = heading || `<h1>${rulebookStudio ? "Studio Kreator" : format}</h1>`;
+    play.innerHTML = `${fallbackHeading}
       <p class="intro" role="alert">Permainan belum bisa dibuka. Periksa koneksi lalu coba lagi.</p>
       <button id="play-reload" class="secondary" type="button">Coba lagi</button>
       <button id="play-back" class="secondary" type="button">Kembali ke pilihan</button>`;
