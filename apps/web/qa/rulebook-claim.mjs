@@ -11,6 +11,9 @@ const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
 const results = path.join(root, "qa-results");
 mkdirSync(results, { recursive: true });
+const recordVideo = !process.env.CHROMIUM_PATH || process.env.RECORD_GAME_MOTION
+  ? { dir: path.join(results, ".claim-recordings"), size: { width: 390, height: 844 } }
+  : undefined;
 
 let now = 1_800_000_000_000;
 const server = createSoloServer({
@@ -97,6 +100,8 @@ try {
   await pageSolo.fill("#claim-input-answer", "2");
   await clickAndWaitPost(pageSolo, 'button[data-action="submit-input"]');
   await pageSolo.waitForFunction(() => document.body.textContent.includes("1/4 terkunci"));
+  await pageSolo.locator('[data-map-point="m-bloc"][data-game-motion^="lock:"]').waitFor();
+  await pageSolo.locator('[data-panel="cards"][data-game-motion^="update:"]').waitFor();
   assert.equal(
     await claimCanvas.evaluate((el) => el.isConnected && document.querySelector("#rb-claim-map-host .maplibregl-canvas") === el),
     true,
@@ -114,6 +119,8 @@ try {
     await selectLandmark(pageSolo, target);
     assert.equal(await play.getAttribute("data-landmark"), target);
     assert.equal(await play.isEnabled(), true);
+    await clickAndWaitPost(pageSolo, '[data-action="play-card"]');
+    await pageSolo.locator(`[data-map-point="${target}"][data-game-motion^="role:"]`).waitFor();
   }
   await pageSolo.getByRole("button", { name: "Tantangan", exact: true }).click();
 
@@ -147,7 +154,7 @@ try {
   await ctxSolo.close();
 
   // 2. 3-player Claim the City FFA launched directly from / + invite link join
-  const ctxP1 = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ctxP1 = await browser.newContext({ viewport: { width: 390, height: 844 }, recordVideo });
   const pageP1 = await ctxP1.newPage();
   await pageP1.goto(baseUrl, { waitUntil: "networkidle" });
   await openEdition(pageP1, "claim-the-city");
@@ -204,12 +211,17 @@ try {
   await pageP2.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
   await checkIn(pageP2, "taman-literasi");
   await pageP2.waitForSelector('button[data-action="submit-mcq"]');
+  await pageP2.emulateMedia({ reducedMotion: "reduce" });
   await clickAndWaitPost(pageP2, 'button[data-action="submit-mcq"]');
   await pageP2.waitForFunction(() =>
     document.querySelector('.cg-selected[data-landmark-id="taman-literasi"]')?.textContent?.includes("Terkunci"),
   );
   const stealNotice = pageP1.locator('[data-activity-message][data-notice-kind="steal"]');
   await stealNotice.waitFor();
+  const animatedSteal = pageP1.locator('[data-map-point="taman-literasi"][data-game-motion^="steal:"]');
+  await animatedSteal.waitFor({ state: "attached" });
+  await pageP1.locator('[data-map-point="zone:blok-m"][data-game-motion^="role:"]').waitFor({ state: "attached" });
+  assert.equal(await pageP2.locator('[data-map-point="taman-literasi"][data-game-motion^="steal:"]').count(), 0);
   assert.match(await stealNotice.innerText(), /berpindah tim.*Penguasaan zona berubah/);
   assert.equal(await pageP2.locator('[data-activity-message][data-notice-kind="steal"]:visible').count(), 0);
   await ctxP3.setOffline(false);
@@ -227,6 +239,7 @@ try {
   await pageP1.reload();
   await pageP1.locator(".cg-game").waitFor();
   assert.equal(await stealNotice.isVisible(), false);
+  assert.equal(await animatedSteal.count(), 0);
   await pageP3.reload();
   await pageP3.getByLabel("Lainnya").click();
   await pageP3.getByRole("button", { name: "Aktivitas terbaru" }).click();
@@ -264,7 +277,12 @@ try {
   await pageP2.getByRole("heading", { name: "Pemenang · Penantang 2" }).waitFor();
 
   // 2b. Community recap sharing: private by default -> visitor denied -> preview & publish with alias -> visitor views public recap & edition list -> unshare keeps private recap intact
+  const claimVideo = pageP1.video();
   await ctxP1.close();
+  if (claimVideo) {
+    await claimVideo.saveAs(path.join(results, "rulebook-claim-map-playback.webm"));
+    await claimVideo.delete();
+  }
   await ctxP3.close();
   const ctxVisitor = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageVisitor = await ctxVisitor.newPage();

@@ -28,7 +28,11 @@ export function renderRoomActivity(feed: RoomActivityFeed): string {
   </section>`;
 }
 
-export function createRoomActivityUi(signal: AbortSignal, open: (notice: RoomActivityNotice | "activity") => void) {
+export function createRoomActivityUi(
+  signal: AbortSignal,
+  open: (notice: RoomActivityNotice | "activity") => void,
+  onLiveEvents?: (events: RoomActivityEvent[]) => void,
+) {
   let key = "";
   let cursor: Cursor | undefined;
   let prompt: RoomActivityNotice | null = null;
@@ -99,7 +103,8 @@ export function createRoomActivityUi(signal: AbortSignal, open: (notice: RoomAct
 
   function update(viewer?: Viewer, feed?: RoomActivityFeed) {
     const nextKey = viewer ? `kelana-room-activity:${viewer.code}:${viewer.seatId}` : "";
-    if (key !== nextKey) {
+    const changedRoom = key !== nextKey;
+    if (changedRoom) {
       clearBrief();
       prompt = null;
       pendingAnnouncement = "";
@@ -109,6 +114,10 @@ export function createRoomActivityUi(signal: AbortSignal, open: (notice: RoomAct
     if (!viewer || !feed || (cursor && feed.sequence < cursor.sequence)) return;
     const previousSequence = cursor?.sequence ?? feed.sequence;
     const fresh = feed.events.filter(event => event.sequence > previousSequence);
+    if (!changedRoom && fresh.length) {
+      onLiveEvents?.(fresh.filter(event => viewer.now - event.at <= 8000 &&
+        (event.turn === undefined || event.turn === viewer.turnNumber)));
+    }
     const newPrompt = !viewer.outcome && feed.prompt && (feed.prompt.deadline === undefined || feed.prompt.deadline > viewer.now)
       ? feed.prompt : null;
     const seenPrompts = cursor?.prompts ?? [];

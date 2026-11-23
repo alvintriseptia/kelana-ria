@@ -1,4 +1,5 @@
-import type { RoomActivityFeed } from "@kelana-ria/contracts";
+import { motionAllowed, playGameMotion } from "./game-motion";
+import type { RoomActivityEvent, RoomActivityFeed } from "@kelana-ria/contracts";
 import { createRoomActivityUi, renderRoomActivity } from "./room-activity";
 import type {
   LocationFix,
@@ -12,7 +13,7 @@ import type {
   SeekDeckPublicView,
   SeekEngineRoomView,
 } from "@kelana-ria/contracts";
-import type { mountBoardMap } from "./board-map";
+import type { BoardMapOptions, mountBoardMap } from "./board-map";
 import { escapeText } from "./solo-view";
 import { getLocation } from "./device-location";
 import { fetchMapConfig } from "./map-config";
@@ -162,7 +163,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let busy = false;
   let mapFailed = false;
   let mapHandle: ReturnType<typeof mountBoardMap> | undefined;
-  let mapTurn = "";
+  let mapRoomCode = "";
+  let savedCamera: { code: string; camera: NonNullable<BoardMapOptions["camera"]> } | undefined;
   let focusedThermometer = "";
   let seq = 0;
   let roomRequest = 0;
@@ -170,6 +172,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   const toast = createPlayerToast({ signal: lifecycle.signal, layout: "page" });
   type Panel = "ask" | "hand" | "question" | "history" | "activity" | "board" | "qa";
   let panel: Panel | null = "ask";
+  let liveEffects: RoomActivityEvent[] = [];
   const activityUi = createRoomActivityUi(lifecycle.signal, notice => {
     if (!live || busy) return;
     panel = notice === "activity" ? "activity"
@@ -178,7 +181,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       : notice.panel === "cards" ? "hand" : "board";
     render();
     root.querySelector<HTMLElement>("[data-activity-heading], #sg-panel-title")?.focus({ preventScroll: true });
-  });
+  }, events => { liveEffects = events; });
   let family: HideSeekQuestionFamily | null = null;
   let option = "";
   let stationId = "";
@@ -311,12 +314,18 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   }
 
   function closeMap() {
+    if (live?.room.phase === "regroup") {
+      const camera = mapHandle?.getCamera();
+      if (camera) savedCamera = { code: live.room.code, camera };
+    } else {
+      savedCamera = undefined;
+    }
     mapRequest++;
     mapHandle?.destroy();
     mapHandle = undefined;
     mapHost = null;
     mapKey = "";
-    mapTurn = "";
+    mapRoomCode = "";
   }
 
   function clockText(milliseconds: number) {
@@ -764,16 +773,17 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   }
 
   async function mountMapOverlay(host: HTMLElement, payload: RoomPayload) {
-    const turn = `${payload.room.code}:${payload.room.turnNumber}`;
-    if (mapHandle && turn === mapTurn) {
+    const code = payload.room.code;
+    if (mapHandle && code === mapRoomCode) {
       const nextState = buildSeekMapState(host, payload, mapRequest);
       mapHandle.update(nextState);
       mapHandle.setQuestionPreview(activeDraftPreview()?.data, previewPadding(host));
       return;
     }
     const current = ++mapRequest;
-    const camera = turn === mapTurn ? mapHandle?.getCamera() : undefined;
-    mapTurn = turn;
+    const camera = savedCamera?.code === code ? savedCamera.camera : undefined;
+    savedCamera = undefined;
+    mapRoomCode = code;
     mapHandle?.destroy();
     mapHandle = undefined;
     try {
@@ -1145,11 +1155,12 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     if (activeDraw && (panel === "hand" || !pending)) return `<h2 id="sg-panel-title" tabindex="-1">Pilih kartu untuk disimpan</h2>
       <p class="sg-reward-note">Simpan ${activeDraw.keepCount} dari ${activeDraw.cards.length} · <span data-deadline="${activeDraw.deadline}"></span></p>
       <div class="sg-reward-grid ${deal ? "sg-deal" : ""}" data-count="${activeDraw.cards.length}">
-        ${activeDraw.cards.map(card => rewardCard(card,
-          `type="button" data-action="choose-draw" data-instance="${escapeText(card.instanceId)}" ${busy ? "disabled" : ""}`,
-          keepIds.has(card.instanceId))).join("")}
+        ${activeDraw.cards.map(card => `<div class="sg-offer">
+          ${rewardCard(card, `type="button" data-action="choose-draw" data-instance="${escapeText(card.instanceId)}" ${busy ? "disabled" : ""}`, keepIds.has(card.instanceId))}
+          <span class="sg-offer-back" aria-hidden="true">◆</span>
+        </div>`).join("")}
       </div>
-      ${activeDraw.keepCount > 1 ? `<button type="button" class="sg-main" data-action="confirm-draw" ${busy || keepIds.size !== activeDraw.keepCount ? "disabled" : ""}>Simpan ${keepIds.size}/${activeDraw.keepCount} kartu</button>` : ""}`;
+      <button type="button" class="sg-main" data-action="confirm-draw" ${busy || keepIds.size !== activeDraw.keepCount ? "disabled" : ""}>Simpan ${keepIds.size}/${activeDraw.keepCount} kartu</button>`;
     if (pending) {
       const alternatives = hand.filter(card => card.effect.primitive === "veto" || card.effect.primitive === "randomize");
       const extras = alternatives.map(card => `<button type="button" class="sg-pick" data-action="play-card"
@@ -1185,6 +1196,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const menuFocused = document.activeElement === root.querySelector(".sg-room-menu summary");
     const room = live?.room;
     activityUi.update(room, live?.activity);
+    const effects = liveEffects;
+    liveEffects = [];
     if (!live || !room || !isBoardPhase(room)) {
       activityUi.mount(null);
       toast.setLayout("page");
@@ -1220,7 +1233,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const activeDraw = isHider ? (live.deck as SeekDeckHiderView).activeDraw : null;
     const nextDraw = activeDraw?.cards.map(card => card.instanceId).join(":") ?? "";
     const nextPending = room.questions.find(question => question.status === "pending")?.id ?? "";
-    const deal = !busy && nextDraw !== "" && nextDraw !== drawKey;
+    const openDraw = !busy && nextDraw !== "" && nextDraw !== drawKey;
+    const deal = openDraw && effects.some(event => event.kind === "draw") && motionAllowed();
     const incoming = isHider && nextPending !== "" && nextPending !== pendingId;
     if (renderedTurn !== turn) {
       renderedTurn = turn;
@@ -1233,7 +1247,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       radiusDraft = "";
     }
     const openIncoming = incoming && (panel === null || panel === "hand" || panel === "question");
-    if (deal || openIncoming) panel = "hand";
+    if (openDraw || openIncoming) panel = "hand";
     if (!isHider && panel === "ask" && pendingId && !nextPending && room.questions.some(question => question.id === pendingId && (question.answerLabel || question.overlay))) {
       panel = null;
       family = null;
@@ -1248,12 +1262,13 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     pendingId = nextPending;
 
     if (!mapHost) {
-      root.innerHTML = `<section class="sg-game" aria-label="Jakarta Hide &amp; Seek">
+      root.innerHTML = `<section class="sg-game" aria-label="Papan Hide &amp; Seek">
         <div class="sg-board" id="sg-map"></div><div class="room-activity-host"></div><div id="sg-controls"></div>
       </section>`;
       mapHost = root.querySelector<HTMLElement>("#sg-map")!;
     }
     const controls = root.querySelector<HTMLElement>("#sg-controls")!;
+    const previousRole = controls.querySelector<HTMLElement>(".sg-role");
     root.querySelector<HTMLElement>(".sg-game")!.dataset.role = room.role;
     const panelScroll = controls.querySelector(".sg-sheet")?.scrollTop ?? 0;
     const focused = document.activeElement instanceof HTMLElement && controls.contains(document.activeElement) ? document.activeElement : null;
@@ -1294,8 +1309,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         <button type="button" data-action="game-panel" data-panel="board" aria-pressed="${panel === "board"}"><span class="sg-nav-icon" aria-hidden="true">◇</span>Titik</button>
       </nav>
     </div>`;
+    const nextRole = controls.querySelector<HTMLElement>(".sg-role");
+    if (previousRole && nextRole && previousRole.innerHTML === nextRole.innerHTML) nextRole.replaceWith(previousRole);
     activityUi.mount(root.querySelector(".room-activity-host"), hasMapResult);
-    if (deal || openIncoming) {
+    if (openDraw || openIncoming) {
       controls.querySelector<HTMLElement>("#sg-panel-title")?.focus({ preventScroll: true });
     } else if (menuFocused) {
       controls.querySelector<HTMLElement>(".sg-room-menu summary")?.focus({ preventScroll: true });
@@ -1316,10 +1333,16 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       focusRestoreTarget = null;
     }
     const sheet = controls.querySelector<HTMLElement>(".sg-sheet");
-    if (sheet && !deal && !openIncoming && focused) sheet.scrollTop = panelScroll;
+    if (sheet && !openDraw && !openIncoming && focused) sheet.scrollTop = panelScroll;
     const radius = controls.querySelector<HTMLInputElement>("#sg-radius");
     if (radius) radius.value = radiusDraft;
     updateClock();
+    const roleEffect = effects.filter(event => event.kind === "role" || event.kind === "endgame").at(-1);
+    const cardEffect = effects.filter(event => event.kind === "card" || event.kind === "curse").at(-1);
+    const deduction = effects.filter(event => event.mapChange).at(-1);
+    if (roleEffect) playGameMotion(controls.querySelector(".sg-role"), "role", roleEffect.sequence);
+    if (cardEffect) playGameMotion(controls.querySelector(isHider ? '[data-panel="hand"]' : '[data-panel="board"]'), "update", cardEffect.sequence);
+    if (deduction) playGameMotion(controls.querySelector(".sg-map-result"), "update", deduction.sequence);
     const nextMapKey = JSON.stringify([room.code, room.turnNumber, room.role, room.phase, room.ownAnchorStationId, room.seekerPosition, room.questions, room.deductionResetAt, room.moveZoneUntil, room.thermometerStart, thermometerEnd, answerChoice]);
     if (mapFailed) {
       if (mapKey) {
@@ -1331,7 +1354,17 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       }
     } else if (mapKey !== nextMapKey) {
       mapKey = nextMapKey;
-      void mountMapOverlay(mapHost, live);
+      const geometry = latest?.overlay?.type;
+      void mountMapOverlay(mapHost, live).then(() => {
+        if (deduction && geometry && motionAllowed() && mapHost?.isConnected && mapKey === nextMapKey && live?.room.code === room.code) {
+          mapHandle?.pulseDeduction(geometry);
+          if (geometry === "station_filter" || geometry === "distance_compare") {
+            for (const marker of mapHost.querySelectorAll<HTMLElement>(".board-map-pin-station")) {
+              playGameMotion(marker, "role", deduction.sequence);
+            }
+          }
+        }
+      });
     } else {
       mapHandle?.setQuestionPreview(activeDraftPreview()?.data, previewPadding(mapHost));
     }
@@ -1436,6 +1469,19 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         menu.open = false;
         menu.querySelector("summary")?.focus({ preventScroll: true });
       }
+    }
+    if (action === "choose-draw") {
+      const draw = live?.room.role === "hider" ? (live.deck as SeekDeckHiderView).activeDraw : null;
+      const instance = btn.dataset.instance;
+      if (!draw || !instance || !draw.cards.some(card => card.instanceId === instance)) return;
+      if (keepIds.has(instance)) {
+        keepIds.delete(instance);
+      } else {
+        if (draw.keepCount === 1) keepIds.clear();
+        if (keepIds.size < draw.keepCount) keepIds.add(instance);
+      }
+      render();
+      return;
     }
     if (action === "game-panel") {
       const next = btn.dataset.panel as Panel;
@@ -1791,18 +1837,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         }
       } else if (action === "submit-found-code") {
         await postRoomAction({ type: "submit-found-code", code: foundCodeDraft });
-      } else if (action === "choose-draw" || action === "confirm-draw") {
+      } else if (action === "confirm-draw") {
         const activeDraw = live?.room.role === "hider" ? (live.deck as SeekDeckHiderView).activeDraw : null;
-        if (!activeDraw) return;
-        const inst = btn.dataset.instance;
-        if (inst && activeDraw.cards.some(card => card.instanceId === inst)) {
-          if (keepIds.has(inst)) keepIds.delete(inst);
-          else if (keepIds.size < activeDraw.keepCount) keepIds.add(inst);
-        }
-        if (keepIds.size === activeDraw.keepCount && (activeDraw.keepCount === 1 || action === "confirm-draw")) {
+        if (activeDraw && keepIds.size === activeDraw.keepCount) {
           await postDeckAction({ kind: "choose-draw", keepInstanceIds: [...keepIds] });
-        } else {
-          render();
         }
       } else if (action === "play-card") {
         const inst = btn.dataset.instance;
