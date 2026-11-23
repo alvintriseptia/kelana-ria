@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { openEdition } from "./catalog.mjs";
+import { openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -16,6 +17,7 @@ const server = createSoloServer({
   midtrans: createRecordedMidtransAdapter(),
   allowSimulatedLocation: true,
   allowRulebookSandboxCheckout: true,
+  rulebookReviewerKey: reviewerKey,
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -223,9 +225,10 @@ try {
   const pageCreator = await ctxCreator.newPage();
   await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
   await pageCreator.click("#chooser-studio");
+  await startDraft(pageCreator, "claim-the-city");
   await pageCreator.waitForSelector('button[data-action="clone"]');
   await clickAndWaitPost(pageCreator, 'button[data-action="clone"]');
-  await pageCreator.waitForSelector("#st-draft-select");
+  await pageCreator.waitForSelector("#ed-meta-title");
 
   // Step 2: interactive map editor — rename first landmark, add custom Zone & Landmark, verify orphan-zone guardrail
   await pageCreator.click('button[data-step="2"]');
@@ -268,7 +271,7 @@ try {
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Dry-Run OK"));
   await clickAndWaitPost(pageCreator, 'button[data-action="submit-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
-  await pageCreator.click('button[data-tab="reviewer"]');
+  await openReview(pageCreator);
   await clickAndWaitPost(pageCreator, 'button[data-action="publish"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("publish-version"));
 
@@ -293,7 +296,10 @@ try {
   fixture.session.maxPlayers = 3;
   fixture.session.durationMs = 105 * 60_000;
   const author = async data => {
-    const res = await ctxCreator.request.post(`${baseUrl}/api/rulebooks`, { data });
+    const res = await ctxCreator.request.post(`${baseUrl}/api/rulebooks`, {
+      data,
+      ...(data.type === "publish-version" ? { headers: { authorization: `Bearer ${reviewerKey}` } } : {}),
+    });
     const reply = await res.json();
     assert.ok(reply.ok, JSON.stringify(reply.error ?? reply.validation?.errors));
     return reply;

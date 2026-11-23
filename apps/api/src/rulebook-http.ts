@@ -1,5 +1,5 @@
 import { maxBase64Length } from "./seek-photo.js";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   ClaimEngineAction,
@@ -14,15 +14,32 @@ import { credential, hasJsonBody, isObject, json, requestBody, setCredential } f
 import type { MidtransNotificationPayload } from "./midtrans-adapter.js";
 import type { PlaySeekCardParams } from "./seek-engine/deck-engine.js";
 import type { GeoSeedRequest } from "./seek-engine/geo-seeder.js";
-import type { rulebookStore } from "./rulebook-store.js";
+import type { rulebookStore, StoredRulebookRecord } from "./rulebook-store.js";
 
 const cookieName = "kelana_rulebook";
 
 type Store = ReturnType<typeof rulebookStore>;
 
+function studioRecord({ ownerHash: _ownerHash, ...record }: StoredRulebookRecord) {
+  return record;
+}
+
+function hashKey(value: string) {
+  return createHash("sha256").update(value).digest();
+}
+
 export function rulebookHandler(
   store: Store, now: () => number, secureCookie = false, allowHideSeekQa = false, allowSandboxCheckout = false,
+  reviewerKey = "",
 ) {
+  const configuredReviewer = reviewerKey.trim();
+  const reviewerHash = configuredReviewer ? hashKey(configuredReviewer) : undefined;
+
+  function canReview(request: IncomingMessage): boolean {
+    const key = /^Bearer (.+)$/i.exec(request.headers.authorization ?? "")?.[1];
+    return Boolean(reviewerHash && key && timingSafeEqual(reviewerHash, hashKey(key)));
+  }
+
   function resolveQaFix(action: Record<string, unknown>, roomCode: string, cred: string, ts: number): boolean {
     if (!isObject(action.fix) || !("qaLocationId" in action.fix)) return true;
     if (!allowHideSeekQa || typeof action.fix.qaLocationId !== "string") return false;
@@ -52,17 +69,24 @@ export function rulebookHandler(
       const format: RulebookFormat | undefined =
         rawFormat === "hide-and-seek" || rawFormat === "claim-the-city" ? rawFormat : undefined;
       const listings = store.listPublicListings(format);
-      if (role === "writer" || role === "reviewer") {
+      if (role === "writer") {
+        const { versions, earnings } = store.creatorStudio(ensureCred(request, response));
         json(response, 200, {
           role,
           listings,
-          versions: store.listAllVersions(),
-          orders: store.listOrders(),
-          earnings: store.listEarnings(),
+          versions: versions.filter(record => !format || record.format === format).map(studioRecord),
+          earnings,
+          reviewEnabled: Boolean(reviewerHash),
         });
         return;
       }
-      json(response, 200, { role: "public", listings, orders: store.listOrders(), allowHideSeekQa, allowSandboxCheckout });
+      if (role === "reviewer") {
+        if (!canReview(request)) return json(response, 403, { error: "reviewer-only" });
+        const visible = store.listAllVersions().filter(record => !record.isOfficial &&
+          (!format || record.format === format) && (record.status === "submitted" || record.status === "published"));
+        return json(response, 200, { role, versions: visible.map(studioRecord) });
+      }
+      json(response, 200, { role: "public", listings, allowHideSeekQa, allowSandboxCheckout });
       return;
     }
 
@@ -199,6 +223,14 @@ export function rulebookHandler(
 
     if (path === "/api/rulebooks") {
       const type = body.type;
+      if (type === "publish-version" || type === "request-changes" || type === "pause-version") {
+        if (!canReview(request)) return json(response, 403, { error: "reviewer-only" });
+        const decision = type === "publish-version" ? { action: "publish" as const }
+          : type === "request-changes" ? { action: "request-changes" as const, note: String(body.note ?? "") }
+          : { action: "pause" as const, reason: String(body.reason ?? "") };
+        const res = store.reviewVersion(String(body.packId ?? ""), Number(body.version ?? 0), decision, ts);
+        return json(response, res.ok ? 200 : 400, res.ok ? { ...res, record: studioRecord(res.record) } : res);
+      }
       if (type === "clone-official") {
         const res = store.cloneOfficialTemplate(
           String(body.templatePackId ?? ""),
@@ -211,7 +243,7 @@ export function rulebookHandler(
           },
           ts,
         );
-        json(response, res.ok ? 200 : 400, res);
+        json(response, res.ok ? 200 : 400, res.ok ? { ...res, record: studioRecord(res.record) } : res);
         return;
       }
       if (type === "save-draft") {
@@ -222,27 +254,12 @@ export function rulebookHandler(
           ts,
           { rehashSnapshot: Boolean(body.rehashSnapshot) },
         );
-        json(response, res.ok ? 200 : 400, res);
+        json(response, res.ok ? 200 : 400, res.ok ? { ...res, record: studioRecord(res.record) } : res);
         return;
       }
       if (type === "submit-draft") {
         const res = store.submitDraft(cred, String(body.packId ?? ""), Number(body.version ?? 0), ts);
-        json(response, res.ok ? 200 : 400, res);
-        return;
-      }
-      if (type === "request-changes") {
-        const res = store.reviewVersion(String(body.packId ?? ""), Number(body.version ?? 0), { action: "request-changes", note: String(body.note ?? "") }, ts);
-        json(response, res.ok ? 200 : 400, res);
-        return;
-      }
-      if (type === "publish-version") {
-        const res = store.reviewVersion(String(body.packId ?? ""), Number(body.version ?? 0), { action: "publish" }, ts);
-        json(response, res.ok ? 200 : 400, res);
-        return;
-      }
-      if (type === "pause-version") {
-        const res = store.reviewVersion(String(body.packId ?? ""), Number(body.version ?? 0), { action: "pause", reason: String(body.reason ?? "") }, ts);
-        json(response, res.ok ? 200 : 400, res);
+        json(response, res.ok ? 200 : 400, res.ok ? { ...res, record: studioRecord(res.record) } : res);
         return;
       }
       if (type === "create-free-room") {

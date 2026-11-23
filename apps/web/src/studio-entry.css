@@ -1,0 +1,11 @@
+.studio-heading { gap: 6px; }
+.studio-heading .rb-actions { margin: 0; }
+.studio-context { color: #406354; font-size: .88rem; overflow-wrap: anywhere; }
+.studio-home { gap: 12px; }
+.studio-home > button { justify-self: start; }
+.studio-drafts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 215px), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
+.studio-home .studio-draft {
+  width: 100%; min-width: 0; display: grid; justify-items: start; gap: 4px; padding: 10px;
+  text-align: start; overflow-wrap: anywhere; border-color: #83a995;
+}
+.studio-draft small { font-size: .79rem; }

@@ -387,7 +387,7 @@ export function rulebookStore(
   `);
   const getVersionStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE pack_id = ? AND version = ?");
   const listVersionsStmt = db.prepare("SELECT payload FROM rulebook_versions ORDER BY is_official DESC, pack_id ASC, version DESC");
-  const maxVersionStmt = db.prepare("SELECT MAX(version) AS max_v FROM rulebook_versions WHERE pack_id = ?");
+  const latestVersionStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE pack_id = ? ORDER BY version DESC LIMIT 1");
   const upsertOrderStmt = db.prepare("INSERT OR REPLACE INTO rulebook_orders (order_id, buyer_hash, pack_id, version, payload) VALUES (?, ?, ?, ?, ?)");
   const getOrderStmt = db.prepare("SELECT payload, buyer_hash FROM rulebook_orders WHERE order_id = ?");
   const listOrdersStmt = db.prepare("SELECT payload FROM rulebook_orders ORDER BY order_id DESC");
@@ -447,6 +447,23 @@ export function rulebookStore(
     return (listVersionsStmt.all() as { payload: string }[]).map((row) => JSON.parse(row.payload) as StoredRulebookRecord);
   }
 
+  function latestRecord(packId: string): StoredRulebookRecord | undefined {
+    const row = latestVersionStmt.get(packId) as { payload: string } | undefined;
+    return row ? JSON.parse(row.payload) as StoredRulebookRecord : undefined;
+  }
+
+  function creatorStudio(creatorCredential: string) {
+    const ownerHash = digest(creatorCredential);
+    const versions = allRecords().filter(record => record.ownerHash === ownerHash && !record.isOfficial);
+    const owned = new Set(versions.map(record => `${record.packId}@${record.version}`));
+    const earnings = listEarnings().filter(entry => owned.has(`${entry.packId}@${entry.version}`));
+    return { versions, earnings };
+  }
+
+  function listEarnings() {
+    return (listEarningsStmt.all() as { payload: string }[]).map(row => JSON.parse(row.payload) as PackEarningsEntry);
+  }
+
   function listPublicListings(format?: RulebookFormat, everyVersion = false): RulebookPublicListing[] {
     const officialSeekIds = new Set<string>();
     const published = allRecords().filter((r) => r.status === "published" && (!format || r.format === format));
@@ -473,8 +490,12 @@ export function rulebookStore(
     if (!overrides.packId.trim() || !overrides.title.trim() || !overrides.byline.trim()) {
       return { ok: false, error: "invalid-metadata" };
     }
-    const maxRow = maxVersionStmt.get(overrides.packId) as { max_v: number | null } | undefined;
-    const nextVersion = (maxRow?.max_v ?? 0) + 1;
+    const ownerHash = digest(creatorCredential);
+    const previous = latestRecord(overrides.packId);
+    if (previous && (previous.isOfficial || previous.ownerHash !== ownerHash || previous.format !== template.format)) {
+      return { ok: false, error: "pack-unavailable" };
+    }
+    const nextVersion = (previous?.version ?? 0) + 1;
     const clonedPack: AnyRulebookPack = {
       ...structuredClone(template.pack),
       meta: {
@@ -493,7 +514,7 @@ export function rulebookStore(
       format: template.format,
       isOfficial: false,
       status: "draft",
-      ownerHash: digest(creatorCredential),
+      ownerHash,
       pack: clonedPack,
       snapshot: structuredClone(template.snapshot),
       updatedAt: now,
@@ -519,7 +540,11 @@ export function rulebookStore(
     if (existing && (existing.ownerHash !== ownerHash || (existing.status !== "draft" && existing.status !== "changes-requested"))) {
       return { ok: false, error: "version-immutable" };
     }
-    const version = existing ? existing.version : ((maxVersionStmt.get(pack.meta.packId) as { max_v: number | null } | undefined)?.max_v ?? 0) + 1;
+    const previous = existing ?? latestRecord(pack.meta.packId);
+    if (previous && (previous.isOfficial || previous.ownerHash !== ownerHash || previous.format !== pack.meta.format)) {
+      return { ok: false, error: "pack-unavailable" };
+    }
+    const version = existing?.version ?? (previous?.version ?? 0) + 1;
     const normalizedSnapshot: GeoSnapshot = options?.rehashSnapshot
       ? { ...snapshot, hash: computeGeoSnapshotHash(snapshot) }
       : snapshot;
@@ -1228,8 +1253,9 @@ export function rulebookStore(
   return {
     listPublicListings,
     listAllVersions: allRecords,
+    creatorStudio,
     listOrders: () => (listOrdersStmt.all() as { payload: string }[]).map((r) => JSON.parse(r.payload) as PackOrderSummary),
-    listEarnings: () => (listEarningsStmt.all() as { payload: string }[]).map((r) => JSON.parse(r.payload) as PackEarningsEntry),
+    listEarnings,
     getPassByRoomCode: (roomCode: string) => {
       const row = getPassByCodeStmt.get(roomCode) as { payload: string } | undefined;
       return row ? (JSON.parse(row.payload) as RulebookRoomPass) : undefined;

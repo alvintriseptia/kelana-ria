@@ -28,6 +28,8 @@ Run the API and `npm run dev` to open the game catalog locally. For installation
 
 Each edition page has a shareable address with its pack ID and version. Set `ALLOW_RULEBOOK_SANDBOX_CHECKOUT=1` on a test server to use the catalog’s test payment flow. Public sessions can launch free editions.
 
+Studio drafts are tied to the browser’s creator session. To enable the separate reviewer queue, set a private `RULEBOOK_REVIEWER_KEY` on the API server and use it to open **Peninjau** from Studio. Keep the key outside the frontend build and use HTTPS for deployed servers.
+
 To reproduce the mobile checks after building:
 
 ```sh

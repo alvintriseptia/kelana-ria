@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { openEdition } from "./catalog.mjs";
+import { buyPublishedDraft, openDraft, openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -19,6 +20,7 @@ const server = createSoloServer({
   midtrans: createRecordedMidtransAdapter(),
   allowSimulatedLocation: true,
   allowRulebookSandboxCheckout: true,
+  rulebookReviewerKey: reviewerKey,
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -47,10 +49,10 @@ try {
   pageCreator.setDefaultTimeout(20_000);
   await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
   await pageCreator.click("#chooser-studio");
-  await pageCreator.locator('[data-format="hide-and-seek"]').click();
+  await startDraft(pageCreator, "hide-and-seek");
   await pageCreator.waitForSelector('button[data-action="clone"]');
   await pageCreator.click('button[data-action="clone"]');
-  await pageCreator.waitForSelector("#st-draft-select");
+  await pageCreator.waitForSelector("#ed-meta-title");
 
   // Step 2: interactive map editor — rename first station, add custom station & POI, verify validator passes
   await pageCreator.click('button[data-step="2"]');
@@ -90,19 +92,23 @@ try {
   await pageCreator.click('button[data-action="submit-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
 
-  await pageCreator.click('button[data-tab="reviewer"]');
+  await openReview(pageCreator);
   await pageCreator.click('button[data-action="request-changes"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("request-changes"));
 
-  await pageCreator.click('button[data-tab="writer"]');
-  await pageCreator.click('button[data-step="1"]');
+  await openDraft(pageCreator, "pack-senopati-seek");
   await pageCreator.waitForSelector('[data-testid="revision-note-banner"]');
 
   // Verify JSON export + malformed JSON guard + valid JSON import round-trip
-  await pageCreator.click('button[data-action="toggle-json"]');
-  await pageCreator.waitForSelector("#st-json-text");
-  const exportedJson = await pageCreator.inputValue("#st-json-text");
+  const [download] = await Promise.all([
+    pageCreator.waitForEvent("download"),
+    pageCreator.click('button[data-action="export-json"]'),
+  ]);
+  const exportedJson = await readFile(await download.path(), "utf8");
   assert.ok(exportedJson.includes("pack-senopati-seek"), "Exported JSON should contain active pack");
+  await pageCreator.click('button[data-studio-view="home"]');
+  await startDraft(pageCreator, "hide-and-seek");
+  await pageCreator.click('button[data-studio-view="import"]');
   await pageCreator.fill("#st-json-text", "{broken-json");
   await pageCreator.click('button[data-action="import-json"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("JSON tidak valid"));
@@ -113,23 +119,21 @@ try {
   await pageCreator.click('button[data-step="4"]');
   await pageCreator.click('button[data-action="submit-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
-  await pageCreator.click('button[data-tab="reviewer"]');
+  await openReview(pageCreator);
   await pageCreator.click('button[data-action="publish"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("publish-version"));
 
   // Verify v2 clone from published pack works without mutating v1
-  await pageCreator.click('button[data-tab="writer"]');
+  await openDraft(pageCreator, "pack-senopati-seek");
   await pageCreator.click('button[data-step="1"]');
   await pageCreator.waitForSelector('button[data-action="clone-next-version"]');
   await pageCreator.click('button[data-action="clone-next-version"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("pack-senopati-seek v2"));
 
   // Navigate to catalog, purchase paid pack via recorded-sandbox Midtrans, and unlock room
-  await pageCreator.click('button[data-nav="catalog"]');
-  await pageCreator.waitForSelector('article[data-pack-id="pack-senopati-seek"]');
-  await pageCreator.click('article[data-pack-id="pack-senopati-seek"] button[data-action="buy-pack"]');
-  await pageCreator.waitForSelector('button[data-action="settle-order"]');
-  await pageCreator.click('button[data-action="settle-order"]');
+  await pageCreator.click('button[data-studio-view="home"]');
+  await pageCreator.click('button[data-nav="back"]');
+  await buyPublishedDraft(pageCreator, "pack-senopati-seek");
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
 
   const codeMatch = (await pageCreator.textContent("body")).match(/Kode:\s*(RB-[A-F0-9]+)/);
