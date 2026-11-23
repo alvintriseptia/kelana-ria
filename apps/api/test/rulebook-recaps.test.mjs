@@ -303,3 +303,57 @@ test("community recap sharing is private by default, strips private fields, supp
   assert.equal((await get(`/shared/${sharedV1.share.shareId}`)).status, 404);
   assert.equal((await get(`/shared/${reshared.share.shareId}`)).status, 200);
 });
+
+test("Seek activity restores the current deadline and keeps old question events scoped through a turn change", () => {
+  const store = rulebookStore(":memory:");
+  try {
+    const { roomCode, room: headStart } = startMatch(store, "seek", [[guest, "Pemain B"], [third, "Pemain C"]]);
+    const board = store.viewRoom(roomCode, host, start).publicBoard;
+    const anchor = board.stations[0];
+    act(store, roomCode, host, start, { type: "lock-anchor", stationId: anchor.id, fix: fix(anchor, start) });
+    const seeking = store.viewRoom(roomCode, guest, headStart.releaseAt).room;
+    const askedAt = seeking.now + 1000;
+    const questionAction = {
+      type: "ask", family: "radar", itemId: "rad-500m", fix: fix(board.startPoint, askedAt),
+      actionId: "activity-radar",
+    };
+    const first = store.actInRoom(roomCode, guest, questionAction, askedAt);
+    assert.equal(first.error, undefined);
+    const { deadline } = first.room.questions[0];
+    const pending = store.viewRoom(roomCode, host, askedAt).activity;
+    assert.equal(pending.prompt.kind, "question");
+    assert.equal(pending.prompt.deadline, deadline);
+    assert.equal(store.viewRoom(roomCode, guest, askedAt).activity.prompt, null);
+    assert.equal(store.viewRoom(roomCode, third, askedAt).activity.events.some(event => event.kind === "question"), false);
+    assert.equal(store.viewRoom(roomCode, outsider, askedAt), undefined);
+    store.actInRoom(roomCode, guest, questionAction, askedAt);
+    assert.deepEqual(store.viewRoom(roomCode, host, askedAt).activity, pending);
+    assert.doesNotMatch(JSON.stringify(pending), /"photoId"|"answerCode"|"anchorStationId"|"overlay"|"referencePoint"/);
+
+    const warning = store.viewRoom(roomCode, host, deadline - 20_000).activity;
+    assert.match(warning.prompt.text, /hampir habis/);
+    assert.notEqual(warning.prompt.id, pending.prompt.id);
+    assert.equal(warning.sequence, pending.sequence);
+    const expired = store.viewRoom(roomCode, host, deadline).activity;
+    assert.equal(expired.prompt, null);
+    assert.equal(expired.events.filter(event => event.kind === "question-closed").length, 1);
+    const seeker = store.viewRoom(roomCode, guest, deadline).activity;
+    assert.equal(seeker.events.find(event => event.kind === "question-closed").alert, true);
+    assert.equal(store.viewRoom(roomCode, third, deadline).activity.events.some(event => event.kind === "question-closed"), false);
+
+    const regroup = store.viewRoom(roomCode, guest, seeking.phaseEndsAt);
+    assert.equal(regroup.activity.prompt.panel, "regroup");
+    for (const player of [host, guest, third]) {
+      act(store, roomCode, player, seeking.phaseEndsAt, {
+        type: "regroup-check-in", fix: fix(regroup.room.regroupPoint, seeking.phaseEndsAt),
+      });
+    }
+    const nextTurn = store.viewRoom(roomCode, guest, seeking.phaseEndsAt);
+    assert.equal(nextTurn.room.role, "hider");
+    assert.equal(nextTurn.activity.prompt.kind, "role");
+    assert.equal(nextTurn.activity.events.filter(event => event.kind === "question-closed").length, 1);
+    assert.equal(store.viewRoom(roomCode, host, seeking.phaseEndsAt).activity.prompt, null);
+  } finally {
+    store.close();
+  }
+});

@@ -42,6 +42,7 @@ import {
 } from "./midtrans-adapter.js";
 import { sanitizeSeekPhoto } from "./seek-photo.js";
 import { loadOfficialClaimPacks, loadOfficialSeekPacks } from "./official-packs.js";
+import { createRoomActivity } from "./rulebook-activity.js";
 import { claimMatchRecap, rulebookRecapStore, seekMatchRecap, type ShareRecapOptions } from "./rulebook-recaps.js";
 import {
   buyoutSeekCurse,
@@ -202,6 +203,7 @@ type LiveSeekSession = {
   photos: Map<string, Buffer>;
   deck: SeekDeckEngineState;
   appliedDeckActions: Map<string, { ok: boolean; error?: string; [key: string]: unknown }>;
+  activity: ReturnType<typeof createRoomActivity>;
   qa?: { offsetMs: number; advances: Set<string> };
 };
 
@@ -210,6 +212,7 @@ type LiveClaimSession = {
   pass: RulebookRoomPass;
   match: ClaimEngineMatch;
   photos: Map<string, Buffer>;
+  activity: ReturnType<typeof createRoomActivity>;
 };
 
 type LiveSession = (LiveSeekSession | LiveClaimSession) & { recapSaved?: boolean };
@@ -670,7 +673,7 @@ export function rulebookStore(
         hostName,
         hostCredentialHash,
       });
-      session = { format: "claim-the-city", pass, match, photos: new Map() };
+      session = { format: "claim-the-city", pass, match, photos: new Map(), activity: createRoomActivity() };
     } else {
       const seekPack = rec.pack as HideSeekRulebookPack;
       const match = createSeekEngineMatch({
@@ -683,7 +686,7 @@ export function rulebookStore(
       });
       const deck = createSeekDeckState(seekPack);
       session = {
-        format: "hide-and-seek", pass, match, deck, photos: new Map(), appliedDeckActions: new Map(),
+        format: "hide-and-seek", pass, match, deck, photos: new Map(), appliedDeckActions: new Map(), activity: createRoomActivity(),
         ...(qa ? { qa: { offsetMs: 0, advances: new Set<string>() } } : {}),
       };
     }
@@ -956,6 +959,7 @@ export function rulebookStore(
       const replay = session.match.appliedActions.has(`${seatId}:${claimAction.actionId}`);
       if (!replay && photoId !== undefined && photoId !== photo?.id) return { error: "photo-required" };
       const reply = applyClaimEngineAction(session.match, seatId, claimAction, now);
+      session.activity.observeClaim(session.match, now);
       const pending = pendingClaimPhotos(session);
       if (!replay && !reply.error && photo && pending.has(photo.id)) session.photos.set(photo.id, photo.bytes);
       pruneClaimPhotos(session, pending);
@@ -985,6 +989,7 @@ export function rulebookStore(
     if (session.match.turnNumber !== prevTurn) {
       session.deck = createSeekDeckState(session.match.pack);
     }
+    session.activity.observeSeek(session.match, session.deck, now);
     captureCompletedMatch(session);
     return reply;
   }
@@ -1059,6 +1064,7 @@ export function rulebookStore(
   function expireRoomPhotos(session: LiveSeekSession, now: number) {
     const { purgedPhotoIds } = expireSeekEngineMatch(session.match, now);
     for (const id of purgedPhotoIds) session.photos.delete(id);
+    session.activity.observeSeek(session.match, session.deck, now);
     captureCompletedMatch(session);
   }
 
@@ -1132,6 +1138,7 @@ export function rulebookStore(
       if (!seatId) return undefined;
       expireClaimEngineMatch(session.match, now);
       pruneClaimPhotos(session);
+      session.activity.observeClaim(session.match, now);
       captureCompletedMatch(session);
       if (!session.photos.has(photoId)) return undefined;
       const room = viewClaimEngineMatch(session.match, seatId, now);
@@ -1165,6 +1172,7 @@ export function rulebookStore(
       if (cached) return cached;
     }
     const result = playSeekDeckCard(session.deck, session.match, params, now);
+    session.activity.observeSeek(session.match, session.deck, now);
     if (dedupKey && result.ok) session.appliedDeckActions.set(dedupKey, result);
     return result;
   }
@@ -1189,6 +1197,7 @@ export function rulebookStore(
       if (cached) return cached;
     }
     const remember = (res: { ok: boolean; error?: string; [key: string]: unknown }) => {
+      session.activity.observeSeek(session.match, session.deck, now);
       if (dedupKey && res.ok) session.appliedDeckActions.set(dedupKey, res);
       return res;
     };
@@ -1247,9 +1256,12 @@ export function rulebookStore(
       expireClaimEngineMatch(session.match, now);
       pruneClaimPhotos(session);
       captureCompletedMatch(session);
+      const room = viewClaimEngineMatch(session.match, seatId, now);
+      session.activity.observeClaim(session.match, now, room.zones);
       return {
         format: "claim-the-city" as const,
-        room: viewClaimEngineMatch(session.match, seatId, now),
+        room,
+        activity: session.activity.viewClaim(room),
         publicBoard: {
           startPoint: session.match.snapshot.startPoint,
           landmarks: session.match.pack.geography.landmarks.map((l) => ({
@@ -1269,6 +1281,7 @@ export function rulebookStore(
     if (!seatId) return undefined;
     expireRoomPhotos(session, now);
     expireSeekDeckAndCurses(session.deck, session.match, now);
+    session.activity.observeSeek(session.match, session.deck, now);
     const room = viewSeekEngineMatch(session.match, seatId, now);
     const deck = viewSeekDeck(session.deck, room.role === "hider");
     return {
@@ -1276,6 +1289,7 @@ export function rulebookStore(
       ...(session.qa ? { qa: true as const } : {}),
       room,
       deck,
+      activity: session.activity.viewSeek(room, deck),
       publicBoard: {
         startPoint: session.match.snapshot.startPoint,
         boundaryPolygon: session.match.snapshot.boundaryPolygon,

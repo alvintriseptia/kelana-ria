@@ -101,7 +101,7 @@ function startVerified(seat: InternalSeat, now: number, requireStartCheckIn: boo
   return seat.startVerifiedUntil !== null && seat.startVerifiedUntil >= now;
 }
 
-function computeZoneStandings(match: ClaimEngineMatch): {
+export function computeZoneStandings(match: ClaimEngineMatch): {
   zones: ClaimZoneStanding[];
   standings: ClaimTeamScore[];
 } {

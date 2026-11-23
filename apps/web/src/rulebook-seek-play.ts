@@ -1,3 +1,5 @@
+import type { RoomActivityFeed } from "@kelana-ria/contracts";
+import { createRoomActivityUi, renderRoomActivity } from "./room-activity";
 import type {
   LocationFix,
   GeoCoordinate,
@@ -44,6 +46,7 @@ type PublicListing = {
 };
 
 type RoomPayload = {
+  activity: RoomActivityFeed;
   room: SeekEngineRoomView;
   publicBoard: SeekPublicBoard;
   qa?: true;
@@ -162,10 +165,20 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let mapTurn = "";
   let focusedThermometer = "";
   let seq = 0;
+  let roomRequest = 0;
   const lifecycle = new AbortController();
   const toast = createPlayerToast({ signal: lifecycle.signal, layout: "page" });
-  type Panel = "ask" | "hand" | "history" | "board" | "qa";
+  type Panel = "ask" | "hand" | "question" | "history" | "activity" | "board" | "qa";
   let panel: Panel | null = "ask";
+  const activityUi = createRoomActivityUi(lifecycle.signal, notice => {
+    if (!live || busy) return;
+    panel = notice === "activity" ? "activity"
+      : notice.panel === "questions" ? "question"
+      : notice.panel === "clues" ? "history"
+      : notice.panel === "cards" ? "hand" : "board";
+    render();
+    root.querySelector<HTMLElement>("[data-activity-heading], #sg-panel-title")?.focus({ preventScroll: true });
+  });
   let family: HideSeekQuestionFamily | null = null;
   let option = "";
   let stationId = "";
@@ -498,12 +511,13 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   async function refreshRoom(allowInvitePrompt = false, background = false, skipRender = false) {
     if (!roomCode) return;
     const code = roomCode;
+    const request = ++roomRequest;
     const requestAction = seq;
     const { status, data } = await fetchApiJson<RoomPayload & { error?: string }>(
       `/api/rulebooks/rooms/${encodeURIComponent(code)}`,
       { signal: lifecycle.signal },
     );
-    if (code !== roomCode || lifecycle.signal.aborted || (background && (busy || requestAction !== seq))) return;
+    if (request !== roomRequest || code !== roomCode || lifecycle.signal.aborted || (background && (busy || requestAction !== seq))) return;
     if ("room" in data && data.room) {
       const { now, ...next } = data.room;
       const previous = live;
@@ -882,6 +896,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     return `<details class="sg-room-menu" ${open ? "open" : ""}>
       <summary class="sg-quiet" aria-label="Menu permainan" title="Menu permainan"><span aria-hidden="true">⋯</span></summary>
       <div class="sg-room-menu-actions">
+        ${live && isBoardPhase(live.room) ? '<button type="button" data-action="game-panel" data-panel="activity">Aktivitas terbaru</button>' : ""}
         <button type="button" data-action="refresh">Muat ulang</button>
         <button type="button" data-nav="catalog">Keluar ke katalog</button>
       </div>
@@ -911,6 +926,9 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         ${allowHideSeekQa && !payload.qa && !pass.paid && room.phase === "lobby" && room.seats.some(seat => seat.seatId === room.seatId && seat.isHost)
           ? `<div class="rb-actions"><button type="button" class="secondary" data-action="start-qa" data-pack="${escapeText(pass.packId)}" data-version="${pass.version}" ${busy ? "disabled" : ""}>Buat Ruang QA dari Paket Ini</button></div>` : ""}
       </div>
+
+      ${(room.outcome || room.phase === "regroup") && payload.activity.events.length
+        ? `<details class="rb-card rb-accordion"><summary>Aktivitas terbaru</summary>${renderRoomActivity(payload.activity)}</details>` : ""}
 
       ${payload.qa && !room.outcome ? `<section class="rb-card" aria-label="Kontrol QA">${renderQaControls(payload)}</section>` : ""}
 
@@ -1095,6 +1113,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
   function renderGamePanel(payload: RoomPayload, deal: boolean): string {
     const { room, deck, publicBoard } = payload;
+    if (panel === "activity") return renderRoomActivity(payload.activity);
     if (panel === "qa") return payload.qa ? renderQaControls(payload) : "";
     if (panel === "board") return renderBoardControls(payload) + renderCurses(payload);
     if (panel === "history") return `<h2 id="sg-panel-title" tabindex="-1">Riwayat petunjuk</h2>
@@ -1121,9 +1140,9 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       }
       return questionDeck(room.menu);
     }
-    if (panel !== "hand" || room.role !== "hider") return "";
+    if ((panel !== "hand" && panel !== "question") || room.role !== "hider") return "";
     const { activeDraw, hand, currentHandLimit } = deck as SeekDeckHiderView;
-    if (activeDraw) return `<h2 id="sg-panel-title" tabindex="-1">Pilih kartu untuk disimpan</h2>
+    if (activeDraw && (panel === "hand" || !pending)) return `<h2 id="sg-panel-title" tabindex="-1">Pilih kartu untuk disimpan</h2>
       <p class="sg-reward-note">Simpan ${activeDraw.keepCount} dari ${activeDraw.cards.length} · <span data-deadline="${activeDraw.deadline}"></span></p>
       <div class="sg-reward-grid ${deal ? "sg-deal" : ""}" data-count="${activeDraw.cards.length}">
         ${activeDraw.cards.map(card => rewardCard(card,
@@ -1165,7 +1184,9 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     if (lifecycle.signal.aborted) return;
     const menuFocused = document.activeElement === root.querySelector(".sg-room-menu summary");
     const room = live?.room;
+    activityUi.update(room, live?.activity);
     if (!live || !room || !isBoardPhase(room)) {
+      activityUi.mount(null);
       toast.setLayout("page");
       closeMap();
       renderedTurn = "";
@@ -1211,7 +1232,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       thermometerEnd = undefined;
       radiusDraft = "";
     }
-    if (deal || incoming) panel = "hand";
+    const openIncoming = incoming && (panel === null || panel === "hand" || panel === "question");
+    if (deal || openIncoming) panel = "hand";
     if (!isHider && panel === "ask" && pendingId && !nextPending && room.questions.some(question => question.id === pendingId && (question.answerLabel || question.overlay))) {
       panel = null;
       family = null;
@@ -1227,7 +1249,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
     if (!mapHost) {
       root.innerHTML = `<section class="sg-game" aria-label="Jakarta Hide &amp; Seek">
-        <div class="sg-board" id="sg-map"></div><div id="sg-controls"></div>
+        <div class="sg-board" id="sg-map"></div><div class="room-activity-host"></div><div id="sg-controls"></div>
       </section>`;
       mapHost = root.querySelector<HTMLElement>("#sg-map")!;
     }
@@ -1243,7 +1265,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const latest = [...room.questions].reverse().find(question => question.answerLabel && question.overlay &&
       question.askedAt >= (room.deductionResetAt ?? 0));
     const hasMapResult = Boolean(latest && panel !== "history" && !mapFailed);
-    toast.setLayout("game", hasMapResult);
+    toast.setLayout("game", hasMapResult || Boolean(live.activity.prompt));
     const activeScreenAlert = inlineError && (inlineError.slot === "lobby" || inlineError.slot === "catalog")
       ? renderInlineAlert(inlineError.message, inlineError.tone)
       : "";
@@ -1272,7 +1294,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         <button type="button" data-action="game-panel" data-panel="board" aria-pressed="${panel === "board"}"><span class="sg-nav-icon" aria-hidden="true">◇</span>Titik</button>
       </nav>
     </div>`;
-    if (deal || incoming) {
+    activityUi.mount(root.querySelector(".room-activity-host"), hasMapResult);
+    if (deal || openIncoming) {
       controls.querySelector<HTMLElement>("#sg-panel-title")?.focus({ preventScroll: true });
     } else if (menuFocused) {
       controls.querySelector<HTMLElement>(".sg-room-menu summary")?.focus({ preventScroll: true });
@@ -1293,7 +1316,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       focusRestoreTarget = null;
     }
     const sheet = controls.querySelector<HTMLElement>(".sg-sheet");
-    if (sheet && !deal && !incoming && focused) sheet.scrollTop = panelScroll;
+    if (sheet && !deal && !openIncoming && focused) sheet.scrollTop = panelScroll;
     const radius = controls.querySelector<HTMLInputElement>("#sg-radius");
     if (radius) radius.value = radiusDraft;
     updateClock();
@@ -1416,8 +1439,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     }
     if (action === "game-panel") {
       const next = btn.dataset.panel as Panel;
+      if (next === "activity") btn.closest<HTMLDetailsElement>(".sg-room-menu")?.removeAttribute("open");
       panel = next === panel ? null : next;
       render();
+      if (panel === "activity") root.querySelector<HTMLElement>("[data-activity-heading]")?.focus({ preventScroll: true });
       void updateDraftPreview();
       return;
     }

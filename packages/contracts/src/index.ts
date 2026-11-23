@@ -465,3 +465,4 @@ export type * from "./rulebook-seek.js";
 export type * from "./rulebook-claim.js";
 export { matchesClaimInputAnswer } from "./claim-answer.js";
 export type * from "./rulebook-recap.js";
+export * from "./rulebook-activity.js";
