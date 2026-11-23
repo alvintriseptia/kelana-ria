@@ -296,9 +296,10 @@ try {
   fixture.session.maxPlayers = 3;
   fixture.session.durationMs = 105 * 60_000;
   const author = async data => {
+    const reviewAction = data.type === "publish-version" || data.type === "pause-version";
     const res = await ctxCreator.request.post(`${baseUrl}/api/rulebooks`, {
       data,
-      ...(data.type === "publish-version" ? { headers: { authorization: `Bearer ${reviewerKey}` } } : {}),
+      ...(reviewAction ? { headers: { authorization: `Bearer ${reviewerKey}` } } : {}),
     });
     const reply = await res.json();
     assert.ok(reply.ok, JSON.stringify(reply.error ?? reply.validation?.errors));
