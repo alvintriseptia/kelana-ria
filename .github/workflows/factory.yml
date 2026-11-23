@@ -46,6 +46,8 @@ jobs:
         run: npm run qa:seek-mode --workspace @kelana-ria/web
       - name: Play rulebook-driven Claim the City and unified Studio
         run: npm run qa:rulebook-claim --workspace @kelana-ria/web
+      - name: Verify actionable player errors, game toasts, and reconnect recovery
+        run: npm run qa:player-errors --workspace @kelana-ria/web
       - name: Verify full visual Studio Kreator lifecycle and dry-run simulator
         run: npm run qa:rulebook-studio --workspace @kelana-ria/web
       - name: Review and publish a versioned creator pack

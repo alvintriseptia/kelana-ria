@@ -15,6 +15,7 @@
     "qa:seek-mode": "node qa/seek-mode.mjs",
     "qa:rulebook-seek": "node qa/rulebook-seek.mjs",
     "qa:rulebook-claim": "node qa/rulebook-claim.mjs",
+    "qa:player-errors": "node qa/player-errors.mjs",
     "qa:rulebook-studio": "node qa/rulebook-studio.mjs",
     "qa:packs": "node qa/packs.mjs",
     "qa:release": "node qa/release.mjs"

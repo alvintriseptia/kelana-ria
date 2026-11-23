@@ -14,6 +14,8 @@ import type { mountBoardMap } from "./board-map";
 import { escapeText } from "./solo-view";
 import { getLocation } from "./device-location";
 import { fetchMapConfig } from "./map-config";
+import { fetchApiJson, resolvePlayerError, type PlayerErrorSurface, type PlayerErrorTone } from "./player-errors";
+import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { answerText, incomingQuestion, questionDeck, questionNames, questionOptions, rewardCard } from "./seek-game-panels";
 import "./rulebook-seek-play.css";
@@ -56,6 +58,39 @@ type QuestionDraft = {
   query: Omit<SeekMapPreviewRequest, "fix">;
 };
 
+type SeekInlineSlot =
+  | "catalog"
+  | "join"
+  | "lobby"
+  | "lobby-checkin"
+  | "board-checkin"
+  | "regroup-checkin"
+  | "found-code"
+  | "ask-field"
+  | "answer-field"
+  | "answer-photo"
+  | "curse-action";
+
+type SeekInlineError = {
+  slot: SeekInlineSlot;
+  code: string;
+  message: string;
+  tone: PlayerErrorTone;
+  targetId?: string;
+} | null;
+
+type PendingSeekAction = {
+  signature: string;
+  id: string;
+  kind: string;
+  cardInstanceId?: string;
+  stationId?: string;
+  questionId?: string;
+  family?: string;
+  itemId?: string;
+  drawKey?: string;
+};
+
 const phaseLabels: Record<SeekEngineRoomView["phase"], string> = {
   lobby: "Ruang Tunggu",
   head_start: "Waktu Sembunyi (Head Start)",
@@ -90,9 +125,29 @@ function idr(amount: number): string {
   return amount === 0 ? "Gratis (Resmi)" : `Rp ${amount.toLocaleString("id-ID")}`;
 }
 
+function readSessionId(key: string): string | undefined {
+  try {
+    return sessionStorage.getItem(key) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeSessionId(key: string, value?: string) {
+  try {
+    if (value) sessionStorage.setItem(key, value);
+    else sessionStorage.removeItem(key);
+  } catch {
+    // Storage may be unavailable in restricted contexts.
+  }
+}
+
 export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): () => void {
   let listings: PublicListing[] = [];
   let roomCode = new URLSearchParams(location.search).get("room") ?? "";
+  let joinCode = roomCode;
+  let joinName = "Pemain Baru";
+  let foundCodeDraft = "";
   let live: RoomPayload | null = null;
   let activeOrderId: string | null = null;
   let allowHideSeekQa = false;
@@ -100,7 +155,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let qaStationId = "";
   let qaAdvanceRetry: { roomCode: string; step: string; expectedDeadline: number | null; actionId: string } | undefined;
   let statusMsg = "";
-  let errorMsg = "";
+  let inlineError: SeekInlineError = null;
   let busy = false;
   let mapFailed = false;
   let mapHandle: ReturnType<typeof mountBoardMap> | undefined;
@@ -108,6 +163,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let focusedThermometer = "";
   let seq = 0;
   const lifecycle = new AbortController();
+  const toast = createPlayerToast({ signal: lifecycle.signal, layout: "page" });
   type Panel = "ask" | "hand" | "history" | "board" | "qa";
   let panel: Panel | null = "ask";
   let family: HideSeekQuestionFamily | null = null;
@@ -135,9 +191,110 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let pollActive = false;
   let clockBase = performance.now();
   let roomNow = 0;
+  let pendingAction: PendingSeekAction | null = null;
+  let focusRestoreTarget: Record<string, string | undefined> | null = null;
 
   function isBoardPhase(room: SeekEngineRoomView) {
     return room.phase === "head_start" || room.phase === "seeking" || room.phase === "endgame";
+  }
+
+  function currentSurface(): PlayerErrorSurface {
+    if (!live) return "catalog";
+    return live.room.phase === "lobby" ? "lobby" : "seek";
+  }
+
+  function ensurePendingAction(
+    signature: string,
+    kind: string,
+    meta?: Omit<PendingSeekAction, "signature" | "id" | "kind">,
+    persistKey?: string,
+  ): PendingSeekAction {
+    if (pendingAction?.signature === signature) return pendingAction;
+    const restored = persistKey ? readSessionId(persistKey) : undefined;
+    const id = restored ?? `seek-${crypto.randomUUID()}`;
+    if (persistKey) writeSessionId(persistKey, id);
+    pendingAction = { signature, id, kind, ...meta };
+    return pendingAction;
+  }
+
+  function clearPendingAction(persistKey?: string) {
+    pendingAction = null;
+    if (persistKey) writeSessionId(persistKey);
+  }
+
+  function reconcilePendingAction(payload: RoomPayload) {
+    if (!pendingAction) return;
+    const { room, deck } = payload;
+    const { kind, cardInstanceId, stationId: pendingStation, questionId, family: qFamily, itemId, drawKey: pendingDraw } = pendingAction;
+    let resolvedOnServer = false;
+    if (kind === "play-card" && cardInstanceId && room.role === "hider") {
+      const hiderDeck = deck as SeekDeckHiderView;
+      resolvedOnServer = !hiderDeck.hand.some(card => card.instanceId === cardInstanceId);
+    } else if (kind === "choose-draw" && room.role === "hider") {
+      const activeDraw = (deck as SeekDeckHiderView).activeDraw;
+      const nextDrawKey = activeDraw?.cards.map(c => c.instanceId).join(":") ?? "";
+      resolvedOnServer = !activeDraw || nextDrawKey !== pendingDraw;
+    } else if (kind === "lock-anchor" && pendingStation) {
+      resolvedOnServer = room.ownAnchorStationId === pendingStation;
+    } else if ((kind === "answer-question" || kind === "answer-photo" || kind === "cannot-answer-endgame") && questionId) {
+      resolvedOnServer = !room.questions.some(q => q.id === questionId && q.status === "pending");
+    } else if (kind === "ask" && qFamily && itemId) {
+      resolvedOnServer = room.questions.some(q => q.status === "pending" && q.family === qFamily && q.itemId === itemId);
+    } else if (kind === "start") {
+      resolvedOnServer = room.phase !== "lobby";
+    } else if (kind === "ready") {
+      resolvedOnServer = room.seats.some(seat => seat.seatId === room.seatId && seat.ready);
+    } else if (kind === "check-in-start") {
+      resolvedOnServer = room.seats.some(seat => seat.seatId === room.seatId && seat.startVerifiedUntil !== null);
+    } else if (kind === "confirm-freeze") {
+      resolvedOnServer = room.hiderFrozen;
+    } else if (kind === "submit-found-code") {
+      resolvedOnServer = room.phase !== "endgame";
+    }
+    if (resolvedOnServer) {
+      pendingAction = null;
+      toast.clear();
+      toast.resetDedupe();
+    }
+  }
+
+  function reportError(
+    input: unknown,
+    context: { action: string; target?: string; surface?: PlayerErrorSurface },
+    inlineSlot: SeekInlineSlot,
+    targetId?: string,
+  ) {
+    const resolved = resolvePlayerError(input, {
+      surface: context.surface ?? currentSurface(),
+      action: context.action,
+      target: context.target,
+    });
+    if (resolved.staleTarget) {
+      stationId = "";
+    }
+    if (resolved.placement === "toast") {
+      inlineError = null;
+      toast.show(resolved);
+    } else {
+      toast.clear();
+      const slot: SeekInlineSlot = resolved.placement === "inline-screen"
+        ? (live ? "lobby" : "catalog")
+        : inlineSlot;
+      inlineError = {
+        slot,
+        code: resolved.code,
+        message: resolved.message,
+        tone: resolved.tone,
+        targetId: slot === "curse-action" ? targetId : undefined,
+      };
+    }
+    return resolved;
+  }
+
+  function slotAlert(slot: SeekInlineSlot, targetId?: string): string {
+    if (!inlineError || inlineError.slot !== slot) return "";
+    if (targetId !== undefined && inlineError.targetId !== undefined && inlineError.targetId !== targetId) return "";
+    return renderInlineAlert(inlineError.message, inlineError.tone, `data-error-slot="${slot}"`);
   }
 
   function closeMap() {
@@ -249,22 +406,31 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       const fix = !updateLocation && draftFix?.referenceKey === draft.referenceKey && previewIsFresh(draftFix.validUntil)
         ? draftFix.fix : await locationFix(seekerPoint());
       if (request !== previewSequence || selectedMapQuestion()?.key !== draft.key) return;
-      const response = await apiJson<{ preview?: SeekMapPreview; validUntil?: number; error?: string }>("/api/rulebooks/question-preview", {
-        roomCode: code,
-        ...draft.query,
-        fix,
+      const { ok, status, data: response } = await fetchApiJson<{ preview?: SeekMapPreview; validUntil?: number; error?: string }>("/api/rulebooks/question-preview", {
+        signal: lifecycle.signal,
+        body: {
+          roomCode: code,
+          ...draft.query,
+          fix,
+        },
       });
       if (request !== previewSequence || selectedMapQuestion()?.key !== draft.key) return;
-      if (!response.preview) {
-        throw new Error(response.error === "stale-fix" ? "Perbarui lokasi untuk pratinjau." :
-          response.error === "inaccurate-fix" ? "Lokasi kurang akurat. Coba perbarui lokasi." : "Pratinjau belum tersedia. Coba lagi.");
+      if (!ok || !response.preview) {
+        const resolved = resolvePlayerError(
+          { error: response.error ?? "preview-unavailable", status },
+          { surface: "seek", action: "question-preview", target: draft.query.itemId },
+        );
+        previewError = { key: draft.key, message: resolved.message };
+        return;
       }
       const validUntil = fix.qaLocationId ? undefined : response.validUntil;
       draftFix = { referenceKey: draft.referenceKey, fix, validUntil };
       draftPreview = { key: draft.key, data: response.preview, fix, validUntil };
     } catch (error) {
+      if (lifecycle.signal.aborted) return;
       if (request === previewSequence && selectedMapQuestion()?.key === draft.key) {
-        previewError = { key: draft.key, message: error instanceof Error ? error.message : "Pratinjau belum tersedia." };
+        const resolved = resolvePlayerError(error, { surface: "seek", action: "question-preview", target: draft.query.itemId });
+        previewError = { key: draft.key, message: resolved.message };
       }
     } finally {
       if (request === previewSequence) {
@@ -272,16 +438,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         render();
       }
     }
-  }
-
-  async function apiJson<T>(path: string, body?: unknown): Promise<T> {
-    const res = await fetch(path, {
-      method: body === undefined ? "GET" : "POST",
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: lifecycle.signal,
-    });
-    return (await res.json()) as T;
   }
 
   function syncRoomUrl(code: string) {
@@ -295,7 +451,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   }
 
   async function loadCatalog() {
-    const data = await apiJson<{ listings?: PublicListing[]; allowHideSeekQa?: boolean; allowSandboxCheckout?: boolean }>("/api/rulebooks?format=hide-and-seek");
+    const { data } = await fetchApiJson<{ listings?: PublicListing[]; allowHideSeekQa?: boolean; allowSandboxCheckout?: boolean }>(
+      "/api/rulebooks?format=hide-and-seek",
+      { signal: lifecycle.signal },
+    );
     allowHideSeekQa = data.allowHideSeekQa === true;
     allowSandboxCheckout = data.allowSandboxCheckout === true;
     listings = (data.listings ?? []).filter((l) => l.format === "hide-and-seek");
@@ -305,18 +464,28 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     if (!roomCode && shouldLaunch && launchPackId) {
       const target = listings.find((l) => l.packId === launchPackId && l.priceIdr === 0);
       if (target) {
-        const res = await apiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
-          type: "create-free-room",
-          packId: target.packId,
-          version: target.version,
-          hostName: "Tuan Rumah",
+        const persistKey = `kelana-seek-free:${target.packId}:${target.version}:0`;
+        const pending = ensurePendingAction(`create-free:${target.packId}:${target.version}:0`, "create-free-room", undefined, persistKey);
+        const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
+          signal: lifecycle.signal,
+          body: {
+            type: "create-free-room",
+            packId: target.packId,
+            version: target.version,
+            hostName: "Tuan Rumah",
+            requestId: pending.id,
+          },
         });
-        if (res.ok && res.roomCode) {
+        if (ok && res.ok && res.roomCode) {
+          clearPendingAction(persistKey);
           roomCode = res.roomCode;
+          joinCode = res.roomCode;
           statusMsg = `Ruang ${roomCode} siap dimainkan.`;
           await refreshRoom();
           return;
         }
+        clearPendingAction(persistKey);
+        reportError({ error: res.error, status }, { surface: "catalog", action: "start-free", target: target.packId }, "catalog");
       }
     }
     if (roomCode) {
@@ -326,12 +495,15 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     }
   }
 
-  async function refreshRoom(allowInvitePrompt = false, background = false) {
+  async function refreshRoom(allowInvitePrompt = false, background = false, skipRender = false) {
     if (!roomCode) return;
     const code = roomCode;
     const requestAction = seq;
-    const data = await apiJson<RoomPayload & { error?: string }>(`/api/rulebooks/rooms/${encodeURIComponent(code)}`);
-    if (code !== roomCode || (background && (busy || requestAction !== seq))) return;
+    const { status, data } = await fetchApiJson<RoomPayload & { error?: string }>(
+      `/api/rulebooks/rooms/${encodeURIComponent(code)}`,
+      { signal: lifecycle.signal },
+    );
+    if (code !== roomCode || lifecycle.signal.aborted || (background && (busy || requestAction !== seq))) return;
     if ("room" in data && data.room) {
       const { now, ...next } = data.room;
       const previous = live;
@@ -340,6 +512,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       roomNow = now;
       clockBase = performance.now();
       live = data;
+      reconcilePendingAction(data);
       if (previous?.room.code !== data.room.code) {
         qaStationId = data.qa ? sessionStorage.getItem(`seek-qa-location:${data.room.code}`) ?? "" : "";
         qaAdvanceRetry = undefined;
@@ -351,27 +524,65 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       }
     } else if (allowInvitePrompt) {
       statusMsg = `Undangan ruang ${roomCode} terdeteksi. Masukkan namamu lalu tekan Gabung Ruang.`;
-      errorMsg = "";
+      inlineError = null;
     } else if (!background) {
-      errorMsg = data.error ?? "Ruang tidak ditemukan.";
+      reportError({ error: data.error ?? "room-not-found", status }, { surface: "lobby", action: "load-room", target: code }, "catalog");
     }
-    render();
+    if (!skipRender) render();
+  }
+
+  function inlineSlotForSeekAction(action: Record<string, unknown>): SeekInlineSlot {
+    const type = String(action.type ?? "");
+    if (type === "check-in-start") return "lobby-checkin";
+    if (type === "regroup-check-in") return "regroup-checkin";
+    if (type === "lock-anchor" || type === "seeker-check-in" || type === "confirm-freeze") return "board-checkin";
+    if (type === "submit-found-code") return "found-code";
+    if (type === "ask" || type === "start-thermometer") return "ask-field";
+    if (type === "answer-question") return "answer-field";
+    return live?.room.phase === "lobby" ? "lobby" : "board-checkin";
   }
 
   async function postRoomAction(action: Record<string, unknown>): Promise<boolean> {
     if (!roomCode) return false;
+    const type = String(action.type ?? "action");
+    const qId = typeof action.questionId === "string" ? action.questionId : undefined;
+    const stId = typeof action.stationId === "string" ? action.stationId : undefined;
+    const qFamily = typeof action.family === "string" ? action.family : undefined;
+    const itemId = typeof action.itemId === "string" ? action.itemId : undefined;
+    const targetKey = qId ?? stId ?? itemId ?? qFamily;
+    const signature = JSON.stringify([roomCode, type, stId, qId, qFamily, itemId, action.answerCode, action.code, action.offTransit]);
+    const pending = ensurePendingAction(signature, type, { stationId: stId, questionId: qId, family: qFamily, itemId });
+    const slot = inlineSlotForSeekAction(action);
+
+    ++seq;
     busy = true;
     render();
     try {
-      const res = await apiJson<{ room?: SeekEngineRoomView; error?: string }>("/api/rulebooks", {
-        type: "room-action",
-        roomCode,
-        action: { actionId: `ui-${Date.now()}-${++seq}`, ...action },
+      const { ok, status, data: res } = await fetchApiJson<{ room?: SeekEngineRoomView; error?: string }>("/api/rulebooks", {
+        signal: lifecycle.signal,
+        body: {
+          type: "room-action",
+          roomCode,
+          action: { actionId: pending.id, ...action },
+        },
       });
-      if (res.error) errorMsg = res.error;
-      else errorMsg = "";
-      await refreshRoom();
-      return !res.error;
+      clearPendingAction();
+      if (res.error || !ok) {
+        reportError({ error: res.error ?? "invalid-request", status }, { action: type, target: targetKey }, slot);
+        await refreshRoom(false, false, true).catch(() => {});
+        return false;
+      }
+      inlineError = null;
+      toast.clear();
+      toast.resetDedupe();
+      if (type === "submit-found-code") foundCodeDraft = "";
+      await refreshRoom(false, false, true).catch(() => {});
+      return true;
+    } catch (error) {
+      if (lifecycle.signal.aborted) return false;
+      const resolved = reportError(error, { action: type, target: targetKey }, slot);
+      if (!resolved.uncertain) clearPendingAction();
+      return false;
     } finally {
       busy = false;
       render();
@@ -380,17 +591,37 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
   async function postDeckAction(action: Record<string, unknown>) {
     if (!roomCode) return;
+    const kind = String(action.kind ?? "deck-action");
+    const curseId = typeof action.curseInstanceId === "string" ? action.curseInstanceId : undefined;
+    const signature = JSON.stringify([roomCode, "deck", kind, curseId, action.keepInstanceIds, action.approve]);
+    const pending = ensurePendingAction(signature, kind, { drawKey });
+    const slot: SeekInlineSlot = curseId ? "curse-action" : "board-checkin";
+
+    ++seq;
     busy = true;
     render();
     try {
-      const res = await apiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
-        type: "deck-action",
-        roomCode,
-        action,
+      const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
+        signal: lifecycle.signal,
+        body: {
+          type: "deck-action",
+          roomCode,
+          action: { actionId: pending.id, ...action },
+        },
       });
-      if (res.error) errorMsg = res.error;
-      else errorMsg = "";
-      await refreshRoom();
+      clearPendingAction();
+      if (res.error || !ok) {
+        reportError({ error: res.error ?? "unknown-deck-action", status }, { action: kind, target: curseId }, slot, curseId);
+      } else {
+        inlineError = null;
+        toast.clear();
+        toast.resetDedupe();
+      }
+      await refreshRoom(false, false, true).catch(() => {});
+    } catch (error) {
+      if (lifecycle.signal.aborted) return;
+      const resolved = reportError(error, { action: kind, target: curseId }, slot, curseId);
+      if (!resolved.uncertain) clearPendingAction();
     } finally {
       busy = false;
       render();
@@ -399,17 +630,37 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
   async function postPlayCard(params: Record<string, unknown>) {
     if (!roomCode) return;
+    const cardInstanceId = typeof params.cardInstanceId === "string" ? params.cardInstanceId : undefined;
+    const targetStationId = typeof params.targetStationId === "string" ? params.targetStationId : undefined;
+    const signature = JSON.stringify([roomCode, "play-card", cardInstanceId, targetStationId]);
+    const pending = ensurePendingAction(signature, "play-card", { cardInstanceId, stationId: targetStationId });
+
+    ++seq;
     busy = true;
     render();
     try {
-      const res = await apiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
-        type: "play-card",
-        roomCode,
-        params,
+      const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
+        signal: lifecycle.signal,
+        body: {
+          type: "play-card",
+          roomCode,
+          actionId: pending.id,
+          params,
+        },
       });
-      if (res.error) errorMsg = res.error;
-      else errorMsg = "";
-      await refreshRoom();
+      clearPendingAction();
+      if (res.error || !ok) {
+        reportError({ error: res.error ?? "card-not-playable", status }, { action: "play-card", target: cardInstanceId ?? targetStationId }, "board-checkin");
+      } else {
+        inlineError = null;
+        toast.clear();
+        toast.resetDedupe();
+      }
+      await refreshRoom(false, false, true).catch(() => {});
+    } catch (error) {
+      if (lifecycle.signal.aborted) return;
+      const resolved = reportError(error, { action: "play-card", target: cardInstanceId ?? targetStationId }, "board-checkin");
+      if (!resolved.uncertain) clearPendingAction();
     } finally {
       busy = false;
       render();
@@ -545,15 +796,16 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           <button type="button" class="secondary" data-nav="back">Kembali ke Beranda</button>
         </div>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
-        ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
+        ${slotAlert("catalog")}
       </div>
 
       <div class="rb-card">
         <h3>Gabung Ruang dengan Kode Undangan</h3>
         <div class="rb-grid-2">
-          <label class="rb-field"><span>Kode Ruang</span><input id="rb-join-code" placeholder="RB-XXXXXX" value="${escapeText(roomCode)}"></label>
-          <label class="rb-field"><span>Nama Pemain</span><input id="rb-join-name" value="Pemain Baru"></label>
+          <label class="rb-field"><span>Kode Ruang</span><input id="rb-join-code" placeholder="RB-XXXXXX" value="${escapeText(joinCode)}"></label>
+          <label class="rb-field"><span>Nama Pemain</span><input id="rb-join-name" value="${escapeText(joinName)}"></label>
         </div>
+        ${slotAlert("join")}
         <div class="rb-actions">
           <button type="button" class="primary" data-action="join-room" ${busy ? "disabled" : ""}>Gabung Ruang</button>
         </div>
@@ -640,7 +892,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const { room, pass } = payload;
     const isHider = room.role === "hider";
 
-
     return `<section class="rb-shell" aria-label="Permainan Hide & Seek">
       <div class="rb-card">
         <div class="sg-room-header">
@@ -656,7 +907,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         </div>
         <h2>${escapeText(room.packMeta.title)}</h2>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
-        ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
+        ${slotAlert("lobby")}
         ${allowHideSeekQa && !payload.qa && !pass.paid && room.phase === "lobby" && room.seats.some(seat => seat.seatId === room.seatId && seat.isHost)
           ? `<div class="rb-actions"><button type="button" class="secondary" data-action="start-qa" data-pack="${escapeText(pass.packId)}" data-version="${pass.version}" ${busy ? "disabled" : ""}>Buat Ruang QA dari Paket Ini</button></div>` : ""}
       </div>
@@ -675,6 +926,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
                   )
                   .join("")}
               </ul>
+              ${slotAlert("lobby-checkin")}
               <div class="rb-actions">
                 <button type="button" class="secondary" data-action="sim-start-checkin">Check-in di ${escapeText(room.turnStartPoint.name)}</button>
                 <button type="button" class="primary" data-action="mark-ready">Tandai Siap</button>
@@ -697,6 +949,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         <h3>Berkumpul Kembali</h3>
         ${room.regroupPoint ? `<p>Titik awal berikutnya · ${escapeText(room.regroupPoint.name)}</p>` : ""}
         ${room.phaseEndsAt === null ? "" : `<p>Sisa waktu berkumpul · <span data-deadline="${room.phaseEndsAt}"></span></p>`}
+        ${slotAlert("regroup-checkin")}
         <button type="button" class="primary" data-action="regroup">Check-in untuk giliran berikutnya</button>
       </div>` : ""}
 
@@ -741,6 +994,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
                           ? `<p><small>Foto bukti terkirim · Auto-setuju dalam ${autoApproveSec} dtk</small></p>`
                           : ""
                       }
+                      ${slotAlert("curse-action", c.curseInstanceId)}
                       <div class="rb-actions">
                         ${
                           !isHider && c.clearCondition.type === "gps_detour"
@@ -791,6 +1045,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       ${room.phase === "head_start" ? `<p>${isHider ? (canHide ? "Pilih stasiun pada peta, lalu kunci lokasi sebelum pencarian dimulai." : "Lokasi terkunci. Tetap di zona sampai waktu sembunyi habis.") : "Pencarian dimulai saat waktu sembunyi habis."}</p>` : ""}
       ${mapFailed ? '<p role="status">Peta tidak tersedia. Pilih titik dari daftar.</p><button type="button" class="sg-quiet" data-action="retry-map">Muat ulang peta</button>' : ""}
       ${stationList}
+      ${slotAlert("board-checkin")}
       ${canHide && selected ? `<button type="button" class="sg-main" data-action="lock-anchor" data-station="${escapeText(selected.id)}" ${busy ? "disabled" : ""}>Kunci lokasi</button>` : ""}
       ${!isHider && room.phase === "seeking" ? `<button type="button" class="sg-pick" data-action="seeker-check-in" ${busy ? "disabled" : ""}>Perbarui posisi</button>` : ""}
       ${!isHider && room.phase !== "head_start" ? `<button type="button" class="sg-main" data-action="trigger-endgame" data-station="${escapeText(selected?.id ?? "")}" ${busy ? "disabled" : ""}>Check-in turun dari transit</button>` : ""}
@@ -799,7 +1054,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         ${room.hiderFrozen ? "<p>Posisi terkunci</p>" : '<button type="button" class="sg-main" data-action="confirm-freeze">Kunci posisi sekarang</button>'}` : ""}
       ${!isHider && room.phase === "endgame" ? `<div class="rb-field">
         <label for="rb-found-input">Kode temuan 4 digit</label>
-        <input id="rb-found-input" inputmode="numeric" maxlength="4" placeholder="1234">
+        <input id="rb-found-input" inputmode="numeric" maxlength="4" placeholder="1234" value="${escapeText(foundCodeDraft)}">
+        ${slotAlert("found-code")}
         <button type="button" class="sg-main" data-action="submit-found-code">Konfirmasi temuan</button>
       </div>` : ""}`;
   }
@@ -860,7 +1116,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           distance: room.thermometerStart && thermometerEnd ? distanceMeters(room.thermometerStart, thermometerEnd) : undefined,
         } : undefined;
         const preview = family === "photo" || family === "thermometer" ? undefined : renderDraftPreview();
-        return questionOptions(family, entries, picked, deck.questionsBlocked || deck.bannedFamilies.includes(family), thermometer, busy, preview);
+        return questionOptions(family, entries, picked, deck.questionsBlocked || deck.bannedFamilies.includes(family), thermometer, busy, preview)
+          + slotAlert("ask-field");
       }
       return questionDeck(room.menu);
     }
@@ -879,7 +1136,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       const extras = alternatives.map(card => `<button type="button" class="sg-pick" data-action="play-card"
         data-instance="${escapeText(card.instanceId)}" data-primitive="${card.effect.primitive}" ${busy ? "disabled" : ""}>${escapeText(card.title)}</button>`).join("")
         + (room.phase === "endgame" ? `<button type="button" class="sg-pick" data-action="cannot-answer" data-qid="${escapeText(pending.id)}" ${busy ? "disabled" : ""}>Tidak bisa menjawab</button>` : "");
-      return incomingQuestion(pending, answerChoice, publicBoard.pois, photoPreview, extras, busy) + `<p>Jawab dalam <span data-deadline="${pending.deadline}"></span></p>`;
+      return incomingQuestion(pending, answerChoice, publicBoard.pois, photoPreview, extras, busy)
+        + slotAlert("answer-photo")
+        + slotAlert("answer-field")
+        + `<p>Jawab dalam <span data-deadline="${pending.deadline}"></span></p>`;
     }
     return `<h2 id="sg-panel-title" tabindex="-1">Tangan Penyembunyi (${hand.length}/${currentHandLimit})</h2>
       ${hand.length === 0 ? "<p>Jawab pertanyaan untuk mengambil kartu.</p>" : `<div class="sg-reward-grid" data-count="${hand.length}">
@@ -891,15 +1151,46 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       </div>`}`;
   }
 
+  function findMatchingButton(container: ParentNode, dataset: Record<string, string | undefined>): HTMLButtonElement | null {
+    const keys = Object.keys(dataset).filter(k => dataset[k] !== undefined);
+    if (keys.length === 0) return null;
+    for (const btn of container.querySelectorAll<HTMLButtonElement>("button")) {
+      if (btn.disabled) continue;
+      if (keys.every(k => btn.dataset[k] === dataset[k])) return btn;
+    }
+    return null;
+  }
+
   function render() {
     if (lifecycle.signal.aborted) return;
     const menuFocused = document.activeElement === root.querySelector(".sg-room-menu summary");
     const room = live?.room;
     if (!live || !room || !isBoardPhase(room)) {
+      toast.setLayout("page");
       closeMap();
       renderedTurn = "";
+      const focusedInput = document.activeElement instanceof HTMLInputElement && root.contains(document.activeElement)
+        ? { id: document.activeElement.id, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd }
+        : null;
+      const focusedBtn = document.activeElement instanceof HTMLButtonElement && root.contains(document.activeElement)
+        ? { ...document.activeElement.dataset }
+        : null;
       root.innerHTML = live ? renderRoom(live) : renderCatalog();
-      if (menuFocused) root.querySelector<HTMLElement>(".sg-room-menu summary")?.focus({ preventScroll: true });
+      if (menuFocused) {
+        root.querySelector<HTMLElement>(".sg-room-menu summary")?.focus({ preventScroll: true });
+      } else if (!busy) {
+        if (focusedInput) {
+          const el = root.querySelector<HTMLInputElement>(`#${CSS.escape(focusedInput.id)}`);
+          if (el) {
+            el.focus({ preventScroll: true });
+            if (focusedInput.start != null && focusedInput.end != null) el.setSelectionRange(focusedInput.start, focusedInput.end);
+          }
+        } else {
+          const desired = focusRestoreTarget ?? focusedBtn;
+          if (desired) findMatchingButton(root, desired)?.focus({ preventScroll: true });
+        }
+        focusRestoreTarget = null;
+      }
       updateClock();
       return;
     }
@@ -946,11 +1237,16 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const focused = document.activeElement instanceof HTMLElement && controls.contains(document.activeElement) ? document.activeElement : null;
     const previousInput = focused instanceof HTMLInputElement ? { id: focused.id, value: focused.value } : null;
     const activeSelect = focused instanceof HTMLSelectElement ? focused.id : "";
-    const activeButton = focused instanceof HTMLButtonElement ? focused.dataset : null;
+    const activeButton = focused instanceof HTMLButtonElement ? { ...focused.dataset } : null;
     const selectedNav = isHider ? "hand" : "ask";
     const station = [room.turnStartPoint, ...live.publicBoard.stations].find(item => item.id === room.seekerPosition?.stationId);
     const latest = [...room.questions].reverse().find(question => question.answerLabel && question.overlay &&
       question.askedAt >= (room.deductionResetAt ?? 0));
+    const hasMapResult = Boolean(latest && panel !== "history" && !mapFailed);
+    toast.setLayout("game", hasMapResult);
+    const activeScreenAlert = inlineError && (inlineError.slot === "lobby" || inlineError.slot === "catalog")
+      ? renderInlineAlert(inlineError.message, inlineError.tone)
+      : "";
     controls.innerHTML = `<header class="sg-hud">
       <div class="sg-role">
         <span class="sg-role-mark" aria-hidden="true">${isHider ? "◆" : "◎"}</span>
@@ -963,10 +1259,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       </div>
     </header>
     ${room.phase !== "head_start" ? `<p class="sg-location">${room.seekerPosition ? `${room.seekerPosition.seatId === room.seatId ? "Kamu" : "Pencari"} · ${station ? escapeText(station.name) : "Check-in terverifikasi"} · <span id="sg-position-age"></span>` : "Belum ada check-in pencari"}</p>` : ""}
-    ${latest && panel !== "history" && !mapFailed ? `<p class="sg-map-result" role="status">${questionNames[latest.family]} · ${escapeText(answerText(latest.answerLabel ?? ""))}</p>` : ""}
+    ${hasMapResult && latest ? `<p class="sg-map-result" role="status">${questionNames[latest.family]} · ${escapeText(answerText(latest.answerLabel ?? ""))}</p>` : ""}
     <div class="sg-dock">
-      ${panel || errorMsg || statusMsg ? `<section class="sg-sheet" aria-label="Panel permainan">
-        ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
+      ${panel || activeScreenAlert || statusMsg ? `<section class="sg-sheet" aria-label="Panel permainan">
+        ${activeScreenAlert}
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${panel ? renderGamePanel(live, deal) : ""}
       </section>` : ""}
@@ -988,10 +1284,13 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       }
     } else if (activeSelect) {
       document.getElementById(activeSelect)?.focus({ preventScroll: true });
-    } else if (activeButton) {
-      const replacement = [...controls.querySelectorAll<HTMLButtonElement>("button")].find(button =>
-        !button.disabled && Object.keys(activeButton).length > 0 && Object.keys(activeButton).every(key => button.dataset[key] === activeButton[key]));
-      (replacement ?? controls.querySelector<HTMLElement>("#sg-panel-title"))?.focus({ preventScroll: true });
+    } else if (!busy) {
+      const desired = focusRestoreTarget ?? activeButton;
+      if (desired) {
+        const replacement = findMatchingButton(controls, desired);
+        (replacement ?? controls.querySelector<HTMLElement>("#sg-panel-title"))?.focus({ preventScroll: true });
+      }
+      focusRestoreTarget = null;
     }
     const sheet = controls.querySelector<HTMLElement>(".sg-sheet");
     if (sheet && !deal && !incoming && focused) sheet.scrollTop = panelScroll;
@@ -1016,8 +1315,13 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   }
 
   root.addEventListener("input", event => {
-    if (event.target instanceof HTMLInputElement && event.target.id === "sg-radius") {
-      radiusDraft = event.target.value;
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (target.id === "rb-join-code") joinCode = target.value;
+    if (target.id === "rb-join-name") joinName = target.value;
+    if (target.id === "rb-found-input") foundCodeDraft = target.value;
+    if (target.id === "sg-radius") {
+      radiusDraft = target.value;
       mapHandle?.setQuestionPreview();
       window.clearTimeout(previewTimer);
       previewTimer = window.setTimeout(() => {
@@ -1038,9 +1342,18 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const file = event.target.files?.[0];
     const questionId = pendingId;
     photoPreview = "";
-    errorMsg = "";
-    if (!file || file.size > 2 * 1024 * 1024 || !["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      if (file) errorMsg = "Pilih foto JPEG, PNG, atau WebP dengan ukuran maks. 2 MB.";
+    inlineError = null;
+    if (!file) {
+      render();
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      reportError("photo-too-large", { action: "answer-photo", target: questionId }, "answer-photo");
+      render();
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      reportError("invalid-photo", { action: "answer-photo", target: questionId }, "answer-photo");
       render();
       return;
     }
@@ -1052,7 +1365,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     };
     reader.onerror = () => {
       if (questionId !== pendingId || lifecycle.signal.aborted) return;
-      errorMsg = "Foto tidak dapat dibaca. Pilih ulang.";
+      reportError("photo-unreadable", { action: "answer-photo", target: questionId }, "answer-photo");
       render();
     };
     reader.readAsDataURL(file);
@@ -1081,9 +1394,12 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       drawKey = "";
       pendingId = "";
       statusMsg = "";
-      errorMsg = "";
+      inlineError = null;
+      pendingAction = null;
+      toast.clear();
       mapFailed = false;
       roomCode = "";
+      joinCode = "";
       syncRoomUrl("");
       render();
       return;
@@ -1137,10 +1453,46 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       return;
     }
 
+    if (action === "join-room") {
+      const codeInput = (root.querySelector<HTMLInputElement>("#rb-join-code")?.value ?? joinCode).trim();
+      joinCode = codeInput;
+      joinName = (root.querySelector<HTMLInputElement>("#rb-join-name")?.value ?? joinName).trim() || "Pemain";
+      if (!codeInput) {
+        reportError("join-code-required", { surface: "lobby", action: "join-room" }, "join");
+        render();
+        root.querySelector<HTMLInputElement>("#rb-join-code")?.focus({ preventScroll: true });
+        return;
+      }
+    }
+
+    if (action === "submit-found-code") {
+      const code = (root.querySelector<HTMLInputElement>("#rb-found-input")?.value ?? foundCodeDraft).trim();
+      foundCodeDraft = code;
+      if (!/^\d{4}$/.test(code)) {
+        reportError("invalid-found-code", { action: "submit-found-code" }, "found-code");
+        render();
+        root.querySelector<HTMLInputElement>("#rb-found-input")?.focus({ preventScroll: true });
+        return;
+      }
+    }
+
     if (actionPending) return;
     actionPending = true;
     root.setAttribute("aria-busy", "true");
-    errorMsg = "";
+    inlineError = null;
+    focusRestoreTarget = { ...btn.dataset };
+
+    let catchSlot: SeekInlineSlot = live ? (live.room.phase === "lobby" ? "lobby" : "board-checkin") : "catalog";
+    let catchTarget: string | undefined = btn.dataset.curse ?? btn.dataset.station ?? btn.dataset.qid ?? btn.dataset.pack;
+    if (action === "sim-start-checkin") catchSlot = "lobby-checkin";
+    else if (action === "regroup") catchSlot = "regroup-checkin";
+    else if (action === "lock-anchor" || action === "trigger-endgame" || action === "seeker-check-in") catchSlot = "board-checkin";
+    else if (action === "start-thermometer" || action === "mark-thermometer-end" || action === "ask-clue") catchSlot = "ask-field";
+    else if (action === "answer-photo") catchSlot = "answer-photo";
+    else if (action === "clear-curse-gps" || action === "submit-curse-photo" || action === "review-curse-photo" || action === "clear-curse-honor" || action === "buyout-curse") {
+      catchSlot = "curse-action";
+    } else if (action === "join-room") catchSlot = "join";
+
     void (async () => {
       const room = live?.room;
       if (action === "qa-advance" && live?.qa && room && btn.dataset.step) {
@@ -1152,81 +1504,164 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         ++seq;
         busy = true;
         render();
-        const res = await apiJson<{ error?: string }>("/api/rulebooks", { type: "seek-qa-advance", ...qaAdvanceRetry });
-        qaAdvanceRetry = undefined;
-        errorMsg = res.error === "qa-deadline-changed" ? "Fase sudah berubah. Pilih waktu lagi." : res.error ?? "";
-        await refreshRoom();
-        busy = false;
-        render();
+        try {
+          const { ok, status, data: res } = await fetchApiJson<{ error?: string }>("/api/rulebooks", {
+            signal: lifecycle.signal,
+            body: { type: "seek-qa-advance", ...qaAdvanceRetry },
+          });
+          qaAdvanceRetry = undefined;
+          if (res.error || !ok) {
+            reportError({ error: res.error ?? "qa-deadline-changed", status }, { action: "qa-advance", target: step }, "board-checkin");
+          } else {
+            toast.clear();
+            toast.resetDedupe();
+          }
+          await refreshRoom(false, false, true).catch(() => {});
+        } catch (error) {
+          if (!lifecycle.signal.aborted) {
+            const resolved = reportError(error, { action: "qa-advance", target: step }, "board-checkin");
+            if (!resolved.uncertain) qaAdvanceRetry = undefined;
+          }
+        } finally {
+          busy = false;
+          render();
+        }
       } else if (action === "start-free" || action === "start-qa") {
         busy = true;
         render();
-        const res = await apiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
-          type: "create-free-room",
-          packId: btn.dataset.pack,
-          version: Number(btn.dataset.version ?? 1),
-          hostName: "Tuan Rumah",
-          ...(action === "start-qa" ? { qa: true } : {}),
-        });
-        busy = false;
-        if (res.ok && res.roomCode) {
-          roomCode = res.roomCode;
-          statusMsg = `Ruang ${roomCode} berhasil dibuat.`;
-          await refreshRoom();
-        } else {
-          errorMsg = res.error ?? "Gagal membuat ruang.";
+        const packId = btn.dataset.pack ?? "";
+        const version = Number(btn.dataset.version ?? 1);
+        const isQa = action === "start-qa";
+        const persistKey = `kelana-seek-free:${packId}:${version}:${isQa ? 1 : 0}`;
+        const pending = ensurePendingAction(`create-free:${packId}:${version}:${isQa ? 1 : 0}`, "create-free-room", undefined, persistKey);
+        try {
+          const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
+            signal: lifecycle.signal,
+            body: {
+              type: "create-free-room",
+              packId,
+              version,
+              hostName: "Tuan Rumah",
+              requestId: pending.id,
+              ...(isQa ? { qa: true } : {}),
+            },
+          });
+          clearPendingAction(persistKey);
+          if (ok && res.ok && res.roomCode) {
+            roomCode = res.roomCode;
+            joinCode = res.roomCode;
+            statusMsg = `Ruang ${roomCode} berhasil dibuat.`;
+            toast.clear();
+            toast.resetDedupe();
+            await refreshRoom(false, false, true);
+          } else {
+            reportError({ error: res.error ?? "invalid-request", status }, { surface: "catalog", action, target: packId }, "catalog");
+          }
+        } catch (error) {
+          if (!lifecycle.signal.aborted) {
+            const resolved = reportError(error, { surface: "catalog", action, target: packId }, "catalog");
+            if (!resolved.uncertain) clearPendingAction(persistKey);
+          }
+        } finally {
+          busy = false;
           render();
         }
       } else if (action === "buy-pack") {
         busy = true;
         render();
-        const res = await apiJson<{ ok?: boolean; order?: { orderId: string }; error?: string }>("/api/rulebooks", {
-          type: "create-order",
-          packId: btn.dataset.pack,
-          version: Number(btn.dataset.version ?? 1),
-        });
-        busy = false;
-        if (res.ok && res.order) {
-          activeOrderId = res.order.orderId;
-          statusMsg = `Order ${activeOrderId} dibuat (Test Payment).`;
-        } else {
-          errorMsg = res.error ?? "Gagal membuat pesanan.";
+        const packId = btn.dataset.pack ?? "";
+        const version = Number(btn.dataset.version ?? 1);
+        const persistKey = `kelana-seek-order:${packId}:${version}`;
+        const pending = ensurePendingAction(`create-order:${packId}:${version}`, "create-order", undefined, persistKey);
+        try {
+          const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; order?: { orderId: string }; error?: string }>("/api/rulebooks", {
+            signal: lifecycle.signal,
+            body: {
+              type: "create-order",
+              packId,
+              version,
+              requestId: pending.id,
+            },
+          });
+          clearPendingAction(persistKey);
+          if (ok && res.ok && res.order) {
+            activeOrderId = res.order.orderId;
+            statusMsg = `Order ${activeOrderId} dibuat (Test Payment).`;
+            toast.clear();
+            toast.resetDedupe();
+          } else {
+            reportError({ error: res.error ?? "invalid-request", status }, { surface: "checkout", action: "buy-pack", target: packId }, "catalog");
+          }
+        } catch (error) {
+          if (!lifecycle.signal.aborted) {
+            const resolved = reportError(error, { surface: "checkout", action: "buy-pack", target: packId }, "catalog");
+            if (!resolved.uncertain) clearPendingAction(persistKey);
+          }
+        } finally {
+          busy = false;
+          render();
         }
-        render();
       } else if (action === "settle-order") {
         busy = true;
         render();
-        const res = await apiJson<{ ok?: boolean; pass?: { roomCode: string }; error?: string }>("/api/rulebooks", {
-          type: "verify-settlement",
-          orderId: btn.dataset.order,
-          transactionStatus: "settlement",
-          statusCode: "200",
-          currency: "IDR",
-          hostName: "Tuan Rumah",
-        });
-        busy = false;
-        if (res.ok && res.pass) {
-          activeOrderId = null;
-          roomCode = res.pass.roomCode;
-          statusMsg = `Pembayaran lunas! Ruang ${roomCode} terbuka.`;
-          await refreshRoom();
-        } else {
-          errorMsg = res.error ?? "Verifikasi gagal.";
+        const orderId = btn.dataset.order ?? "";
+        try {
+          const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; pass?: { roomCode: string }; error?: string }>("/api/rulebooks", {
+            signal: lifecycle.signal,
+            body: {
+              type: "verify-settlement",
+              orderId,
+              transactionStatus: "settlement",
+              statusCode: "200",
+              currency: "IDR",
+              hostName: "Tuan Rumah",
+            },
+          });
+          if (ok && res.ok && res.pass) {
+            activeOrderId = null;
+            roomCode = res.pass.roomCode;
+            joinCode = res.pass.roomCode;
+            statusMsg = `Pembayaran lunas! Ruang ${roomCode} terbuka.`;
+            toast.clear();
+            toast.resetDedupe();
+            await refreshRoom(false, false, true);
+          } else {
+            reportError({ error: res.error ?? "payment-pending", status }, { surface: "checkout", action: "settle-order", target: orderId }, "catalog");
+          }
+        } catch (error) {
+          if (!lifecycle.signal.aborted) {
+            reportError(error, { surface: "checkout", action: "settle-order", target: orderId }, "catalog");
+          }
+        } finally {
+          busy = false;
           render();
         }
       } else if (action === "join-room") {
-        const codeInput = root.querySelector<HTMLInputElement>("#rb-join-code")?.value.trim() ?? "";
-        const nameInput = root.querySelector<HTMLInputElement>("#rb-join-name")?.value.trim() || "Pemain";
-        const res = await apiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
-          type: "join-room",
-          roomCode: codeInput,
-          name: nameInput,
-        });
-        if (res.ok) {
-          roomCode = codeInput;
-          await refreshRoom();
-        } else {
-          errorMsg = res.error ?? "Gagal bergabung.";
+        busy = true;
+        render();
+        try {
+          const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
+            signal: lifecycle.signal,
+            body: {
+              type: "join-room",
+              roomCode: joinCode,
+              name: joinName,
+            },
+          });
+          if (ok && res.ok) {
+            roomCode = joinCode;
+            toast.clear();
+            toast.resetDedupe();
+            await refreshRoom(false, false, true);
+          } else {
+            reportError({ error: res.error ?? "room-not-found", status }, { surface: "lobby", action: "join-room", target: joinCode }, "join");
+          }
+        } catch (error) {
+          if (!lifecycle.signal.aborted) {
+            reportError(error, { surface: "lobby", action: "join-room", target: joinCode }, "join");
+          }
+        } finally {
+          busy = false;
           render();
         }
       } else if (action === "refresh") {
@@ -1247,14 +1682,35 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       } else if (action === "answer-pending") {
         await postRoomAction({ type: "answer-question", questionId: btn.dataset.qid, answerCode: answerChoice });
       } else if (action === "answer-photo") {
+        const questionId = btn.dataset.qid ?? "";
+        const pending = ensurePendingAction(JSON.stringify([roomCode, "answer-photo", questionId]), "answer-photo", { questionId });
+        ++seq;
         busy = true;
         render();
         try {
-          const response = await apiJson<{ error?: string }>("/api/rulebooks/seek-photo", {
-            roomCode, questionId: btn.dataset.qid, actionId: crypto.randomUUID(), photoBase64: photoPreview.split(",")[1],
+          const { ok, status, data: response } = await fetchApiJson<{ error?: string }>("/api/rulebooks/seek-photo", {
+            signal: lifecycle.signal,
+            body: {
+              roomCode,
+              questionId,
+              actionId: pending.id,
+              photoBase64: photoPreview.split(",")[1],
+            },
           });
-          errorMsg = response.error ?? "";
-          await refreshRoom();
+          clearPendingAction();
+          if (response.error || !ok) {
+            reportError({ error: response.error ?? "invalid-photo", status }, { action: "answer-photo", target: questionId }, "answer-photo");
+          } else {
+            inlineError = null;
+            toast.clear();
+            toast.resetDedupe();
+          }
+          await refreshRoom(false, false, true).catch(() => {});
+        } catch (error) {
+          if (!lifecycle.signal.aborted) {
+            const resolved = reportError(error, { action: "answer-photo", target: questionId }, "answer-photo");
+            if (!resolved.uncertain) clearPendingAction();
+          }
         } finally {
           busy = false;
           render();
@@ -1281,7 +1737,11 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         }
       } else if (action === "ask-clue") {
         const radius = root.querySelector<HTMLInputElement>("#sg-radius");
-        if (radius && (!radius.reportValidity() || !Number.isFinite(radius.valueAsNumber))) return;
+        if (radius && (!radius.reportValidity() || !Number.isFinite(radius.valueAsNumber))) {
+          reportError("invalid-custom-radius", { action: "ask-clue" }, "ask-field");
+          render();
+          return;
+        }
         const customRadiusMeters = radius?.valueAsNumber;
         const mapQuestion = btn.dataset.family !== "photo" && btn.dataset.family !== "thermometer";
         const preview = activeDraftPreview();
@@ -1305,8 +1765,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           radiusDraft = "";
         }
       } else if (action === "submit-found-code") {
-        const code = root.querySelector<HTMLInputElement>("#rb-found-input")?.value.trim() ?? "";
-        await postRoomAction({ type: "submit-found-code", code });
+        await postRoomAction({ type: "submit-found-code", code: foundCodeDraft });
       } else if (action === "choose-draw" || action === "confirm-draw") {
         const activeDraw = live?.room.role === "hider" ? (live.deck as SeekDeckHiderView).activeDraw : null;
         if (!activeDraw) return;
@@ -1353,12 +1812,18 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     })().catch(error => {
       if (lifecycle.signal.aborted) return;
       busy = false;
-      errorMsg = error instanceof Error ? error.message : "Koneksi terputus. Coba lagi.";
+      reportError(error, { action, target: catchTarget }, catchSlot, catchTarget);
       render();
     }).finally(() => {
       actionPending = false;
       root.removeAttribute("aria-busy");
     });
+  }, { signal: lifecycle.signal });
+
+  window.addEventListener("online", () => {
+    if (!busy && !actionPending && roomCode) {
+      void refreshRoom(false, true).catch(() => {});
+    }
   }, { signal: lifecycle.signal });
 
   document.addEventListener("pointerdown", event => {
@@ -1381,9 +1846,9 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     pollActive = true;
     void refreshRoom(false, true).catch(() => {}).finally(() => { pollActive = false; });
   }, 3000);
-  void loadCatalog().catch(() => {
+  void loadCatalog().catch((error) => {
     if (!lifecycle.signal.aborted) {
-      errorMsg = "Katalog belum tersedia. Periksa koneksi lalu coba lagi.";
+      reportError(error, { surface: "catalog", action: "load-catalog" }, "catalog");
       render();
     }
   });

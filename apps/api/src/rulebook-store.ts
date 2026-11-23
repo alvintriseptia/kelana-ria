@@ -201,6 +201,7 @@ type LiveSeekSession = {
   match: SeekEngineMatch;
   photos: Map<string, Buffer>;
   deck: SeekDeckEngineState;
+  appliedDeckActions: Map<string, { ok: boolean; error?: string; [key: string]: unknown }>;
   qa?: { offsetMs: number; advances: Set<string> };
 };
 
@@ -682,7 +683,7 @@ export function rulebookStore(
       });
       const deck = createSeekDeckState(seekPack);
       session = {
-        format: "hide-and-seek", pass, match, deck, photos: new Map(),
+        format: "hide-and-seek", pass, match, deck, photos: new Map(), appliedDeckActions: new Map(),
         ...(qa ? { qa: { offsetMs: 0, advances: new Set<string>() } } : {}),
       };
     }
@@ -710,7 +711,7 @@ export function rulebookStore(
     if (qa && rec.format !== "hide-and-seek") return { ok: false, error: "seek-qa-only" };
     if (!supportsMode(rec.pack, mode)) return { ok: false, error: "mode-unavailable" };
     const hostHash = digest(hostCredential);
-    const requestKey = requestId ? JSON.stringify([hostHash, packId, version, mode, requestId]) : undefined;
+    const requestKey = requestId ? JSON.stringify([hostHash, packId, version, mode, qa, requestId]) : undefined;
     const previousCode = requestKey && catalogRooms.get(requestKey);
     const previous = previousCode ? liveRooms.get(previousCode) : undefined;
     const session = previous ?? instantiateRoom(rec, hostHash, hostName, now, null, qa, mode);
@@ -1143,14 +1144,29 @@ export function rulebookStore(
     return session.photos.get(photoId);
   }
 
-  function playCardInRoom(roomCode: string, credential: string, params: PlaySeekCardParams, now: number) {
+  function playCardInRoom(
+    roomCode: string,
+    credential: string,
+    params: PlaySeekCardParams,
+    now: number,
+    actionId?: string,
+  ): { ok: boolean; error?: string; [key: string]: unknown } {
     const session = liveRooms.get(roomCode);
-    if (!session || session.format !== "hide-and-seek") return { ok: false as const, error: "room-not-found" };
+    if (!session || session.format !== "hide-and-seek") return { ok: false, error: "room-not-found" };
     const seatId = findSeekEngineSeat(session.match, digest(credential));
     if (!seatId || seatId !== activeHiderSeatId(session.match)) {
-      return { ok: false as const, error: "hider-only" };
+      return { ok: false, error: "hider-only" };
     }
-    return playSeekDeckCard(session.deck, session.match, params, now);
+    const dedupKey = actionId && actionId.length > 0 && actionId.length <= 100
+      ? `${seatId}:${session.match.turnNumber}:play-card:${actionId}`
+      : undefined;
+    if (dedupKey) {
+      const cached = session.appliedDeckActions.get(dedupKey);
+      if (cached) return cached;
+    }
+    const result = playSeekDeckCard(session.deck, session.match, params, now);
+    if (dedupKey && result.ok) session.appliedDeckActions.set(dedupKey, result);
+    return result;
   }
 
   function deckActionInRoom(
@@ -1165,47 +1181,58 @@ export function rulebookStore(
     if (!seatId) return { ok: false, error: "not-a-member" };
     const isHider = seatId === activeHiderSeatId(session.match);
     const kind = String(action.kind ?? "");
+    const actionId = typeof action.actionId === "string" && action.actionId.length > 0 && action.actionId.length <= 100
+      ? action.actionId : undefined;
+    const dedupKey = actionId ? `${seatId}:${session.match.turnNumber}:deck:${kind}:${actionId}` : undefined;
+    if (dedupKey) {
+      const cached = session.appliedDeckActions.get(dedupKey);
+      if (cached) return cached;
+    }
+    const remember = (res: { ok: boolean; error?: string; [key: string]: unknown }) => {
+      if (dedupKey && res.ok) session.appliedDeckActions.set(dedupKey, res);
+      return res;
+    };
     if (kind === "choose-draw") {
       if (!isHider) return { ok: false, error: "hider-only" };
       const keepInstanceIds = Array.isArray(action.keepInstanceIds) ? action.keepInstanceIds.map(String) : [];
       const discardInstanceIds = Array.isArray(action.discardInstanceIds) ? action.discardInstanceIds.map(String) : undefined;
-      return chooseSeekDrawCards(session.deck, session.match, { keepInstanceIds, discardInstanceIds }, now);
+      return remember(chooseSeekDrawCards(session.deck, session.match, { keepInstanceIds, discardInstanceIds }, now));
     }
     if (kind === "review-curse-photo") {
       if (!isHider) return { ok: false, error: "hider-only" };
-      return reviewCursePhotoProof(
+      return remember(reviewCursePhotoProof(
         session.deck,
         session.match,
         { curseInstanceId: String(action.curseInstanceId ?? ""), approve: Boolean(action.approve) },
         now,
-      );
+      ));
     }
     if (kind === "clear-curse-gps") {
       if (isHider) return { ok: false, error: "seeker-only" };
-      return clearCurseByGpsDetour(
+      return remember(clearCurseByGpsDetour(
         session.deck,
         session.match,
         String(action.curseInstanceId ?? ""),
         action.fix as LocationFix,
         now,
-      );
+      ));
     }
     if (kind === "submit-curse-photo") {
       if (isHider) return { ok: false, error: "seeker-only" };
-      return submitCursePhotoProof(
+      return remember(submitCursePhotoProof(
         session.deck,
         session.match,
         { curseInstanceId: String(action.curseInstanceId ?? ""), seatId, photoId: String(action.photoId ?? "") },
         now,
-      );
+      ));
     }
     if (kind === "clear-curse-honor") {
       if (isHider) return { ok: false, error: "seeker-only" };
-      return clearCurseByHonorTask(session.deck, session.match, String(action.curseInstanceId ?? ""), now);
+      return remember(clearCurseByHonorTask(session.deck, session.match, String(action.curseInstanceId ?? ""), now));
     }
     if (kind === "buyout-curse") {
       if (isHider) return { ok: false, error: "seeker-only" };
-      return buyoutSeekCurse(session.deck, session.match, String(action.curseInstanceId ?? ""), now);
+      return remember(buyoutSeekCurse(session.deck, session.match, String(action.curseInstanceId ?? ""), now));
     }
     return { ok: false, error: "unknown-deck-action" };
   }

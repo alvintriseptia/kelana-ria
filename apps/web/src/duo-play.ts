@@ -30,7 +30,7 @@ const errors: Record<string, string> = {
   "invalid-fix": "Lokasi tidak bisa diverifikasi. Coba check-in lagi.",
   "stale-fix": "Data lokasi sudah kedaluwarsa. Coba check-in lagi untuk meminta lokasi baru.",
   "inaccurate-fix": "Lokasi kurang akurat. Cari area terbuka lalu coba lagi.",
-  "outside-radius": "Kamu berada di luar radius check-in. Dekati titiknya lalu coba lagi.",
+  "outside-radius": "Kamu masih terlalu jauh dari titik ini. Dekati titiknya, lalu coba lagi.",
   "invalid-request": "Permintaan belum berhasil. Periksa pilihanmu dan coba lagi.",
   "pass-required": "Ruang berbayar ini menunggu tuan rumah membuka sesi dengan pass yang lunas.",
   "pass-already-bound": "Pass sesi ini sudah terikat ke ruang lain dan tidak dapat digunakan ulang.",
