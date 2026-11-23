@@ -189,6 +189,8 @@ try {
   }
   await clickAndWaitPost(pageP1, 'button[data-action="start-match"]');
   await pageP1.waitForFunction(() => document.body.textContent.includes("Permainan Aktif"));
+  await pageP3.locator(".cg-game").waitFor();
+  await ctxP3.setOffline(true);
 
   // P1 checks in taman-literasi (vulnerable claim) then Bails -> broadcasts "Terbuka untuk direbut!"
   await checkIn(pageP1, "taman-literasi");
@@ -206,6 +208,34 @@ try {
   await pageP2.waitForFunction(() =>
     document.querySelector('.cg-selected[data-landmark-id="taman-literasi"]')?.textContent?.includes("Terkunci"),
   );
+  const stealNotice = pageP1.locator('[data-activity-message][data-notice-kind="steal"]');
+  await stealNotice.waitFor();
+  assert.match(await stealNotice.innerText(), /berpindah tim.*Penguasaan zona berubah/);
+  assert.equal(await pageP2.locator('[data-activity-message][data-notice-kind="steal"]:visible').count(), 0);
+  await ctxP3.setOffline(false);
+  assert.equal(await pageP3.locator('[data-activity-message][data-notice-kind="steal"]:visible').count(), 0);
+  const readActivity = async page => (await (await page.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`)).json()).activity;
+  const lostClaimFeed = await readActivity(pageP1);
+  const activityForRival = await readActivity(pageP3);
+  const stealEvents = lostClaimFeed.events.filter(event => event.kind === "steal");
+  assert.equal(stealEvents.length, 1);
+  assert.equal(stealEvents[0].alert, true);
+  assert.equal(activityForRival.events.find(event => event.kind === "steal").alert, undefined);
+  assert.doesNotMatch(JSON.stringify(lostClaimFeed), /"latitude"|"longitude"|"photoId"|"correctChoiceId"|"acceptedAnswers"|"verificationNotes"/);
+  await stealNotice.getByRole("button", { name: "Buka", exact: true }).click();
+  assert.equal(await pageP1.locator(".cg-selected").getAttribute("data-landmark-id"), "taman-literasi");
+  await pageP1.reload();
+  await pageP1.locator(".cg-game").waitFor();
+  assert.equal(await stealNotice.isVisible(), false);
+  await pageP3.reload();
+  await pageP3.getByLabel("Lainnya").click();
+  await pageP3.getByRole("button", { name: "Aktivitas terbaru" }).click();
+  const activityPanel = pageP3.getByRole("region", { name: "Aktivitas terbaru" });
+  await activityPanel.getByText(/berpindah tim/).waitFor();
+  await activityPanel.getByText(/Taman Literasi.*diklaim/).waitFor();
+  await activityPanel.getByText(/Taman Literasi.*bisa direbut/).waitFor();
+  assert.ok(await pageP3.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await pageP3.screenshot({ path: path.join(results, "rulebook-claim-recent-activity.png") });
   await checkIn(pageP1, "taman-ayodya");
   await pageP1.locator("input[data-cg-photo]").setInputFiles(proof);
   await clickAndWaitPost(pageP1, 'button[data-action="submit-photo"]');

@@ -1,3 +1,5 @@
+import type { RoomActivityFeed } from "@kelana-ria/contracts";
+import { createRoomActivityUi, renderRoomActivity } from "./room-activity";
 import type {
   ClaimActiveAttemptView,
   ClaimCardInstance,
@@ -52,6 +54,7 @@ type PublicLandmark = {
 };
 
 type ClaimRoomPayload = {
+  activity: RoomActivityFeed;
   format: "claim-the-city";
   room: ClaimEngineRoomView;
   publicBoard: {
@@ -114,7 +117,7 @@ function getActiveLeaf(attempt: ClaimActiveAttemptView): ClaimSanitizedLeafChall
   return payload;
 }
 
-type ClaimPanel = "challenge" | "cards" | "score";
+type ClaimPanel = "challenge" | "cards" | "score" | "activity";
 const claimPanels: { id: ClaimPanel; icon: string; name: string }[] = [
   { id: "challenge", icon: "◆", name: "Tantangan" },
   { id: "cards", icon: "▣", name: "Kartu" },
@@ -190,6 +193,20 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let refreshSeq = 0;
   let serverOffset = 0;
   let panel: ClaimPanel = "challenge";
+  const activityUi = createRoomActivityUi(lifetime.signal, notice => {
+    if (!live || busy) return;
+    panel = notice === "activity" ? "activity"
+      : notice.panel === "score" ? "score"
+      : notice.panel === "cards" ? "cards" : "challenge";
+    folded = false;
+    if (notice !== "activity" && notice.landmarkId) selectedId = notice.landmarkId;
+    render();
+    const sheet = root.querySelector<HTMLElement>(".cg-sheet");
+    const target = notice !== "activity" && notice.panel === "review"
+      ? sheet?.querySelector<HTMLElement>("button[data-action='review-rival-photo'], button[data-curse]")
+      : sheet?.querySelector<HTMLElement>("[data-activity-heading]");
+    (target ?? sheet)?.focus({ preventScroll: true });
+  });
   let folded = false;
   let selectedId = "";
   let selectedCardId = "";
@@ -383,7 +400,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       if (selectedCardId && !data.room.ownHand.some(card => card.instanceId === selectedCardId)) {
         selectedCardId = "";
       }
-      if (background && live && JSON.stringify({ ...live.room, now: 0 }) === JSON.stringify({ ...data.room, now: 0 })) {
+      if (background && live && JSON.stringify({ ...live.room, now: 0 }) === JSON.stringify({ ...data.room, now: 0 }) &&
+        JSON.stringify(live.activity) === JSON.stringify(data.activity)) {
         live = data;
         return;
       }
@@ -811,7 +829,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     if (room.phase !== "active") return "";
     const lmMetaById = new Map(publicBoard.landmarks.map(lm => [lm.id, lm]));
     const open = room.landmarks.filter(lm => lm.status === "claimed" && lm.vulnerableAlertAt !== null && lm.ownerTeamId !== room.teamId);
-    return `${open.length ? `<div class="cg-notice" role="status" data-testid="open-to-steal-alert">
+    return `${open.length ? `<div class="cg-notice" data-testid="open-to-steal-alert">
       <strong>Terbuka untuk direbut!</strong>
       <p>${open.map(lm => escapeText(lmMetaById.get(lm.landmarkId)?.name ?? lm.landmarkId)).join(", ")}</p>
     </div>` : ""}
@@ -921,6 +939,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     return `<details class="sg-room-menu">
       <summary class="sg-quiet" aria-label="Lainnya">⋯</summary>
       <div class="sg-room-menu-actions">
+        <button type="button" data-action="panel" data-panel="activity">Aktivitas terbaru</button>
         <button type="button" data-action="refresh">Muat Ulang Ruang</button>
         <button type="button" data-nav="catalog">Keluar ke Katalog</button>
       </div>
@@ -1080,8 +1099,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
   function render() {
     if (lifetime.signal.aborted) return;
-    toast.setLayout(live && live.room.phase !== "lobby" ? "game" : "page");
+    activityUi.update(live?.room, live?.activity);
+    toast.setLayout(live && live.room.phase !== "lobby" ? "game" : "page", Boolean(live?.activity.prompt));
     if (!live || live.room.phase === "lobby") {
+      activityUi.mount(null);
       destroyClaimMap();
       const focusedInput = document.activeElement instanceof HTMLInputElement && root.contains(document.activeElement)
         ? { id: document.activeElement.id, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd }
@@ -1114,9 +1135,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           <div class="sg-hud-actions"><div class="sg-timer cg-timer" aria-label="Waktu ronde"></div>${renderMore()}</div>
         </header>
         <div class="cg-map-legend" aria-label="Legenda peta">● Belum diklaim <span>◆ Rentan</span> <span>■ Terkunci</span></div>
+        <div class="room-activity-host"></div>
         <div class="sg-dock cg-dock">
           <div class="cg-drawer-bar"></div>
-          <div class="sg-sheet cg-sheet" id="cg-panel"></div>
+          <div class="sg-sheet cg-sheet" id="cg-panel" tabindex="-1"></div>
           <nav class="sg-nav" aria-label="Menu permainan">${claimPanels.map(item => `<button type="button"
             data-action="panel" data-panel="${item.id}"><span class="sg-nav-icon" aria-hidden="true">${item.icon}</span>${item.name}</button>`).join("")}</nav>
         </div>
@@ -1169,7 +1191,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     sheet.dataset.draftKey = draftKey;
     sheet.hidden = folded;
     sheet.innerHTML = `${activeScreenAlert}
-      ${panel === "cards" ? renderCards(room) : panel === "score" ? renderScore(room) : `
+      ${panel === "activity" ? renderRoomActivity(live.activity) : panel === "cards" ? renderCards(room) : panel === "score" ? renderScore(room) : `
         ${room.ownActiveAttempt
           ? renderActiveAttempt(room.ownActiveAttempt, room) + (room.ownActiveAttempt.landmarkId !== selectedId && selectedId ? renderLandmark(live) : "")
           : renderLandmark(live)}
@@ -1212,6 +1234,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     for (const button of game.querySelectorAll<HTMLButtonElement>("[data-panel]")) {
       button.setAttribute("aria-pressed", String(!folded && button.dataset.panel === panel));
     }
+    activityUi.mount(game.querySelector(".room-activity-host"));
     if (mapFailed) fallback.innerHTML = renderFallback(live);
     else void syncClaimMapOverlay(map, live);
     updateClocks();
@@ -1274,6 +1297,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     if (!action) return;
     if (action === "panel") {
       panel = btn.dataset.panel as ClaimPanel;
+      if (panel === "activity") btn.closest<HTMLDetailsElement>(".sg-room-menu")?.removeAttribute("open");
       folded = false;
     } else if (action === "fold") {
       folded = !folded;
@@ -1292,7 +1316,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     }
     if (["panel", "fold", "select-card", "close-card", "select-rival", "retry-map"].includes(action)) {
       render();
-      const focused = action === "panel" ? root.querySelector<HTMLElement>(`[data-panel="${panel}"]`)
+      const focused = action === "panel" ? root.querySelector<HTMLElement>(panel === "activity" ? "[data-activity-heading]" : `[data-panel="${panel}"]`)
         : action === "fold" ? root.querySelector<HTMLElement>(".cg-fold")
         : action === "select-card" ? root.querySelector<HTMLElement>('[data-action="close-card"]')
         : action === "close-card" ? root.querySelector<HTMLElement>('[data-action="select-card"]')
