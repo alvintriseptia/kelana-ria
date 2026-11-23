@@ -31,7 +31,7 @@ export type ValidationJumpTarget = {
   label: string;
   step2Tab?: "primary" | "secondary" | "start" | "boundary";
   seekSubTab?: "timers" | "book" | "deck";
-  claimSubTab?: "session" | "challenges" | "deck";
+  claimSubTab?: "session" | "deck";
   focusSelector?: string;
 };
 
@@ -75,7 +75,7 @@ export function resolveValidationJump(path: string, format: RulebookFormat): Val
     return { step: 3, label: "Tahap 3 · Timer & Sesi", seekSubTab: "timers", focusSelector: "#ed-head" };
   }
   if (p.includes("challenge") || p.includes("backup")) {
-    return { step: 3, label: "Tahap 3 · Tantangan", claimSubTab: "challenges" };
+    return { step: 2, label: "Tahap 2 · Tantangan Lokasi", step2Tab: "primary", focusSelector: "#ed-chal-target" };
   }
   if (p.includes("deck") || p.includes("card")) {
     return { step: 3, label: "Tahap 3 · Dek Taktis", claimSubTab: "deck" };

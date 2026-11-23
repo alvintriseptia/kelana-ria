@@ -61,7 +61,10 @@ try {
   await pageCreator.click('button[data-step="2"]');
   await pageCreator.waitForSelector('[data-testid="studio-map-host"]');
   await pageCreator.waitForSelector("#ed-station-name");
+  assert.equal(await pageCreator.locator("#ed-st-attrs").count(), 0, "Raw key=value station attribute field should be replaced");
   await pageCreator.fill("#ed-station-name", "Stasiun Blok M BCA (Edisi Kopi)");
+  await pageCreator.fill("#ed-st-attr-kecamatan", "Kebayoran Baru");
+  await pageCreator.fill("#ed-st-attr-corridor", "Selatan");
   await pageCreator.click('button[data-map-action="apply-selected"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
   await pageCreator.click('button[data-map-action="add-station"]');
@@ -70,10 +73,10 @@ try {
   await pageCreator.click('button[data-map-action="add-poi"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("POI Publik"));
 
-  // Step 3: add custom photo curse + custom Radar item in Buku Petunjuk + composed Curse in Dek & Kutukan
+  // Step 3: save timer rules + custom Radar item in Buku Petunjuk + composed Curse in Dek & Kutukan
   await pageCreator.click('button[data-step="3"]');
-  await pageCreator.waitForSelector("#ed-curse-title");
-  await pageCreator.fill("#ed-curse-title", "Kutukan Kopi Senopati");
+  await pageCreator.waitForSelector("#ed-head");
+  assert.equal(await pageCreator.locator("#ed-curse-title").count(), 0, "Curse quick-add should not appear inside Timer & Sesi");
   await pageCreator.click('button[data-action="save-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
 

@@ -442,21 +442,18 @@ try {
   await pageCreator.click('button[data-map-tab="primary"]');
   await clickAndWaitPost(pageCreator, 'button[data-map-action="add-landmark"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Landmark Baru"));
-
-  // Step 3: add custom photo_proof + Call Your Shot challenge + Sabotage Curse tactical card
-  await pageCreator.click('button[data-step="3"]');
-  await pageCreator.waitForSelector("#ed-claim-photo-title");
-  await pageCreator.fill("#ed-claim-photo-title", "Foto Mural Senopati");
-  await clickAndWaitPost(pageCreator, 'button[data-action="save-draft"]');
-  await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
-
-  await pageCreator.click('button[data-c3-tab="challenges"]');
   await pageCreator.fill("#ed-chal-title", "Tantangan Call Your Shot Senopati");
   await pageCreator.fill("#ed-chal-answer", "rahasia-jawaban-senopati");
   await pageCreator.fill("#ed-chal-notes", "Contoh rubrik Studio QA. Foto papan nama dari trotoar.");
   await pageCreator.check("#ed-chal-reviewed");
   await clickAndWaitPost(pageCreator, 'button[data-c3-action="add-challenge"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Tantangan Call Your Shot Senopati"));
+
+  // Step 3: save session rules + add Sabotage Curse tactical card
+  await pageCreator.click('button[data-step="3"]');
+  await pageCreator.waitForSelector("#ed-claim-duration");
+  await clickAndWaitPost(pageCreator, 'button[data-action="save-draft"]');
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
 
   await pageCreator.click('button[data-c3-tab="deck"]');
   await pageCreator.fill("#ed-ccard-title", "Sabotase Macet Senopati");

@@ -45,13 +45,13 @@ import {
   createNewStation,
   createNewZone,
   ensureStep2Selection,
-  parseAttributes,
   renderStep2Bottom,
   renderStep2Top,
   renderStep2View,
   syncBoundaryTransitStationsInDraft,
   syncModeStationsInDraft,
   toggleCatalogStationInDraft,
+  updateStationAttributes,
   type JakartaTransitCatalog,
   type Step2State,
   type Step2Target,
@@ -211,6 +211,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     selectedKey = draft ? `${draft.packId}@${draft.version}` : "";
     step = 1;
     step2.selected = null;
+    if (draft && isClaimStudioPack(draft.pack)) {
+      claimStep3.challengeTarget = draft.pack.geography.landmarks[0]?.id ?? "backup";
+    }
     step2.mapMode = "select";
     step2.subTab = "primary";
     step2.mapFailed = false;
@@ -303,8 +306,11 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (signal.aborted) return;
     const label = root.querySelector<HTMLElement>("[data-map-save-state]");
     if (label) label.textContent = savingMap ? "Menyimpan…" : step2.saved ? "Tersimpan" : "Belum disimpan";
-    const fields = root.querySelector<HTMLFieldSetElement>("fieldset[data-point-fields]");
-    if (fields) fields.disabled = savingMap;
+    for (const fields of root.querySelectorAll<HTMLFieldSetElement>(
+      "fieldset[data-point-fields], fieldset[data-challenge-fields]",
+    )) {
+      fields.disabled = savingMap;
+    }
   }
 
   function restoreMapFields() {
@@ -355,6 +361,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   function handleStep2SelectTarget(target: Step2Target) {
     if (savingMap) return;
     step2.selected = target;
+    if (target.kind === "landmark") claimStep3.challengeTarget = target.id;
     step2.subTab = target.kind === "start" ? "start" : target.kind === "poi" ? "secondary" : "primary";
     step2.drawer = null;
     render();
@@ -401,6 +408,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           },
         ];
         step2.selected = { kind: "landmark", id: lm.id };
+        claimStep3.challengeTarget = lm.id;
         void persistDraft(pack, snap, `Landmark ${lm.name} ditambahkan di peta.`);
       } else if (step2.subTab === "secondary") {
         const poi = createNewPoi(coord, snap.pois.length);
@@ -664,7 +672,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (!active) {
       return `<div class="rb-card"><p>Pilih atau kloning draf di Tahap 1 terlebih dahulu.</p><button type="button" class="primary" data-step="1">← Kembali ke Tahap 1</button></div>`;
     }
-    return renderStep2View(active, step2, isEditable(active));
+    return renderStep2View(active, step2, isEditable(active), claimStep3);
   }
 
   function renderStep3(active?: StudioVersionRecord): string {
@@ -778,7 +786,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
       if (topSlot && mapHost && fallbackEl && bottomSlot && studioMapKey === draftKey) {
         topSlot.innerHTML = renderStep2Top(step2, editable);
-        bottomSlot.innerHTML = renderStep2Bottom(active, step2, editable);
+        bottomSlot.innerHTML = renderStep2Bottom(active, step2, editable, claimStep3);
         restoreMapFields();
         mapHost.hidden = step2.mapFailed;
         fallbackEl.hidden = !step2.mapFailed;
@@ -801,7 +809,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       }
 
       destroyStep2Map();
-      bodySlot.innerHTML = renderStep2View(active, step2, editable);
+      bodySlot.innerHTML = renderStep2View(active, step2, editable, claimStep3);
       restoreMapFields();
       if (!step2.mapFailed) {
         const freshHost = bodySlot.querySelector<HTMLElement>("#st-map-host");
@@ -857,25 +865,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       if (cdEl) updatedPack.claiming.failCooldownMs = Number(cdEl.value || 5) * 60_000;
       const handEl = root.querySelector<HTMLInputElement>("#ed-claim-hand");
       if (handEl) updatedPack.tacticalDeck.maxHandSize = Number(handEl.value || 2);
+      const cdeckEnabledEl = root.querySelector<HTMLSelectElement>("#ed-cdeck-enabled");
+      if (cdeckEnabledEl) updatedPack.tacticalDeck.enabled = cdeckEnabledEl.value === "true";
+      const cdeckMaxcEl = root.querySelector<HTMLInputElement>("#ed-cdeck-maxc");
+      if (cdeckMaxcEl) updatedPack.tacticalDeck.maxActiveCursesPerTarget = Math.max(1, Number(cdeckMaxcEl.value || 1));
       const lmName = root.querySelector<HTMLInputElement>("#ed-claim-landmark-name")?.value.trim();
       if (lmName && updatedPack.geography.landmarks[0]) {
         updatedPack.geography.landmarks[0].name = lmName;
-      }
-      const photoTitle = root.querySelector<HTMLInputElement>("#ed-claim-photo-title")?.value.trim();
-      if (photoTitle) {
-        updatedPack.challenges.backupPool.push({
-          id: `custom-photo-${Date.now()}`,
-          title: photoTitle,
-          verificationNotes: "Terverifikasi dari ruang publik bebas tiket oleh kreator.",
-          reviewed: true,
-          reviewedAt: new Date().toISOString().slice(0, 10),
-          payload: {
-            primitive: "photo_proof",
-            prompt: `Ambil foto publik untuk tantangan: ${photoTitle}`,
-            verificationMode: "rival_or_timeout",
-            autoApproveMs: 3 * 60_000,
-          },
-        });
       }
     } else {
       const minpEl = root.querySelector<HTMLInputElement>("#ed-seek-minp");
@@ -898,32 +894,18 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       if (handEl) updatedPack.deck.baseHandLimit = Number(handEl.value || 5);
       const maxCursesEl = root.querySelector<HTMLInputElement>("#ed-max-curses");
       if (maxCursesEl) updatedPack.deck.maxActiveBlockingCurses = Number(maxCursesEl.value || 1);
+      const famEnabledEl = root.querySelector<HTMLSelectElement>("#ed-fam-enabled");
+      const famDrawEl = root.querySelector<HTMLInputElement>("#ed-fam-draw");
+      const famKeepEl = root.querySelector<HTMLInputElement>("#ed-fam-keep");
+      const existingFam = updatedPack.investigationBook.families[seekStep3.family];
+      if (existingFam && (famEnabledEl || famDrawEl || famKeepEl)) {
+        if (famEnabledEl) existingFam.enabled = famEnabledEl.value === "true";
+        if (famDrawEl) existingFam.drawCount = Math.max(1, Number(famDrawEl.value || 2));
+        if (famKeepEl) existingFam.keepCount = Math.max(1, Math.min(existingFam.drawCount, Number(famKeepEl.value || 1)));
+      }
       const stationName = root.querySelector<HTMLInputElement>("#ed-station-name")?.value.trim();
       if (stationName && updatedSnapshot.stations[0]) {
         updatedSnapshot.stations[0].name = stationName;
-      }
-      const curseTitle = root.querySelector<HTMLInputElement>("#ed-curse-title")?.value.trim();
-      if (curseTitle) {
-        updatedPack.deck.cards.push({
-          id: `custom-curse-${Date.now()}`,
-          category: "curse",
-          copies: 1,
-          title: curseTitle,
-          description: "Kutukan foto kustom kreator (batas auto-approve 3 menit).",
-          effect: {
-            primitive: "curse",
-            curse: {
-              castingCosts: [{ type: "none" }],
-              blockerType: "block_questions",
-              clearCondition: {
-                type: "photo_challenge",
-                prompt: `Kirim foto tantangan: ${curseTitle}`,
-                approvalMode: "opponent_or_timeout",
-                autoApproveMs: 3 * 60_000,
-              },
-            },
-          },
-        });
       }
     }
 
@@ -999,6 +981,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     if (target instanceof HTMLSelectElement && target.id === "ed-chal-target") {
       claimStep3.challengeTarget = target.value;
+      if (target.value !== "backup") {
+        step2.selected = { kind: "landmark", id: target.value };
+      }
       render();
       return;
     }
@@ -1096,8 +1081,21 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         if (active && target.step2Tab === "primary") {
           const pack = active.pack;
           const claim = isClaimStudioPack(pack);
-          const point = claim ? pack.geography.landmarks[index] : active.snapshot.stations[index];
-          if (point) step2.selected = { kind: claim ? "landmark" : "station", id: point.id };
+          if (claim && btn.dataset.jumpPath.toLowerCase().includes("backup")) {
+            const firstLm = pack.geography.landmarks[0];
+            if (firstLm && step2.selected?.kind !== "landmark") {
+              step2.selected = { kind: "landmark", id: firstLm.id };
+            }
+            claimStep3.challengeTarget = "backup";
+          } else {
+            const lmMatch = /landmarkChallenges\.([^.[]+)/.exec(btn.dataset.jumpPath);
+            const matchedLm = claim && lmMatch ? pack.geography.landmarks.find(l => l.id === lmMatch[1]) : undefined;
+            const point = claim ? (matchedLm ?? pack.geography.landmarks[index]) : active.snapshot.stations[index];
+            if (point) {
+              step2.selected = { kind: claim ? "landmark" : "station", id: point.id };
+              if (claim) claimStep3.challengeTarget = point.id;
+            }
+          }
         }
         if (active && target.step2Tab === "secondary") {
           if (isClaimStudioPack(active.pack)) step2.zoneId = btn.dataset.jumpZone || active.pack.geography.zones[index]?.id || null;
@@ -1433,8 +1431,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (mapAction) {
       if (mapAction === "edit-challenges" && format === "claim-the-city" && step2.selected?.kind === "landmark") {
         claimStep3.challengeTarget = step2.selected.id;
-        claimStep3.subTab = "challenges";
-        step = 3;
         render();
         root.querySelector<HTMLSelectElement>("#ed-chal-target")?.focus();
         return;
@@ -1486,7 +1482,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
               if (lines.length) st.transitLines = lines;
               st.latitude = Number(root.querySelector<HTMLInputElement>("#ed-st-lat")?.value ?? st.latitude);
               st.longitude = Number(root.querySelector<HTMLInputElement>("#ed-st-lng")?.value ?? st.longitude);
-              st.attributes = parseAttributes(root.querySelector<HTMLInputElement>("#ed-st-attrs")?.value ?? "");
+              const kecamatan = root.querySelector<HTMLInputElement>("#ed-st-attr-kecamatan")?.value.trim() ?? "";
+              const corridor = root.querySelector<HTMLInputElement>("#ed-st-attr-corridor")?.value.trim() ?? "";
+              st.attributes = updateStationAttributes(st.attributes, kecamatan, corridor);
               st.publicHours = root.querySelector<HTMLInputElement>("#ed-st-hours")?.value.trim() || st.publicHours;
               st.estimatedTravelFromStartMs =
                 Number(root.querySelector<HTMLInputElement>("#ed-st-travel")?.value ?? 10) * 60_000;
@@ -1570,6 +1568,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             },
           ];
           step2.selected = { kind: "landmark", id: lm.id };
+          claimStep3.challengeTarget = lm.id;
           await persistDraft(pack, snap, `Landmark ${lm.name} ditambahkan.`);
           return;
         }
