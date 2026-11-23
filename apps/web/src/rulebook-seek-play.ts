@@ -1263,14 +1263,16 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
     if (!mapHost) {
       root.innerHTML = `<section class="sg-game" aria-label="Papan Hide &amp; Seek">
-        <div class="sg-board" id="sg-map"></div><div class="room-activity-host"></div><div id="sg-controls"></div>
+        <div class="sg-board" id="sg-map"></div><div class="room-activity-host"></div><div id="sg-controls"><div id="sg-hud-host"></div><div class="sg-dock"></div></div>
       </section>`;
       mapHost = root.querySelector<HTMLElement>("#sg-map")!;
     }
     const controls = root.querySelector<HTMLElement>("#sg-controls")!;
-    const previousRole = controls.querySelector<HTMLElement>(".sg-role");
+    const hudHost = controls.querySelector<HTMLElement>("#sg-hud-host")!;
+    const dock = controls.querySelector<HTMLElement>(".sg-dock")!;
+    const previousRole = hudHost.querySelector<HTMLElement>(".sg-role");
     root.querySelector<HTMLElement>(".sg-game")!.dataset.role = room.role;
-    const panelScroll = controls.querySelector(".sg-sheet")?.scrollTop ?? 0;
+    const panelScroll = dock.querySelector(".sg-sheet")?.scrollTop ?? 0;
     const focused = document.activeElement instanceof HTMLElement && controls.contains(document.activeElement) ? document.activeElement : null;
     const previousInput = focused instanceof HTMLInputElement ? { id: focused.id, value: focused.value } : null;
     const activeSelect = focused instanceof HTMLSelectElement ? focused.id : "";
@@ -1284,7 +1286,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const activeScreenAlert = inlineError && (inlineError.slot === "lobby" || inlineError.slot === "catalog")
       ? renderInlineAlert(inlineError.message, inlineError.tone)
       : "";
-    controls.innerHTML = `<header class="sg-hud">
+    hudHost.innerHTML = `<header class="sg-hud">
       <div class="sg-role">
         <span class="sg-role-mark" aria-hidden="true">${isHider ? "◆" : "◎"}</span>
         <h1>${isHider ? "Penyembunyi" : "Pencari"}</h1><p>${phaseLabels[room.phase]} · ${room.turnNumber}/${room.totalPlannedTurns}</p>
@@ -1296,9 +1298,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       </div>
     </header>
     ${room.phase !== "head_start" ? `<p class="sg-location">${room.seekerPosition ? `${room.seekerPosition.seatId === room.seatId ? "Kamu" : "Pencari"} · ${station ? escapeText(station.name) : "Check-in terverifikasi"} · <span id="sg-position-age"></span>` : "Belum ada check-in pencari"}</p>` : ""}
-    ${hasMapResult && latest ? `<p class="sg-map-result" role="status">${questionNames[latest.family]} · ${escapeText(answerText(latest.answerLabel ?? ""))}</p>` : ""}
-    <div class="sg-dock">
-      ${panel || activeScreenAlert || statusMsg ? `<section class="sg-sheet" aria-label="Panel permainan">
+    ${hasMapResult && latest ? `<p class="sg-map-result" role="status">${questionNames[latest.family]} · ${escapeText(answerText(latest.answerLabel ?? ""))}</p>` : ""}`;
+    dock.innerHTML = `${panel || activeScreenAlert || statusMsg ? `<section class="sg-sheet" aria-label="Panel permainan">
         ${activeScreenAlert}
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${panel ? renderGamePanel(live, deal) : ""}
@@ -1307,9 +1308,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         <button type="button" data-action="game-panel" data-panel="${selectedNav}" aria-pressed="${panel === selectedNav}"><span class="sg-nav-icon" aria-hidden="true">${isHider ? "▤" : "✦"}</span>${isHider ? `Kartu ${live.deck.hiderHandCount}` : "Tanya"}</button>
         <button type="button" data-action="game-panel" data-panel="history" aria-pressed="${panel === "history"}"><span class="sg-nav-icon" aria-hidden="true">◷</span>Riwayat</button>
         <button type="button" data-action="game-panel" data-panel="board" aria-pressed="${panel === "board"}"><span class="sg-nav-icon" aria-hidden="true">◇</span>Titik</button>
-      </nav>
-    </div>`;
-    const nextRole = controls.querySelector<HTMLElement>(".sg-role");
+      </nav>`;
+    const nextRole = hudHost.querySelector<HTMLElement>(".sg-role");
     if (previousRole && nextRole && previousRole.innerHTML === nextRole.innerHTML) nextRole.replaceWith(previousRole);
     activityUi.mount(root.querySelector(".room-activity-host"), hasMapResult);
     if (openDraw || openIncoming) {
