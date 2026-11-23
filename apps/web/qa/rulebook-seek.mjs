@@ -387,9 +387,29 @@ try {
     const { x, y } = element.getBoundingClientRect();
     return { x, y };
   });
+  const cameraBeforeZoom = await pinPosition();
   await pageG2.locator('.maplibregl-ctrl-zoom-in').click();
-  await pageG2.waitForTimeout(450);
-  const cameraBeforeRegroup = await pinPosition();
+  const cameraBeforeRegroup = await cameraPin.evaluate((element, beforeZoom) => new Promise((resolve, reject) => {
+    let frame;
+    let previous = beforeZoom;
+    let unchangedSince = performance.now();
+    const deadline = setTimeout(() => {
+      cancelAnimationFrame(frame);
+      reject(new Error("The zoomed map pin did not settle"));
+    }, 5000);
+    function sample(now) {
+      const { x, y } = element.getBoundingClientRect();
+      if (x !== previous.x || y !== previous.y) unchangedSince = now;
+      if (now - unchangedSince >= 150 && Math.hypot(x - beforeZoom.x, y - beforeZoom.y) > 3) {
+        clearTimeout(deadline);
+        resolve({ x, y });
+        return;
+      }
+      previous = { x, y };
+      frame = requestAnimationFrame(sample);
+    }
+    frame = requestAnimationFrame(sample);
+  }), cameraBeforeZoom);
   await pageG2.fill("#rb-found-input", foundCode);
   await clickAndWaitPost(pageG2, 'button[data-action="submit-found-code"]');
   await pageG2.waitForFunction(() => document.body.textContent.includes("Berkumpul Kembali"));
