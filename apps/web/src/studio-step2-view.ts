@@ -403,6 +403,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
           ? `<div class="rb-actions">
               <button type="button" class="secondary" data-map-action="apply-selected">Simpan titik</button>
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus Landmark</button>
+              <button type="button" class="secondary" data-map-action="edit-challenges">Sunting tantangan</button>
             </div>`
           : ""
       }

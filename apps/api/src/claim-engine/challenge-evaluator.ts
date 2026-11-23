@@ -7,6 +7,7 @@ import type {
   LocationFix,
 } from "@kelana-ria/contracts";
 import { verifyGpsAtPoint } from "../seek-engine/geo-evaluator.js";
+import { matchesClaimInputAnswer } from "@kelana-ria/contracts";
 
 export function sanitizeLeafChallenge(payload: ClaimLeafChallengePayload): ClaimSanitizedLeafChallenge {
   switch (payload.primitive) {
@@ -98,29 +99,6 @@ export function resolveActiveLeafChallenge(
   return { ok: true, leaf: payload };
 }
 
-function normalizeText(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, " ");
-}
-
-function matchesInputAnswer(
-  rawValue: string,
-  inputMode: "text" | "number",
-  acceptedAnswers?: string[],
-  numericRange?: { min: number; max: number },
-): boolean {
-  const trimmed = rawValue.trim();
-  if (!trimmed) return false;
-  if (inputMode === "number") {
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed)) return false;
-    if (numericRange && parsed >= numericRange.min && parsed <= numericRange.max) return true;
-    if (acceptedAnswers?.some((ans) => Number(ans.trim()) === parsed)) return true;
-    return false;
-  }
-  const normalized = normalizeText(trimmed);
-  return Boolean(acceptedAnswers?.some((ans) => normalizeText(ans) === normalized));
-}
-
 export type LeafEvaluationOutcome =
   | { status: "passed" }
   | { status: "pending_photo_review"; photoId: string; autoApproveMs: number }
@@ -150,7 +128,7 @@ export function evaluateLeafSubmission(params: {
       if (typeof submission.inputValue !== "string") {
         return { status: "wrong", error: "input-required" };
       }
-      return matchesInputAnswer(submission.inputValue, leaf.inputMode, leaf.acceptedAnswers, leaf.numericRange)
+      return matchesClaimInputAnswer(submission.inputValue, leaf.inputMode, leaf.acceptedAnswers, leaf.numericRange)
         ? { status: "passed" }
         : { status: "wrong", error: "wrong-answer" };
     }
@@ -182,7 +160,7 @@ export function evaluateLeafSubmission(params: {
       if (leaf.taskType === "observation_input") {
         if (typeof submission.inputValue !== "string") return { status: "wrong", error: "input-required" };
         const mode = leaf.numericRange ? "number" : "text";
-        return matchesInputAnswer(submission.inputValue, mode, leaf.acceptedAnswers, leaf.numericRange)
+        return matchesClaimInputAnswer(submission.inputValue, mode, leaf.acceptedAnswers, leaf.numericRange)
           ? { status: "passed" }
           : { status: "wrong", error: "wrong-answer" };
       }

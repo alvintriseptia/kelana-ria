@@ -514,6 +514,14 @@ export function validateClaimRulebook(
     if (item.reviewed !== true || !isNonEmptyString(item.reviewedAt, 4)) {
       addError("unreviewed-challenge", path, "Published challenges must be marked reviewed with reviewedAt.");
     }
+    for (const field of ["hint", "learningExplanation"] as const) {
+      if (item[field] !== undefined && !isNonEmptyString(item[field])) {
+        addError("invalid-challenge-copy", `${path}.${field}`, "Optional challenge copy must be non-empty text.");
+      }
+    }
+    if (item.estimatedSeconds !== undefined && !isPositiveInt(item.estimatedSeconds)) {
+      addError("invalid-challenge-estimate", `${path}.estimatedSeconds`, "The estimated time must be a positive number of seconds.");
+    }
     validateChallengePayload(item.payload, `${path}.payload`);
   };
 

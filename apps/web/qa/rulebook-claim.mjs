@@ -328,6 +328,8 @@ try {
   await pageCreator.click('button[data-c3-tab="challenges"]');
   await pageCreator.fill("#ed-chal-title", "Tantangan Call Your Shot Senopati");
   await pageCreator.fill("#ed-chal-answer", "rahasia-jawaban-senopati");
+  await pageCreator.fill("#ed-chal-notes", "Contoh rubrik Studio QA. Foto papan nama dari trotoar.");
+  await pageCreator.check("#ed-chal-reviewed");
   await clickAndWaitPost(pageCreator, 'button[data-c3-action="add-challenge"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Tantangan Call Your Shot Senopati"));
 

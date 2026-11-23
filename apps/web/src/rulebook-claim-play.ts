@@ -720,6 +720,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         ${payload.primitive === "multi_step" ? `<span class="rb-badge">Langkah ${attempt.currentStep + 1}/2</span>` : ""}
       </div>
       <h3>${escapeText(attempt.challenge.title)} · ${escapeText(lmName)}</h3>
+      ${attempt.hint ? `<details class="rb-accordion" data-claim-hint><summary>Petunjuk lokasi</summary><p>${escapeText(attempt.hint)}</p></details>` : ""}
 
       ${
         payload.primitive === "call_your_shot" && !payload.chosenTier
@@ -956,6 +957,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         ${lm.doubleWeighted ? '<span class="rb-badge rb-badge-paid">2× Bobot</span>' : ""}
       </div>
       <h2>${escapeText(meta.name)}</h2>
+      ${room.ownLearningExplanation?.landmarkId === lm.landmarkId ? learningExplanation(room.ownLearningExplanation.text) : ""}
       ${meta.transitSummary ? `<p>${escapeText(meta.transitSummary)}</p>` : ""}
       ${meta.accessNotes ? `<small>${escapeText(meta.accessNotes)}</small>` : ""}
       ${scouted ? `<p>Hasil Intai · <strong>${escapeText(scouted.title)}</strong></p>` : ""}
@@ -1023,6 +1025,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   function renderScore(room: ClaimEngineRoomView): string {
     const solo = room.soloProgress;
     return `${renderResult(room)}
+      ${room.outcome && room.ownLearningExplanation ? learningExplanation(room.ownLearningExplanation.text) : ""}
       ${room.outcome ? "" : "<h2>Skor Ronde</h2>"}
       ${solo ? `<div class="cg-score-grid" aria-label="Target Solo">
         <div><strong>${solo.lockedLandmarks}/${solo.targetLandmarks}</strong><small>Landmark terkunci</small></div>
@@ -1034,6 +1037,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       <p class="cg-rank-rule">Urutan skor · Zona dikuasai › Landmark terkunci › Total landmark</p>`}
       ${room.outcome && room.startedAt !== null ? `<a class="cat-link" href="/?recap=${encodeURIComponent(room.code)}">Buka ringkasan</a>` : ""}
       ${room.outcome ? '<button type="button" class="sg-main" data-nav="catalog">Pilih Papan Lagi</button>' : ""}`;
+  }
+
+  function learningExplanation(text: string): string {
+    return `<aside class="rb-card" aria-label="Fakta lokasi"><strong>Fakta lokasi</strong><p>${escapeText(text)}</p></aside>`;
   }
 
   function renderFallback(payload: ClaimRoomPayload): string {
@@ -1144,6 +1151,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     const sheet = game.querySelector<HTMLElement>(".cg-sheet")!;
     const answer = sheet.querySelector<HTMLInputElement>("#claim-input-answer");
     const checked = sheet.querySelector<HTMLInputElement>('input[name="claim-mcq"]:checked');
+    const hint = sheet.querySelector<HTMLDetailsElement>("[data-claim-hint]");
     const oldDraftKey = sheet.dataset.draftKey;
     const proofInputs = new Map(Array.from(sheet.querySelectorAll<HTMLInputElement>("input[data-cg-photo]"))
       .map(input => [input.dataset.cgPhoto, input]));
@@ -1167,6 +1175,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           : renderLandmark(live)}
         ${renderClaimAlerts(live)}`}`;
     if (draftKey && draftKey === oldDraftKey) {
+      const newHint = sheet.querySelector<HTMLDetailsElement>("[data-claim-hint]");
+      if (hint?.open && newHint) newHint.open = true;
       const newAnswer = sheet.querySelector<HTMLInputElement>("#claim-input-answer");
       if (answer && newAnswer) {
         newAnswer.value = answer.value;

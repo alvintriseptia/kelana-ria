@@ -131,6 +131,9 @@ export type ClaimChallengeItem = {
   id: string;
   title: string;
   verificationNotes: string;
+  hint?: string;
+  learningExplanation?: string;
+  estimatedSeconds?: number;
   reviewed: boolean;
   reviewedAt: string;
   payload: ClaimChallengePrimitive;
@@ -265,6 +268,7 @@ export type ClaimSanitizedChallenge = {
 export type ClaimActiveAttemptView = {
   landmarkId: string;
   challenge: ClaimSanitizedChallenge;
+  hint?: string;
   isStealAttempt: boolean;
   chosenTier?: "standard" | "bold";
   currentStep: 0 | 1;
@@ -374,6 +378,7 @@ export type ClaimEngineRoomView = {
     targetZones: number;
   };
   ownActiveAttempt: ClaimActiveAttemptView | null;
+  ownLearningExplanation?: { landmarkId: string; text: string };
   ownCooldowns: Record<string, number>;
   ownBurnedLandmarks: string[];
   ownHand: ClaimCardInstance[];

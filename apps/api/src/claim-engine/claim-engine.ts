@@ -42,6 +42,7 @@ type InternalSeat = ClaimEngineSeat & {
   burnedLandmarks: Set<string>;
   scoutedLandmarkIds: Set<string>;
   challengeHand: ClaimChallengeItem[];
+  learningExplanation?: NonNullable<ClaimEngineRoomView["ownLearningExplanation"]>;
 };
 
 type InternalAttempt = {
@@ -261,6 +262,9 @@ function completeAttemptSuccess(
   delete match.activeAttemptsBySeat[seat.seatId];
   const lm = match.landmarks[attempt.landmarkId];
   if (!lm || lm.status === "locked") return [];
+  if (attempt.challenge.learningExplanation) {
+    seat.learningExplanation = { landmarkId: lm.landmarkId, text: attempt.challenge.learningExplanation };
+  }
 
   // Consume challenge-hand card and replenish if in challenge_hand mode
   if (attempt.fromChallengeHandId) {
@@ -533,6 +537,7 @@ export function viewClaimEngineMatch(match: ClaimEngineMatch, seatId: string, no
           chosenTier: attempt.chosenTier,
           currentStep: attempt.currentStep,
         }),
+        ...(attempt.challenge.hint ? { hint: attempt.challenge.hint } : {}),
         isStealAttempt: attempt.isStealAttempt,
         ...(attempt.chosenTier ? { chosenTier: attempt.chosenTier } : {}),
         currentStep: attempt.currentStep,
@@ -579,12 +584,15 @@ export function viewClaimEngineMatch(match: ClaimEngineMatch, seatId: string, no
     phase: match.phase,
     startedAt: match.startedAt,
     deadline: match.deadline,
-    seats: match.seats.map(({ credentialHash: _c, cooldowns: _cd, burnedLandmarks: _b, scoutedLandmarkIds: _sc, challengeHand: _ch, ...pub }) => ({ ...pub })),
+    seats: match.seats.map(({ seatId, name, teamId, isHost, startVerifiedUntil, ready }) => ({
+      seatId, name, teamId, isHost, startVerifiedUntil, ready,
+    })),
     landmarks: Object.values(match.landmarks).map((lm) => ({ ...lm })),
     zones,
     standings,
     ...(prog ? { soloProgress: prog } : {}),
     ownActiveAttempt,
+    ...(seat?.learningExplanation ? { ownLearningExplanation: { ...seat.learningExplanation } } : {}),
     ownCooldowns: seat ? { ...seat.cooldowns } : {},
     ownBurnedLandmarks: seat ? [...seat.burnedLandmarks] : [],
     ownHand: [...(match.deck.handsBySeat[seatId] ?? [])],
@@ -760,6 +768,7 @@ export function applyClaimEngineAction(
         challenge = match.assignedLandmarkChallenges[lm.landmarkId];
       }
       if (!challenge) return finish({ error: "challenge-unavailable", distanceMeters: check.distanceMeters });
+      delete seat.learningExplanation;
 
       match.activeAttemptsBySeat[seatId] = {
         seatId,
