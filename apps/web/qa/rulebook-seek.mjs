@@ -11,6 +11,9 @@ const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
 const results = path.join(root, "qa-results");
 await mkdir(results, { recursive: true });
+const recordVideo = !process.env.CHROMIUM_PATH || process.env.RECORD_GAME_MOTION
+  ? { dir: path.join(results, ".seek-recordings"), size: { width: 390, height: 844 } }
+  : undefined;
 
 let now = 1_800_000_000_000;
 const server = createSoloServer({
@@ -44,7 +47,7 @@ try {
   await ctxRoot.close();
 
   // 1. Creator opens Studio from /, selects Hide & Seek, clones Official pack, exercises 4-step stepper + JSON export/import + revision note + publish
-  const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 }, recordVideo });
   const pageCreator = await ctxCreator.newPage();
   pageCreator.setDefaultTimeout(20_000);
   await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
@@ -141,7 +144,7 @@ try {
   const roomCode = codeMatch[1];
 
   // 2. Two guests join the paid room in isolated browser contexts (3 players total under 1 pass!)
-  const ctxG2 = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
+  const ctxG2 = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block", recordVideo });
   const pageG2 = await ctxG2.newPage();
   pageG2.setDefaultTimeout(20_000);
   await pageG2.goto(`${baseUrl}/?play=rulebook-seek`, { waitUntil: "networkidle" });
@@ -274,13 +277,20 @@ try {
   await pageCreator.click('button[data-answer="yes"]');
   assert.equal(await pageCreator.locator('[data-correct="true"]').isVisible(), true);
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
+  const dealGrid = pageCreator.locator(".sg-deal");
+  await dealGrid.locator(".sg-offer-back").first().waitFor({ state: "attached" });
+  assert.equal(await pageCreator.locator('[data-action="confirm-draw"]').isDisabled(), true);
   const answerNotice = pageG2.locator('[data-activity-message][data-notice-kind="answer"]');
   await answerNotice.waitFor();
+  const radarResult = pageG2.locator('.sg-map-result[data-game-motion^="update:"]');
+  await radarResult.waitFor();
+  assert.equal(await canvas.evaluate(element => element.isConnected), true);
   assert.match(await pageG2.locator('[data-activity-announcement][role="status"]').textContent(), /Jawaban sudah masuk/);
   await answerNotice.getByRole("button", { name: "Buka", exact: true }).click();
   await pageG2.getByRole("heading", { name: "Riwayat petunjuk" }).waitFor();
   await refreshSeekRoom(pageG2);
   assert.equal(await answerNotice.isVisible(), false);
+  assert.equal(await pageG2.locator('.sg-map-result[data-game-motion]').count(), 0);
   const answerFeed = await pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json()).then(data => data.activity);
   assert.equal(answerFeed.events.filter(event => event.kind === "answer").length, 1);
   assert.doesNotMatch(JSON.stringify(answerFeed), /"overlay"|"answerCode"|"photoId"/);
@@ -288,7 +298,18 @@ try {
   await pageCreator.waitForSelector('button[data-action="choose-draw"]');
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-reward-draw.png"), animations: "disabled" });
   assert.equal(await pageG2.locator('button[data-action="choose-draw"]').count(), 0);
-  await clickAndWaitPost(pageCreator, 'button[data-action="choose-draw"]');
+  // Reload keeps the same offer and deadline without replaying the deal.
+  const activeOffer = async () => (await (await pageCreator.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`)).json()).deck.activeDraw;
+  const offered = await activeOffer();
+  await pageCreator.reload();
+  const cardChoice = pageCreator.locator('button[data-action="choose-draw"]').first();
+  await cardChoice.waitFor();
+  assert.equal(await dealGrid.count(), 0);
+  assert.deepEqual(await activeOffer(), offered);
+  await cardChoice.press("Enter");
+  assert.equal(await cardChoice.getAttribute("aria-pressed"), "true");
+  assert.deepEqual(await activeOffer(), offered);
+  await clickAndWaitPost(pageCreator, 'button[data-action="confirm-draw"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Tangan Penyembunyi (1/"));
 
   const snapshot = () => pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
@@ -313,8 +334,12 @@ try {
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
   await refreshSeekRoom(pageCreator);
   await pageCreator.click('button[data-answer="hotter"]');
+  await pageCreator.emulateMedia({ reducedMotion: "reduce" });
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
-  await clickAndWaitPost(pageCreator, 'button[data-action="choose-draw"]');
+  await cardChoice.waitFor();
+  assert.equal(await dealGrid.count(), 0);
+  await cardChoice.click();
+  await clickAndWaitPost(pageCreator, 'button[data-action="confirm-draw"]');
   const afterThermometer = (await snapshot()).room;
   assert.equal(afterThermometer.questions.at(-1).answerCode, "hotter");
   assert.deepEqual(afterThermometer.questions[0].overlay, initialRadar);
@@ -353,6 +378,18 @@ try {
   const foundCode = (await pageCreator.textContent('[data-testid="hider-found-code"]')).trim();
   assert.match(foundCode, /^\d{4}$/);
 
+  await pageG2.unroute("**/api/map/config");
+  await pageG2.unroute("**/qa-tiles/style.json");
+  await pageG2.click('button[data-action="retry-map"]');
+  await pageG2.locator('[data-map-ready="true"]').waitFor();
+  const cameraPin = pageG2.locator('[data-map-point="mrt-senayan"]');
+  const pinPosition = () => cameraPin.evaluate(element => {
+    const { x, y } = element.getBoundingClientRect();
+    return { x, y };
+  });
+  await pageG2.locator('.maplibregl-ctrl-zoom-in').click();
+  await pageG2.waitForTimeout(450);
+  const cameraBeforeRegroup = await pinPosition();
   await pageG2.fill("#rb-found-input", foundCode);
   await clickAndWaitPost(pageG2, 'button[data-action="submit-found-code"]');
   await pageG2.waitForFunction(() => document.body.textContent.includes("Berkumpul Kembali"));
@@ -362,6 +399,14 @@ try {
     await clickAndWaitPost(page, 'button[data-action="regroup"]');
   }
   await pageG2.locator('.sg-game[data-role="hider"]').waitFor();
+  await pageG2.locator('.sg-role[data-game-motion^="role:"]').waitFor({ timeout: 5000 }).catch(async error => {
+    const { activity, room } = await snapshot();
+    throw new Error(`Role transition did not play on turn ${room.turnNumber}. Latest activity: ${JSON.stringify(activity.events.slice(-4))}`, { cause: error });
+  });
+  await pageG2.locator('[data-map-ready="true"]').waitFor();
+  const cameraAfterRegroup = await pinPosition();
+  assert.ok(Math.hypot(cameraAfterRegroup.x - cameraBeforeRegroup.x, cameraAfterRegroup.y - cameraBeforeRegroup.y) < 3,
+    `Regroup changed the camera from ${JSON.stringify(cameraBeforeRegroup)} to ${JSON.stringify(cameraAfterRegroup)}`);
   const next = (await snapshot()).room;
   assert.equal(next.turnStartPoint.id, "mrt-blok-m");
   assert.equal(next.phase, "head_start");
@@ -372,6 +417,17 @@ try {
   assert.match(await pageG2.locator(".recap-shell").innerText(), /Giliran 1 · Ditemukan · 3 pertanyaan dijawab/);
   assert.ok(await pageG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageG2.screenshot({ path: path.join(results, "rulebook-seek-recap.png") });
+  for (const [context, page, filename] of [
+    [ctxCreator, pageCreator, "rulebook-seek-card-playback.webm"],
+    [ctxG2, pageG2, "rulebook-seek-map-playback.webm"],
+  ]) {
+    const video = page.video();
+    await context.close();
+    if (video) {
+      await video.saveAs(path.join(results, filename));
+      await video.delete();
+    }
+  }
   console.log("qa:rulebook-seek passed (Studio, paid room, clue privacy, Thermometer, photos, map fallback, and role swap)");
 } finally {
   await browser.close();

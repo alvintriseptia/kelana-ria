@@ -1,4 +1,5 @@
-import type { RoomActivityFeed } from "@kelana-ria/contracts";
+import type { RoomActivityEvent, RoomActivityFeed } from "@kelana-ria/contracts";
+import { playGameMotion } from "./game-motion";
 import { createRoomActivityUi, renderRoomActivity } from "./room-activity";
 import type {
   ClaimActiveAttemptView,
@@ -193,6 +194,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let refreshSeq = 0;
   let serverOffset = 0;
   let panel: ClaimPanel = "challenge";
+  let liveEffects: RoomActivityEvent[] = [];
   const activityUi = createRoomActivityUi(lifetime.signal, notice => {
     if (!live || busy) return;
     panel = notice === "activity" ? "activity"
@@ -206,7 +208,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       ? sheet?.querySelector<HTMLElement>("button[data-action='review-rival-photo'], button[data-curse]")
       : sheet?.querySelector<HTMLElement>("[data-activity-heading]");
     (target ?? sheet)?.focus({ preventScroll: true });
-  });
+  }, events => { liveEffects = events; });
   let folded = false;
   let selectedId = "";
   let selectedCardId = "";
@@ -1100,6 +1102,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   function render() {
     if (lifetime.signal.aborted) return;
     activityUi.update(live?.room, live?.activity);
+    const effects = liveEffects;
+    liveEffects = [];
     toast.setLayout(live && live.room.phase !== "lobby" ? "game" : "page", Boolean(live?.activity.prompt));
     if (!live || live.room.phase === "lobby") {
       activityUi.mount(null);
@@ -1235,8 +1239,25 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       button.setAttribute("aria-pressed", String(!folded && button.dataset.panel === panel));
     }
     activityUi.mount(game.querySelector(".room-activity-host"));
+    const scoreEffect = effects.filter(event => event.zoneId || event.kind === "lock" || event.kind === "steal").at(-1);
+    const cardEffect = effects.filter(event => event.kind === "draw" || event.kind === "card").at(-1);
+    if (scoreEffect) playGameMotion(bar.querySelector("span"), "update", scoreEffect.sequence);
+    if (cardEffect) playGameMotion(game.querySelector('[data-panel="cards"]'), "update", cardEffect.sequence);
     if (mapFailed) fallback.innerHTML = renderFallback(live);
-    else void syncClaimMapOverlay(map, live);
+    else void syncClaimMapOverlay(map, live).then(() => {
+      if (!map.isConnected || live?.room.code !== room.code) return;
+      for (const effect of effects) {
+        const { kind, landmarkId, zoneId, sequence } = effect;
+        if (landmarkId && (kind === "claim" || kind === "lock" || kind === "steal" || kind === "card")) {
+          const pin = map.querySelector<HTMLElement>(`[data-map-point="${CSS.escape(landmarkId)}"]`);
+          playGameMotion(pin, kind === "card" ? "role" : kind, sequence);
+        }
+        if (zoneId) {
+          const marker = map.querySelector<HTMLElement>(`[data-map-point="${CSS.escape(`zone:${zoneId}`)}"]`);
+          playGameMotion(marker, "role", sequence);
+        }
+      }
+    });
     updateClocks();
   }
 

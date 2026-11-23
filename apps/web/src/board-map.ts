@@ -27,7 +27,9 @@ export type BoardMapPoint = SoloPoint & {
   statusTag?: "unclaimed" | "claimed" | "locked" | "shielded" | "double";
 };
 
-type BoardCamera = Pick<maplibregl.CameraOptions, "center" | "zoom" | "bearing" | "pitch">;
+type BoardCamera = Pick<maplibregl.CameraOptions, "center" | "zoom" | "bearing" | "pitch"> & {
+  padding?: maplibregl.PaddingOptions;
+};
 
 export type BoardMapOptions = {
   container: HTMLElement;
@@ -54,9 +56,10 @@ export type BoardMapOptions = {
 export type BoardMapUpdateOptions = Omit<BoardMapOptions, "container" | "config">;
 
 export type BoardMapHandle = {
-  getCamera: () => { center: maplibregl.LngLat; zoom: number; pitch: number; bearing: number } | undefined;
+  getCamera: () => BoardCamera | undefined;
   setQuestionPreview: (preview?: SeekMapPreview, padding?: Required<maplibregl.PaddingOptions>) => void;
   focusQuestionPreview: (padding: maplibregl.PaddingOptions) => void;
+  pulseDeduction: (geometry: SeekDeductionOverlay["type"]) => void;
   update: (next: BoardMapUpdateOptions) => void;
   destroy: () => void;
 };
@@ -341,6 +344,8 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
   let styleLoaded = false;
   let questionPreview: SeekMapPreview | undefined;
   let previewPadding: Required<maplibregl.PaddingOptions> | undefined;
+  let deductionPulse: number | undefined;
+  let resetDeductionPulse: (() => void) | undefined;
   const markerMap = new Map<string, BoardMarkerEntry>();
 
   function syncRadarList() {
@@ -734,15 +739,18 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         ...current.checkpoints,
         ...(current.radarCircles ?? []).map((circle) => circle.center),
       ];
+      const initialCamera = current.camera;
+      const { padding, ...camera } = initialCamera ?? {};
       map = new maplibregl.Map({
         container: canvasHost,
         style,
         center: [current.start.longitude, current.start.latitude],
         zoom: 12.5,
-        ...current.camera,
+        ...camera,
         attributionControl: false,
         transformRequest: (url) => ({ url: absolutizeMapUrl(url) }),
       });
+      if (padding) map.setPadding(padding);
 
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
 
@@ -752,7 +760,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         syncSources();
         syncMarkers();
         const fitTarget = current.focusPoints ?? initialPoints;
-        if (!current.camera && fitTarget.length > 1) {
+        if (!initialCamera && fitTarget.length > 1) {
           map.fitBounds(computeFitBounds(fitTarget), { padding: current.fitPadding ?? 36, maxZoom: 14.5, duration: 0 });
         }
         drawQuestionPreview();
@@ -797,7 +805,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
   return {
     getCamera: () =>
       map && styleLoaded
-        ? { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() }
+        ? { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing(), padding: map.getPadding() }
         : undefined,
     setQuestionPreview(preview?: SeekMapPreview, padding?: Required<maplibregl.PaddingOptions>) {
       if (preview === questionPreview) return;
@@ -806,6 +814,36 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       drawQuestionPreview();
     },
     focusQuestionPreview,
+    pulseDeduction(geometry) {
+      if (!map || !styleLoaded || destroyed) return;
+      window.clearTimeout(deductionPulse);
+      resetDeductionPulse?.();
+      resetDeductionPulse = undefined;
+      const currentMap = map;
+      if (geometry === "circle" && map.getLayer("radar-search-shading")) {
+        map.setPaintProperty("radar-search-shading", "fill-opacity-transition", { duration: 0 });
+        map.setPaintProperty("radar-search-shading", "fill-opacity", ["case", ["get", "possible"], 0.5, 0.46]);
+        resetDeductionPulse = () => {
+          currentMap.setPaintProperty("radar-search-shading", "fill-opacity-transition", { duration: 440 });
+          currentMap.setPaintProperty("radar-search-shading", "fill-opacity", ["case", ["get", "possible"], 0.27, 0.34]);
+        };
+      } else if (geometry === "bisector" || geometry === "voronoi") {
+        const layer = geometry === "bisector" ? "bisector-lines" : "radar-outline";
+        if (!map.getLayer(layer)) return;
+        map.setPaintProperty(layer, "line-width-transition", { duration: 0 });
+        map.setPaintProperty(layer, "line-width", 5);
+        resetDeductionPulse = () => {
+          currentMap.setPaintProperty(layer, "line-width-transition", { duration: 440 });
+          currentMap.setPaintProperty(layer, "line-width", geometry === "bisector" ? 2.5 : 2);
+        };
+      } else {
+        return;
+      }
+      deductionPulse = window.setTimeout(() => {
+        resetDeductionPulse?.();
+        resetDeductionPulse = undefined;
+      }, 55);
+    },
     update(next: BoardMapUpdateOptions) {
       if (destroyed) return;
       current = next;
@@ -822,6 +860,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
     },
     destroy() {
       destroyed = true;
+      window.clearTimeout(deductionPulse);
       delete container.dataset.mapReady;
       delete container.dataset.questionPreview;
       for (const entry of markerMap.values()) entry.marker.remove();

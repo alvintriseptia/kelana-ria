@@ -158,6 +158,7 @@ export function createRoomActivity() {
       } else if (question.status === "answered") {
         publish(seats.filter(seat => seat.seatId !== formerHiderId), {
           kind: "answer", text: "Jawaban sudah masuk. Lihat petunjuk.", panel: "clues", at: now, turn: questionTurn,
+          ...(question.overlay ? { mapChange: true as const } : {}),
         }, () => active);
       } else {
         const text = question.status === "timeout" ? "Waktu jawab habis. Periksa pertanyaan." : "Pertanyaan ditutup.";

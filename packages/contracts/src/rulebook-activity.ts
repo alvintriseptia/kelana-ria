@@ -20,6 +20,7 @@ export type RoomActivityEvent = RoomActivityNotice & {
   at: number;
   turn?: number;
   alert?: true;
+  mapChange?: true;
 };
 
 export type RoomActivityFeed = {
