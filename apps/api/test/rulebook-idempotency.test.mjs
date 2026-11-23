@@ -1,0 +1,225 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import * as api from "../dist/index.js";
+
+const T0 = 1_800_000_000_000;
+
+async function startServer(nowRef) {
+  const server = api.createSoloServer({
+    databasePath: ":memory:",
+    now: () => nowRef.now,
+    midtrans: api.createRecordedMidtransAdapter(),
+    allowRulebookSandboxCheckout: true,
+    allowHideSeekQa: true,
+    rulebookReviewerKey: "test-reviewer-key",
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  return { server, baseUrl };
+}
+
+function makeClient(baseUrl) {
+  let cookie = "";
+  return {
+    async get(path) {
+      const res = await fetch(`${baseUrl}${path}`, {
+        headers: cookie ? { cookie } : undefined,
+      });
+      const setCookie = res.headers.get("set-cookie");
+      if (setCookie) cookie = setCookie.split(";")[0];
+      return { status: res.status, body: await res.json() };
+    },
+    async post(path, body, extraHeaders = {}) {
+      const res = await fetch(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(cookie ? { cookie } : {}),
+          ...extraHeaders,
+        },
+        body: JSON.stringify(body),
+      });
+      const setCookie = res.headers.get("set-cookie");
+      if (setCookie) cookie = setCookie.split(";")[0];
+      return { status: res.status, body: await res.json() };
+    },
+  };
+}
+
+test("POST /api/rulebooks create-free-room and create-order deduplicate retries by requestId", async () => {
+  const clock = { now: T0 };
+  const { server, baseUrl } = await startServer(clock);
+  try {
+    const client = makeClient(baseUrl);
+    const freeReq = "req-free-room-retry-0001";
+    const r1 = await client.post("/api/rulebooks", {
+      type: "create-free-room",
+      packId: "official-jakarta-compact-claim",
+      version: 1,
+      hostName: "Raka",
+      requestId: freeReq,
+    });
+    const r2 = await client.post("/api/rulebooks", {
+      type: "create-free-room",
+      packId: "official-jakarta-compact-claim",
+      version: 1,
+      hostName: "Raka",
+      requestId: freeReq,
+    });
+    assert.equal(r1.status, 200);
+    assert.equal(r2.status, 200);
+    assert.equal(r1.body.roomCode, r2.body.roomCode, "Retried create-free-room must not create a second room");
+
+    // Publish a paid pack and confirm create-order deduplicates by requestId
+    const cloned = await client.post("/api/rulebooks", {
+      type: "clone-official",
+      templatePackId: "official-jakarta-compact-claim",
+      packId: "paid-retry-claim",
+      title: "Paid Retry Claim",
+      byline: "QA",
+      priceIdr: 25_000,
+    });
+    assert.equal(cloned.status, 200);
+    const submitted = await client.post("/api/rulebooks", {
+      type: "submit-draft",
+      packId: "paid-retry-claim",
+      version: 1,
+    });
+    assert.equal(submitted.status, 200);
+    const published = await client.post(
+      "/api/rulebooks",
+      { type: "publish-version", packId: "paid-retry-claim", version: 1 },
+      { authorization: "Bearer test-reviewer-key" },
+    );
+    assert.equal(published.status, 200);
+
+    const orderReq = "req-paid-order-retry-0001";
+    const o1 = await client.post("/api/rulebooks", {
+      type: "create-order",
+      packId: "paid-retry-claim",
+      version: 1,
+      requestId: orderReq,
+    });
+    const o2 = await client.post("/api/rulebooks", {
+      type: "create-order",
+      packId: "paid-retry-claim",
+      version: 1,
+      requestId: orderReq,
+    });
+    assert.equal(o1.status, 200);
+    assert.equal(o2.status, 200);
+    assert.equal(o1.body.order.orderId, o2.body.order.orderId, "Retried create-order must not create a second order");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("Hide & Seek deck-action and play-card deduplicate retries by actionId without double-applying", async () => {
+  const clock = { now: T0 };
+  const { server, baseUrl } = await startServer(clock);
+  try {
+    const hider = makeClient(baseUrl);
+    const seeker = makeClient(baseUrl);
+
+    const seekList = await hider.get("/api/rulebooks?format=hide-and-seek");
+    const compactSeek = seekList.body.listings.find((item) => item.packId === "official-jakarta-compact-seek");
+    assert.ok(compactSeek);
+
+    const created = await hider.post("/api/rulebooks", {
+      type: "create-free-room",
+      packId: compactSeek.packId,
+      version: compactSeek.version,
+      hostName: "Hider",
+      qa: true,
+      requestId: "req-seek-qa-room-0001",
+    });
+    assert.equal(created.status, 200);
+    const code = created.body.roomCode;
+
+    const joined = await seeker.post("/api/rulebooks", { type: "join-room", roomCode: code, name: "Seeker" });
+    assert.equal(joined.status, 200);
+
+    const view1 = await hider.get(`/api/rulebooks/rooms/${code}`);
+    const startPoint = view1.body.room.turnStartPoint;
+    const fix = { latitude: startPoint.latitude, longitude: startPoint.longitude, accuracy: 10, timestamp: clock.now };
+
+    for (const [idx, c] of [hider, seeker].entries()) {
+      assert.equal((await c.post("/api/rulebooks", {
+        type: "room-action", roomCode: code, action: { type: "check-in-start", actionId: `start-${idx}`, fix },
+      })).status, 200);
+      assert.equal((await c.post("/api/rulebooks", {
+        type: "room-action", roomCode: code, action: { type: "ready", actionId: `ready-${idx}`, ready: true },
+      })).status, 200);
+    }
+    assert.equal((await hider.post("/api/rulebooks", {
+      type: "room-action", roomCode: code, action: { type: "start", actionId: "start-match" },
+    })).status, 200);
+
+    const headStartView = await hider.get(`/api/rulebooks/rooms/${code}`);
+    const anchor = headStartView.body.publicBoard.stations[0];
+    assert.equal((await hider.post("/api/rulebooks", {
+      type: "room-action",
+      roomCode: code,
+      action: {
+        type: "lock-anchor",
+        actionId: "lock-anchor-1",
+        stationId: anchor.id,
+        fix: { latitude: anchor.latitude, longitude: anchor.longitude, accuracy: 10, timestamp: clock.now },
+      },
+    })).status, 200);
+
+    // Advance past head start into seeking phase
+    assert.equal((await hider.post("/api/rulebooks", {
+      type: "seek-qa-advance",
+      roomCode: code,
+      step: "phase-end",
+      expectedDeadline: headStartView.body.room.phaseEndsAt,
+      actionId: "qa-end-head-start",
+    })).status, 200);
+
+    const seekingSeekerView = await seeker.get(`/api/rulebooks/rooms/${code}`);
+    const radarItem = seekingSeekerView.body.room.menu.find((m) => m.family === "radar" && !m.isCustomRadius);
+    const seekerFix = { latitude: startPoint.latitude, longitude: startPoint.longitude, accuracy: 10, timestamp: seekingSeekerView.body.room.now };
+    assert.equal((await seeker.post("/api/rulebooks", {
+      type: "room-action",
+      roomCode: code,
+      action: { type: "ask", actionId: "ask-radar-1", family: "radar", itemId: radarItem.itemId, fix: seekerFix },
+    })).status, 200);
+
+    const hiderPending = await hider.get(`/api/rulebooks/rooms/${code}`);
+    const q = hiderPending.body.room.questions.find((item) => item.status === "pending");
+    assert.ok(q && q.privateComputedAnswer);
+    assert.equal((await hider.post("/api/rulebooks", {
+      type: "room-action",
+      roomCode: code,
+      action: { type: "answer-question", actionId: "ans-1", questionId: q.id, answerCode: q.privateComputedAnswer.code },
+    })).status, 200);
+
+    // Hider now has an activeDraw -> replay choose-draw with same actionId must succeed idempotently
+    const drawView = await hider.get(`/api/rulebooks/rooms/${code}`);
+    const activeDraw = drawView.body.deck.activeDraw;
+    assert.ok(activeDraw && activeDraw.cards.length > 0);
+    const keepIds = activeDraw.cards.slice(0, activeDraw.keepCount).map((c) => c.instanceId);
+
+    const d1 = await hider.post("/api/rulebooks", {
+      type: "deck-action",
+      roomCode: code,
+      action: { kind: "choose-draw", actionId: "draw-retry-001", keepInstanceIds: keepIds },
+    });
+    const d2 = await hider.post("/api/rulebooks", {
+      type: "deck-action",
+      roomCode: code,
+      action: { kind: "choose-draw", actionId: "draw-retry-001", keepInstanceIds: keepIds },
+    });
+    assert.equal(d1.status, 200);
+    assert.equal(d2.status, 200);
+    assert.equal(d1.body.ok, true);
+    assert.equal(d2.body.ok, true);
+
+    // Verify hand has exact kept cards once (not duplicated)
+    const afterDraw = await hider.get(`/api/rulebooks/rooms/${code}`);
+    assert.equal(afterDraw.body.deck.hand.length, keepIds.length);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

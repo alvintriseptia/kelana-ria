@@ -8,7 +8,7 @@ import "./solo-play.css";
 const apiPath = "/api/solo";
 const mapUrl = new URL("./assets/solo-schematic.webp", import.meta.url);
 const errors: Record<string, string> = {
-  "outside-radius": "Kamu berada di luar radius check-in. Dekati titiknya lalu coba lagi.",
+  "outside-radius": "Kamu masih terlalu jauh dari titik ini. Dekati titiknya, lalu coba lagi.",
   "inaccurate-fix": "Lokasi kurang akurat. Cari area terbuka lalu coba lagi.",
   "stale-fix": "Data lokasi sudah kedaluwarsa. Coba check-in lagi untuk meminta lokasi baru.",
   "invalid-fix": "Lokasi tidak bisa diverifikasi. Coba check-in lagi.",

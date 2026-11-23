@@ -33,7 +33,7 @@ const errors: Record<string, string> = {
   "invalid-fix": "Lokasi tidak bisa diverifikasi. Coba check-in lagi.",
   "stale-fix": "Data lokasi sudah kedaluwarsa. Coba check-in lagi untuk meminta lokasi baru.",
   "inaccurate-fix": "Lokasi kurang akurat. Cari area terbuka lalu coba lagi.",
-  "outside-radius": "Kamu berada di luar radius check-in. Dekati titiknya lalu coba lagi.",
+  "outside-radius": "Kamu masih terlalu jauh dari titik ini. Dekati titiknya, lalu coba lagi.",
   "incorrect-clue-answer": "Jawaban ini belum cocok dengan data papan. Periksa titik acuan lalu pilih jawaban lagi.",
   "invalid-photo": "Foto tidak bisa diterima. Pilih JPEG, PNG, atau WebP dengan ukuran maksimal 2 MB.",
   "question-closed": "Pertanyaan sudah ditutup. Periksa riwayat petunjuk.",

@@ -1,5 +1,7 @@
 import type { HideSeekCardCategory, HideSeekQuestionFamily, PackOrderSummary, PublicMatchRecapSummary, RulebookFormat, RulebookPlayMode } from "@kelana-ria/contracts";
 import { escapeText } from "./escape-text";
+import { fetchApiJson, resolvePlayerError, type PlayerErrorTone } from "./player-errors";
+import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import jakartaCover from "./assets/jakarta.webp";
 import "./rulebook-catalog.css";
 
@@ -70,21 +72,6 @@ type Options = {
   openPractice: (edition: Edition, mode: RulebookPlayMode) => Promise<void>;
   openStudio: () => void;
 };
-
-const messages: Record<string, string> = {
-  "pack-unavailable": "Edisi ini sudah tidak tersedia. Pilih edisi lain dari katalog.",
-  "mode-unavailable": "Mode ini tidak tersedia untuk edisi ini. Pilih mode lain.",
-  "payment-provider-unavailable": "Pembayaran belum bisa diperiksa. Coba lagi sebentar.",
-  "payment-pending": "Pembayaran masih menunggu konfirmasi. Cek kembali setelah selesai.",
-  "payment-review": "Pembayaran sedang diperiksa. Cek statusnya lagi sebentar.",
-  "checkout-unavailable": "Edisi berbayar belum bisa dibeli pada uji publik ini.",
-  "order-expired": "Waktu pembayaran habis. Kamu bisa membuat pesanan baru.",
-  "payment-expire": "Waktu pembayaran habis. Kamu bisa membuat pesanan baru.",
-  "payment-cancel": "Pembayaran dibatalkan. Kamu bisa membuat pesanan baru.",
-  "payment-deny": "Pembayaran ditolak. Coba dengan pesanan baru.",
-  "order-not-found": "Pesanan belum bisa ditemukan. Coba periksa kembali.",
-};
-const endedPayments = new Set(["order-expired", "payment-expire", "payment-cancel", "payment-deny", "payment-failure"]);
 
 function readStored<T>(key: string): T | undefined {
   try {
@@ -212,6 +199,7 @@ function communityResults(item: Edition, sharedRecaps: PublicMatchRecapSummary[]
 export function mountRulebookCatalog(root: HTMLElement, options: Options, focusHeading = false) {
   const lifetime = new AbortController();
   const { signal } = lifetime;
+  const toast = createPlayerToast({ signal, layout: "page" });
   const params = new URLSearchParams(location.search);
   const pack = params.get("edition");
   const version = Number(params.get("version"));
@@ -221,8 +209,7 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
   let loading = true;
   let busy = false;
   let failed = false;
-  let message = "";
-  let toast = false;
+  let inlineError: { message: string; tone: PlayerErrorTone; area: "payment" | "screen" } | null = null;
   let loadSequence = 0;
 
   const selected = () => catalog?.editions.find(item => item.packId === pack && item.version === version);
@@ -246,9 +233,13 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     const payLink = order.paymentMode === "midtrans-sandbox" && redirect?.startsWith("https://")
       ? `<a class="cat-link" href="${escapeText(redirect)}" target="_blank" rel="noopener noreferrer">Buka pembayaran uji</a>`
       : "";
+    const paymentAlert = inlineError?.area === "payment"
+      ? renderInlineAlert(inlineError.message, inlineError.tone, 'data-testid="payment-inline-alert"')
+      : "";
     return `<section class="cat-box" aria-label="Pembayaran uji">
       <h2>Pembayaran uji</h2>
       <p role="status">${price(item)} · Menunggu konfirmasi pembayaran</p>
+      ${paymentAlert}
       ${payLink}
       ${action("check-payment", "Cek status pembayaran", "secondary", busy || !fresh)}
       ${order.paymentMode === "recorded-sandbox" ? action("simulate-payment", "Simulasikan pembayaran berhasil", "primary", busy || !fresh) : ""}
@@ -263,10 +254,10 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     const offline = failed
       ? `<div class="cat-message" role="status">Katalog belum bisa diperbarui. Periksa koneksi. ${action("retry", "Coba lagi")}</div>`
       : "";
-    const status = message ? toast
-      ? `<div class="cat-toast"><span role="alert">${escapeText(message)}</span>
-          <button type="button" data-cat-action="dismiss" aria-label="Tutup pemberitahuan">×</button></div>`
-      : `<p class="cat-message" role="alert">${escapeText(message)}</p>` : "";
+    const hasPaymentOrder = Boolean(item && item.priceIdr > 0 && catalog?.allowSandboxCheckout && getAttempt()?.order);
+    const screenAlert = inlineError && !(inlineError.area === "payment" && hasPaymentOrder)
+      ? renderInlineAlert(inlineError.message, inlineError.tone)
+      : "";
     if (pack) {
       const back = '<a class="cat-back" href="/" data-catalog-link>‹ Katalog</a>';
       document.title = item ? `${item.title} · Kelana Ria` : "Edisi · Kelana Ria";
@@ -287,7 +278,7 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
           <h2>Aturan edisi</h2><p>${objective(item, mode)}</p>
           <dl class="cat-facts">${facts(item, mode)}</dl>
         </section>
-        ${offline}${status}
+        ${offline}${screenAlert}
         <div class="cat-actions" aria-busy="${busy}">
           ${action("practice", "Coba Panduan")}
           ${item.priceIdr === 0
@@ -296,7 +287,7 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
         </div>
         ${communityResults(item, catalog?.sharedRecaps)}
       </article>` : `<article class="cat-detail">${back}<h1>Edisi permainan</h1>
-        ${loading ? '<p role="status">Memuat edisi…</p>' : offline || '<p role="alert">Edisi ini tidak tersedia. Pilih edisi lain dari katalog.</p>'}</article>`;
+        ${loading ? '<p role="status">Memuat edisi…</p>' : offline || renderInlineAlert("Edisi ini tidak tersedia. Pilih edisi lain dari katalog.", "warn")}</article>`;
       focusTitle();
       return;
     }
@@ -331,10 +322,8 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
   async function load() {
     const sequence = ++loadSequence;
     try {
-      const res = await fetch(endpoint, { signal, headers: { Accept: "application/json" } });
-      if (!res.ok) throw new Error();
-      const data = await res.json() as Catalog;
-      if (!Array.isArray(data.editions)) throw new Error();
+      const { ok, data } = await fetchApiJson<Catalog>(endpoint, { signal });
+      if (!ok || !Array.isArray(data.editions)) throw new Error("catalog-invalid");
       if (signal.aborted || sequence !== loadSequence) return;
       catalog = data;
       fresh = true;
@@ -349,6 +338,24 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     render();
   }
 
+  function applyCatalogError(input: unknown, item: Edition, type: string) {
+    const surface = item.priceIdr > 0 ? "checkout" : "catalog";
+    const resolved = resolvePlayerError(input, {
+      surface,
+      action: type,
+      target: `${item.packId}@${item.version}`,
+    });
+    if (resolved.endedPayment) setAttempt();
+    if (resolved.placement === "toast") {
+      inlineError = null;
+      toast.show(resolved);
+    } else {
+      toast.clear();
+      const area = item.priceIdr > 0 && Boolean(getAttempt()?.order) ? "payment" : "screen";
+      inlineError = { message: resolved.message, tone: resolved.tone, area };
+    }
+  }
+
   async function submit(type: string, item: Edition) {
     if (!fresh || busy) return;
     let attempt = getAttempt();
@@ -357,21 +364,20 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       setAttempt(attempt);
     }
     busy = true;
-    message = "";
-    toast = false;
+    inlineError = null;
     render();
     try {
-      const res = await fetch(endpoint, {
-        method: "POST", headers: { "content-type": "application/json" }, signal,
-        body: JSON.stringify({ type, edition: item.packId, version: item.version, mode, requestId: attempt.id }),
+      const { ok, status, data: reply } = await fetchApiJson<CheckoutReply>(endpoint, {
+        signal,
+        body: { type, edition: item.packId, version: item.version, mode, requestId: attempt.id },
       });
-      const reply = await res.json() as CheckoutReply;
       if (signal.aborted) return;
-      if (reply.error || !res.ok) {
-        if (reply.error && endedPayments.has(reply.error)) setAttempt();
-        message = messages[reply.error ?? ""] ?? "Aksi belum berhasil. Coba lagi.";
+      if (reply.error || !ok) {
+        applyCatalogError({ error: reply.error, status }, item, type);
         return;
       }
+      toast.clear();
+      toast.resetDedupe();
       const code = reply.roomCode ?? reply.pass?.roomCode ?? reply.order?.roomCode;
       if (code) {
         setAttempt();
@@ -379,17 +385,16 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       } else if (reply.order) {
         setAttempt({ ...attempt, order: reply.order });
       }
-    } catch {
+    } catch (error) {
       if (!signal.aborted) {
-        message = "Koneksi terputus. Periksa koneksi lalu coba lagi.";
-        toast = true;
+        applyCatalogError(error, item, type);
       }
     } finally {
       if (!signal.aborted) {
         busy = false;
         render();
         (root.querySelector<HTMLElement>(`[data-cat-action="${type}"]:not([disabled])`) ??
-          root.querySelector<HTMLElement>('[data-cat-action="check-payment"]'))?.focus();
+          root.querySelector<HTMLElement>('[data-cat-action="check-payment"]'))?.focus({ preventScroll: true });
       }
     }
   }
@@ -407,21 +412,17 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     const type = control?.dataset.catAction;
     if (type === "studio") return options.openStudio();
     if (type === "retry") return void load();
-    if (type === "dismiss") {
-      message = "";
-      render();
-      root.querySelector<HTMLElement>('[data-cat-action="play"], [data-cat-action="buy"], [data-cat-action="check-payment"]')?.focus();
-      return;
-    }
     const item = selected();
     if (!item || !type || control.disabled || busy) return;
     if (type === "practice") {
-      void options.openPractice(item, mode).catch(() => {
+      void options.openPractice(item, mode).catch((error) => {
         if (signal.aborted) return;
-        message = "Panduan belum bisa dibuka. Periksa koneksi lalu coba lagi.";
-        toast = true;
-        render();
-        root.querySelector<HTMLElement>('[data-cat-action="practice"]')?.focus();
+        const resolved = resolvePlayerError({ code: "practice-load-failed", detail: error instanceof Error ? error.message : undefined }, {
+          surface: "catalog",
+          action: "practice",
+          target: item.packId,
+        });
+        toast.show(resolved);
       });
       return;
     }
@@ -430,14 +431,17 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       const url = new URL(location.href);
       url.searchParams.set("mode", mode);
       history.replaceState(history.state, "", url);
-      message = "";
+      inlineError = null;
+      toast.clear();
       render();
-      root.querySelector<HTMLElement>(`[data-cat-action="${type}"]`)?.focus();
+      root.querySelector<HTMLElement>(`[data-cat-action="${type}"]`)?.focus({ preventScroll: true });
       return;
     }
     void submit(type, item);
   }, { signal });
-  window.addEventListener("online", () => void load(), { signal });
+  window.addEventListener("online", () => {
+    if (!fresh || failed) void load();
+  }, { signal });
   render();
   void load();
   return () => lifetime.abort();

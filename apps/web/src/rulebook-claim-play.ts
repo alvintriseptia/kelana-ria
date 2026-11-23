@@ -10,6 +10,8 @@ import type {
 import type { BoardMapHandle, BoardMapUpdateOptions } from "./board-map";
 import { getLocation } from "./device-location";
 import { fetchMapConfig } from "./map-config";
+import { fetchApiJson, resolvePlayerError, type PlayerErrorSurface, type PlayerErrorTone } from "./player-errors";
+import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { claimDecidingMetric, claimResultReasons } from "./rulebook-claim-result";
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { escapeText } from "./solo-view";
@@ -60,6 +62,33 @@ type ClaimRoomPayload = {
     roomCode: string; packId: string; version: number; maxPlayers: number; paid: boolean;
     minPlayers?: number; mode?: RulebookPlayMode;
   };
+};
+
+type ClaimInlineSlot =
+  | "catalog"
+  | "join"
+  | "lobby"
+  | "lobby-checkin"
+  | "landmark-checkin"
+  | "challenge-input"
+  | "challenge-photo"
+  | "challenge-gps"
+  | "curse-action";
+
+type ClaimInlineError = {
+  slot: ClaimInlineSlot;
+  code: string;
+  message: string;
+  tone: PlayerErrorTone;
+  targetId?: string;
+} | null;
+
+type PendingClaimAction = {
+  signature: string;
+  id: string;
+  kind: string;
+  cardInstanceId?: string;
+  landmarkId?: string;
 };
 
 const phaseLabels: Record<ClaimEngineRoomView["phase"], string> = {
@@ -123,22 +152,41 @@ function photoPicker(target: string): string {
   </label>`;
 }
 
+function readSessionId(key: string): string | undefined {
+  try {
+    return sessionStorage.getItem(key) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeSessionId(key: string, value?: string) {
+  try {
+    if (value) sessionStorage.setItem(key, value);
+    else sessionStorage.removeItem(key);
+  } catch {
+    // Storage may be unavailable in restricted contexts.
+  }
+}
+
 export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): () => void {
   let allowSandboxCheckout = false;
   let listings: ClaimPublicListing[] = [];
   let roomCode = new URLSearchParams(location.search).get("room") ?? "";
+  let joinCode = roomCode;
+  let joinName = "Penantang";
   let live: ClaimRoomPayload | null = null;
   let activeOrderId: string | null = null;
   let statusMsg = "";
-  let errorMsg = "";
+  let inlineError: ClaimInlineError = null;
   let busy = false;
   const lifetime = new AbortController();
+  const toast = createPlayerToast({ signal: lifetime.signal, layout: "page" });
   let demoLocation = false;
   let mapFailed = false;
   let claimMapHandle: BoardMapHandle | undefined;
   let claimMapRoomCode = "";
   let claimMapReq = 0;
-  let seq = 0;
   let refreshSeq = 0;
   let serverOffset = 0;
   let panel: ClaimPanel = "challenge";
@@ -147,6 +195,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let selectedCardId = "";
   let selectedRivalId = "";
   let challengeHandId = "";
+  let pendingAction: PendingClaimAction | null = null;
 
   function cardTargets(room: ClaimEngineRoomView, card?: ClaimCardInstance): string[] {
     return room.landmarks.filter(lm => {
@@ -171,14 +220,98 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     }).map(lm => lm.landmarkId);
   }
 
-  async function apiJson<T>(path: string, body?: unknown): Promise<T> {
-    const res = await fetch(path, {
-      method: body === undefined ? "GET" : "POST",
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal: lifetime.signal,
+  function currentSurface(): PlayerErrorSurface {
+    if (!live) return "catalog";
+    return live.room.phase === "lobby" ? "lobby" : "claim";
+  }
+
+  function ensurePendingAction(
+    signature: string,
+    kind: string,
+    meta?: { cardInstanceId?: string; landmarkId?: string },
+    persistKey?: string,
+  ): PendingClaimAction {
+    if (pendingAction?.signature === signature) return pendingAction;
+    const restored = persistKey ? readSessionId(persistKey) : undefined;
+    const id = restored ?? `claim-${crypto.randomUUID()}`;
+    if (persistKey) writeSessionId(persistKey, id);
+    pendingAction = { signature, id, kind, ...meta };
+    return pendingAction;
+  }
+
+  function clearPendingAction(persistKey?: string) {
+    pendingAction = null;
+    if (persistKey) writeSessionId(persistKey);
+  }
+
+  function reconcilePendingAction(room: ClaimEngineRoomView) {
+    if (!pendingAction) return;
+    const { kind, cardInstanceId, landmarkId } = pendingAction;
+    let resolvedOnServer = false;
+    if (kind === "play-card" && cardInstanceId) {
+      resolvedOnServer = !room.ownHand.some(card => card.instanceId === cardInstanceId);
+      if (resolvedOnServer && selectedCardId === cardInstanceId) selectedCardId = "";
+    } else if (kind === "check-in-landmark" && landmarkId) {
+      resolvedOnServer = room.ownActiveAttempt?.landmarkId === landmarkId;
+    } else if (kind === "start") {
+      resolvedOnServer = room.phase !== "lobby";
+    } else if (kind === "ready") {
+      resolvedOnServer = room.seats.some(seat => seat.seatId === room.seatId && seat.ready);
+    } else if (kind === "check-in-start") {
+      resolvedOnServer = room.seats.some(seat => seat.seatId === room.seatId && seat.startVerifiedUntil !== null);
+    } else if ((kind === "bail-challenge" || kind === "submit-challenge") && landmarkId) {
+      resolvedOnServer = room.ownActiveAttempt?.landmarkId !== landmarkId;
+    } else if (kind === "submit-photo" && landmarkId) {
+      resolvedOnServer = !room.ownActiveAttempt || Boolean(room.ownActiveAttempt.pendingPhoto);
+    }
+    if (resolvedOnServer) {
+      pendingAction = null;
+      toast.clear();
+      toast.resetDedupe();
+    }
+  }
+
+  function reportError(
+    input: unknown,
+    context: { action: string; target?: string; surface?: PlayerErrorSurface },
+    inlineSlot: ClaimInlineSlot,
+    targetId?: string,
+  ) {
+    const resolved = resolvePlayerError(input, {
+      surface: context.surface ?? currentSurface(),
+      action: context.action,
+      target: context.target,
     });
-    return (await res.json()) as T;
+    if (resolved.staleTarget) {
+      selectedId = "";
+      selectedRivalId = "";
+      if (resolved.code === "card-not-in-hand" || resolved.code === "no-active-attempt") {
+        selectedCardId = "";
+      }
+    }
+    if (resolved.placement === "toast") {
+      inlineError = null;
+      toast.show(resolved);
+    } else {
+      toast.clear();
+      const slot: ClaimInlineSlot = resolved.placement === "inline-screen"
+        ? (live ? "lobby" : "catalog")
+        : inlineSlot;
+      inlineError = {
+        slot,
+        code: resolved.code,
+        message: resolved.message,
+        tone: resolved.tone,
+        targetId: slot === "lobby" || slot === "catalog" || slot === "join" || slot === "lobby-checkin" ? undefined : targetId,
+      };
+    }
+    return resolved;
+  }
+
+  function slotAlert(slot: ClaimInlineSlot, targetId?: string): string {
+    if (!inlineError || inlineError.slot !== slot) return "";
+    if (targetId !== undefined && inlineError.targetId !== undefined && inlineError.targetId !== targetId) return "";
+    return renderInlineAlert(inlineError.message, inlineError.tone, `data-error-slot="${slot}"`);
   }
 
   function syncRoomUrl(code: string) {
@@ -192,7 +325,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   }
 
   async function loadCatalog() {
-    const data = await apiJson<{ listings?: ClaimPublicListing[]; allowSandboxCheckout?: boolean }>("/api/rulebooks?format=claim-the-city");
+    const { data } = await fetchApiJson<{ listings?: ClaimPublicListing[]; allowSandboxCheckout?: boolean }>(
+      "/api/rulebooks?format=claim-the-city",
+      { signal: lifetime.signal },
+    );
     allowSandboxCheckout = data.allowSandboxCheckout === true;
     listings = (data.listings ?? []).filter((l) => l.format === "claim-the-city");
     const params = new URLSearchParams(location.search);
@@ -201,18 +337,28 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     if (!roomCode && shouldLaunch && launchPackId) {
       const target = listings.find((l) => l.packId === launchPackId && l.priceIdr === 0);
       if (target) {
-        const res = await apiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
-          type: "create-free-room",
-          packId: target.packId,
-          version: target.version,
-          hostName: "Tuan Rumah",
+        const persistKey = `kelana-claim-free:${target.packId}:${target.version}`;
+        const pending = ensurePendingAction(`create-free:${target.packId}:${target.version}`, "create-free-room", undefined, persistKey);
+        const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
+          signal: lifetime.signal,
+          body: {
+            type: "create-free-room",
+            packId: target.packId,
+            version: target.version,
+            hostName: "Tuan Rumah",
+            requestId: pending.id,
+          },
         });
-        if (res.ok && res.roomCode) {
+        if (ok && res.ok && res.roomCode) {
+          clearPendingAction(persistKey);
           roomCode = res.roomCode;
-          statusMsg = `Ruang ${roomCode} siap dimainkan.`;
+          joinCode = res.roomCode;
+          statusMsg = `Ruang Claim ${roomCode} siap dimainkan.`;
           await refreshRoom();
           return;
         }
+        clearPendingAction(persistKey);
+        reportError({ error: res.error, status }, { surface: "catalog", action: "start-free", target: target.packId }, "catalog");
       }
     }
     if (roomCode) {
@@ -222,16 +368,21 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     }
   }
 
-  async function refreshRoom(allowInvitePrompt = false, background = false) {
+  async function refreshRoom(allowInvitePrompt = false, background = false, skipRender = false) {
     if (!roomCode) return;
     const req = ++refreshSeq;
     const code = roomCode;
-    const data = await apiJson<ClaimRoomPayload & { error?: string }>(
+    const { status, data } = await fetchApiJson<ClaimRoomPayload & { error?: string }>(
       `/api/rulebooks/rooms/${encodeURIComponent(code)}`,
+      { signal: lifetime.signal },
     );
     if (req !== refreshSeq || code !== roomCode || lifetime.signal.aborted || (background && busy)) return;
     if ("room" in data && data.room) {
       serverOffset = data.room.now - Date.now();
+      reconcilePendingAction(data.room);
+      if (selectedCardId && !data.room.ownHand.some(card => card.instanceId === selectedCardId)) {
+        selectedCardId = "";
+      }
       if (background && live && JSON.stringify({ ...live.room, now: 0 }) === JSON.stringify({ ...data.room, now: 0 })) {
         live = data;
         return;
@@ -246,70 +397,136 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       return;
     } else if (allowInvitePrompt) {
       statusMsg = `Undangan ruang ${roomCode} terdeteksi. Masukkan namamu lalu tekan Gabung Ruang.`;
-      errorMsg = "";
+      inlineError = null;
     } else {
-      errorMsg = data.error ?? "Ruang tidak ditemukan.";
+      reportError({ error: data.error ?? "room-not-found", status }, { surface: "lobby", action: "load-room", target: code }, "catalog");
     }
-    render();
+    if (!skipRender) render();
+  }
+
+  function inlineSlotForRoomAction(action: Record<string, unknown>): { slot: ClaimInlineSlot; targetId?: string } {
+    const type = String(action.type ?? "");
+    const landmarkId = typeof action.landmarkId === "string" ? action.landmarkId : undefined;
+    const curseId = typeof action.curseInstanceId === "string" ? action.curseInstanceId : undefined;
+    if (type === "check-in-start") return { slot: "lobby-checkin" };
+    if (type === "check-in-landmark") return { slot: "landmark-checkin", targetId: landmarkId };
+    if (type === "submit-challenge") {
+      return action.fix ? { slot: "challenge-gps", targetId: landmarkId } : { slot: "challenge-input", targetId: landmarkId };
+    }
+    if (type === "clear-curse-gps" || type === "clear-curse-honor" || type === "review-curse-photo") {
+      return { slot: "curse-action", targetId: curseId };
+    }
+    return { slot: live?.room.phase === "lobby" ? "lobby" : "landmark-checkin", targetId: landmarkId };
   }
 
   async function postRoomAction(action: Record<string, unknown>) {
     if (!roomCode) return;
+    const type = String(action.type ?? "action");
+    const landmarkId = typeof action.landmarkId === "string" ? action.landmarkId : undefined;
+    const cardInstanceId = typeof action.cardInstanceId === "string" ? action.cardInstanceId : undefined;
+    const targetSeatId = typeof action.targetSeatId === "string" ? action.targetSeatId : undefined;
+    const curseId = typeof action.curseInstanceId === "string" ? action.curseInstanceId : undefined;
+    const targetKey = landmarkId ?? cardInstanceId ?? targetSeatId ?? curseId;
+    const signature = JSON.stringify([roomCode, type, landmarkId, cardInstanceId, targetSeatId, curseId, action.tier, action.choiceId, action.inputValue]);
+    const pending = ensurePendingAction(signature, type, { cardInstanceId, landmarkId });
     const previousAttempt = live?.room.ownActiveAttempt;
-    const res = await apiJson<{ room?: ClaimEngineRoomView; error?: string; distanceMeters?: number }>("/api/rulebooks", {
-        type: "room-action",
-        roomCode,
-        action: { actionId: `claim-ui-${Date.now()}-${++seq}`, ...action },
-    });
-    const errors: Record<string, string> = {
-      "outside-radius": "Kamu masih di luar radius check-in.",
-      "inaccurate-fix": "Lokasi belum cukup akurat. Coba di area terbuka.",
-      "stale-fix": "Data lokasi sudah kedaluwarsa. Coba check-in lagi.",
-      "cooldown": "Tunggu hingga percobaan ulang tersedia.",
-      "wrong-answer": "Jawaban kurang tepat.",
-      "target-curse-limit-reached": "Lawan ini sudah mencapai batas sabotase.",
-      "not-enough-players": "Undang pemain lagi sebelum memulai permainan grup.",
-      "players-not-ready": "Tunggu sampai semua pemain siap sebelum memulai.",
-    };
-    if (res.error) {
-      errorMsg = (errors[res.error] ?? res.error) +
-        (res.distanceMeters !== undefined ? ` Jarak ${Math.round(res.distanceMeters)} m.` : "");
-    } else if (action.type === "play-card") {
-      selectedCardId = "";
+    const { slot, targetId } = inlineSlotForRoomAction(action);
+
+    try {
+      const { ok, status, data: res } = await fetchApiJson<{ room?: ClaimEngineRoomView; error?: string; distanceMeters?: number }>("/api/rulebooks", {
+        signal: lifetime.signal,
+        body: {
+          type: "room-action",
+          roomCode,
+          action: { actionId: pending.id, ...action },
+        },
+      });
+      clearPendingAction();
+      if (res.error || !ok) {
+        reportError(
+          { error: res.error ?? "invalid-request", status },
+          { action: type, target: targetKey },
+          slot,
+          targetId,
+        );
+      } else {
+        inlineError = null;
+        toast.clear();
+        toast.resetDedupe();
+        if (type === "play-card") selectedCardId = "";
+        if (type === "check-in-landmark" && res.room?.ownActiveAttempt &&
+          res.room.ownActiveAttempt.landmarkId !== previousAttempt?.landmarkId) {
+          panel = "challenge";
+          folded = false;
+        }
+      }
+      await refreshRoom(false, false, true).catch(() => {});
+    } catch (error) {
+      if (lifetime.signal.aborted) return;
+      const resolved = reportError(error, { action: type, target: targetKey }, slot, targetId);
+      if (!resolved.uncertain) clearPendingAction();
     }
-    if (!res.error && action.type === "check-in-landmark" && res.room?.ownActiveAttempt &&
-      res.room.ownActiveAttempt.landmarkId !== previousAttempt?.landmarkId) {
-      panel = "challenge";
-      folded = false;
-    }
-    await refreshRoom();
   }
 
   async function submitPhoto(button: HTMLButtonElement) {
-    const targetId = button.dataset.landmark ?? button.dataset.curse ?? "";
+    const landmarkId = button.dataset.landmark;
+    const curseInstanceId = button.dataset.curse;
+    const targetId = landmarkId ?? curseInstanceId ?? "";
+    const slot: ClaimInlineSlot = curseInstanceId ? "curse-action" : "challenge-photo";
     const input = Array.from(root.querySelectorAll<HTMLInputElement>("input[data-cg-photo]"))
       .find(element => element.dataset.cgPhoto === targetId);
     const file = input?.files?.[0];
-    if (!file || file.size > 2 * 1024 * 1024) {
-      throw new Error("Pilih foto dengan ukuran maksimal 2 MB.");
+    if (!file) {
+      reportError("photo-required", { action: "submit-photo", target: targetId }, slot, targetId);
+      return;
     }
-    const photoBase64 = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
-      reader.onerror = () => reject(new Error("Foto tidak bisa dibaca."));
-      reader.readAsDataURL(file);
-    });
-    const res = await apiJson<{ error?: string }>("/api/rulebooks/claim-photo", {
-      roomCode,
-      actionId: `claim-ui-${Date.now()}-${++seq}`,
-      landmarkId: button.dataset.landmark,
-      curseInstanceId: button.dataset.curse,
-      photoBase64,
-    });
-    if (res.error) {
-      errorMsg = res.error === "invalid-photo" ? "Foto tidak valid. Pilih JPEG, PNG, atau WebP." : res.error;
+    if (file.size > 2 * 1024 * 1024) {
+      reportError("photo-too-large", { action: "submit-photo", target: targetId }, slot, targetId);
+      return;
     }
-    await refreshRoom();
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      reportError("invalid-photo", { action: "submit-photo", target: targetId }, slot, targetId);
+      return;
+    }
+    let photoBase64: string;
+    try {
+      photoBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
+        reader.onerror = () => reject({ code: "photo-unreadable" });
+        reader.readAsDataURL(file);
+      });
+    } catch (error) {
+      reportError(error, { action: "submit-photo", target: targetId }, slot, targetId);
+      return;
+    }
+    const signature = JSON.stringify([roomCode, "submit-photo", landmarkId, curseInstanceId, file.name, file.size]);
+    const pending = ensurePendingAction(signature, "submit-photo", { landmarkId });
+    try {
+      const { ok, status, data: res } = await fetchApiJson<{ error?: string }>("/api/rulebooks/claim-photo", {
+        signal: lifetime.signal,
+        body: {
+          roomCode,
+          actionId: pending.id,
+          landmarkId,
+          curseInstanceId,
+          photoBase64,
+        },
+      });
+      clearPendingAction();
+      if (res.error || !ok) {
+        reportError({ error: res.error ?? "invalid-photo", status }, { action: "submit-photo", target: targetId }, slot, targetId);
+      } else {
+        inlineError = null;
+        toast.clear();
+        toast.resetDedupe();
+      }
+      await refreshRoom(false, false, true).catch(() => {});
+    } catch (error) {
+      if (lifetime.signal.aborted) return;
+      const resolved = reportError(error, { action: "submit-photo", target: targetId }, slot, targetId);
+      if (!resolved.uncertain) clearPendingAction();
+    }
   }
 
   function destroyClaimMap() {
@@ -387,7 +604,9 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     selectedId = id;
     folded = false;
     if (panel !== "cards" || !selectedCardId) panel = "challenge";
-    errorMsg = "";
+    if (inlineError?.slot === "landmark-checkin" && inlineError.targetId !== id) {
+      inlineError = null;
+    }
     render();
   }
 
@@ -431,15 +650,16 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           <button type="button" class="secondary" data-nav="back">Kembali ke Beranda</button>
         </div>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
-        ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
+        ${slotAlert("catalog")}
       </div>
 
       <div class="rb-card">
         <h3>Gabung Ruang dengan Kode Undangan</h3>
         <div class="rb-grid-2">
-          <label class="rb-field"><span>Kode Ruang</span><input id="rb-claim-join-code" placeholder="RC-XXXXXX" value="${escapeText(roomCode)}"></label>
-          <label class="rb-field"><span>Nama Pemain</span><input id="rb-claim-join-name" value="Penantang"></label>
+          <label class="rb-field"><span>Kode Ruang</span><input id="rb-claim-join-code" placeholder="RC-XXXXXX" value="${escapeText(joinCode)}"></label>
+          <label class="rb-field"><span>Nama Pemain</span><input id="rb-claim-join-name" value="${escapeText(joinName)}"></label>
         </div>
+        ${slotAlert("join")}
         <div class="rb-actions">
           <button type="button" class="primary" data-action="join-room" ${busy ? "disabled" : ""}>Gabung Ruang</button>
         </div>
@@ -538,6 +758,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
             )
             .join("")}
         </div>
+        ${slotAlert("challenge-input", attempt.landmarkId)}
         <div class="rb-actions">
           <button type="button" class="primary" data-action="submit-mcq" data-landmark="${escapeText(attempt.landmarkId)}">Kirim Jawaban MCQ</button>
         </div>`;
@@ -548,6 +769,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           <span>Jawaban (${leaf.inputMode === "number" ? "Angka" : "Teks"})</span>
           <input id="claim-input-answer" inputmode="${leaf.inputMode === "number" ? "numeric" : "text"}" placeholder="Ketik jawaban pengamatan">
         </label>
+        ${slotAlert("challenge-input", attempt.landmarkId)}
         <div class="rb-actions">
           <button type="button" class="primary" data-action="submit-input" data-landmark="${escapeText(attempt.landmarkId)}">Kirim Jawaban</button>
         </div>`;
@@ -560,7 +782,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         ${
           attempt.pendingPhoto
             ? `<p role="status">Foto bukti terkirim · Disetujui otomatis dalam <strong data-cg-countdown="${attempt.pendingPhoto.autoApproveAt}">${clockLabel(autoSec * 1000)}</strong>.</p>`
-            : `${photoPicker(attempt.landmarkId)}<div class="rb-actions">
+            : `${photoPicker(attempt.landmarkId)}${slotAlert("challenge-photo", attempt.landmarkId)}<div class="rb-actions">
                 <button type="button" class="primary" data-action="submit-photo" data-landmark="${escapeText(attempt.landmarkId)}">Unggah Foto Bukti</button>
               </div>`
         }`;
@@ -574,10 +796,11 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         attempt.timedStartedAt === null
           ? `<button type="button" class="primary" data-action="start-timed" data-landmark="${escapeText(attempt.landmarkId)}">Mulai Timer Tugas</button>`
           : leaf.taskType === "sub_point_gps"
-            ? `<button type="button" class="primary" data-action="submit-timed-gps" data-landmark="${escapeText(attempt.landmarkId)}" data-lat="${leaf.subPoint?.latitude ?? 0}" data-lng="${leaf.subPoint?.longitude ?? 0}">Check-in Sub-Titik (${escapeText(leaf.subPoint?.label ?? "Target")})</button>`
+            ? `${slotAlert("challenge-gps", attempt.landmarkId)}<button type="button" class="primary" data-action="submit-timed-gps" data-landmark="${escapeText(attempt.landmarkId)}" data-lat="${leaf.subPoint?.latitude ?? 0}" data-lng="${leaf.subPoint?.longitude ?? 0}">Check-in Sub-Titik (${escapeText(leaf.subPoint?.label ?? "Target")})</button>`
             : leaf.taskType === "photo_proof"
-              ? `${photoPicker(attempt.landmarkId)}<button type="button" class="primary" data-action="submit-photo" data-landmark="${escapeText(attempt.landmarkId)}">Kirim Foto</button>`
+              ? `${photoPicker(attempt.landmarkId)}${slotAlert("challenge-photo", attempt.landmarkId)}<button type="button" class="primary" data-action="submit-photo" data-landmark="${escapeText(attempt.landmarkId)}">Kirim Foto</button>`
               : `<label class="rb-field"><span>Jawaban Cepat</span><input id="claim-input-answer"></label>
+                 ${slotAlert("challenge-input", attempt.landmarkId)}
                  <button type="button" class="primary" data-action="submit-input" data-landmark="${escapeText(attempt.landmarkId)}">Kirim Jawaban Cepat</button>`
       }`;
   }
@@ -633,6 +856,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
                       ${c.expiresAt ? `<small>Berakhir dalam <span data-cg-countdown="${c.expiresAt}">${clockLabel(c.expiresAt - room.now)}</span></small>` : ""}
                       ${isTarget && c.clearCondition.type === "photo_challenge" && !c.pendingPhoto ? photoPicker(c.curseInstanceId) : ""}
                       ${isCaster && c.pendingPhoto ? renderPhoto(room.code, c.pendingPhoto.photoId) : ""}
+                      ${slotAlert("curse-action", c.curseInstanceId)}
                       <div class="rb-actions">
                         ${isTarget && c.clearCondition.type === "gps_detour" ? `<button type="button" class="primary" data-action="clear-curse-gps" data-curse="${escapeText(c.curseInstanceId)}">Check-in Detour GPS</button>` : ""}
                         ${isTarget && c.clearCondition.type === "photo_challenge" && !c.pendingPhoto ? `<button type="button" class="primary" data-action="submit-curse-photo" data-curse="${escapeText(c.curseInstanceId)}">Kirim Foto Bukti</button>` : ""}
@@ -675,12 +899,13 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           ${renderMore()}
         </div>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
-        ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
+        ${slotAlert("lobby")}
         <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
         ${pass.mode !== "solo" ? `<p><a href="${escapeText(invite)}" data-testid="invite-link">Tautan undangan ruang ${escapeText(room.code)}</a></p>` : ""}
         <ul class="rb-list">
           ${room.seats.map(seat => `<li><strong>${escapeText(seat.name)}</strong>${seat.isHost ? " · Host" : ""} · ${seat.ready ? "Siap" : "Belum siap"}</li>`).join("")}
         </ul>
+        ${slotAlert("lobby-checkin")}
         <div class="rb-actions">
           <button type="button" class="secondary" data-action="sim-start-checkin">${demoLocation ? "Simulasikan Check-in Titik Awal" : "Check-in Titik Awal"}</button>
           <button type="button" class="primary" data-action="mark-ready">Tandai Siap</button>
@@ -739,6 +964,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         ${hand.map(challenge => `<option value="${escapeText(challenge.id)}" ${challengeHandId === challenge.id ? "selected" : ""}>${escapeText(challenge.title)}</option>`).join("")}
       </select></label>` : ""}
       ${canAttempt && !blocked && hand?.length === 0 ? "<p>Belum ada kartu tantangan yang dapat digunakan.</p>" : ""}
+      ${slotAlert("landmark-checkin", lm.landmarkId)}
       ${canAttempt && !blocked && hand?.length !== 0 ? `<button type="button" class="sg-main" data-action="checkin-landmark" data-landmark="${escapedId}">${rival ? "Check-in &amp; Rebut Landmark" : "Check-in Landmark"}</button>` : ""}
     </div>`;
   }
@@ -833,11 +1059,43 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     }
   }
 
+  let focusRestoreTarget: Record<string, string | undefined> | null = null;
+
+  function findMatchingButton(container: ParentNode, dataset: Record<string, string | undefined>): HTMLButtonElement | null {
+    const keys = Object.keys(dataset).filter(k => dataset[k] !== undefined);
+    if (keys.length === 0) return null;
+    for (const btn of container.querySelectorAll<HTMLButtonElement>("button")) {
+      if (btn.disabled) continue;
+      if (keys.every(k => btn.dataset[k] === dataset[k])) return btn;
+    }
+    return null;
+  }
+
   function render() {
     if (lifetime.signal.aborted) return;
+    toast.setLayout(live && live.room.phase !== "lobby" ? "game" : "page");
     if (!live || live.room.phase === "lobby") {
       destroyClaimMap();
+      const focusedInput = document.activeElement instanceof HTMLInputElement && root.contains(document.activeElement)
+        ? { id: document.activeElement.id, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd }
+        : null;
+      const focusedBtn = document.activeElement instanceof HTMLButtonElement && root.contains(document.activeElement)
+        ? { ...document.activeElement.dataset }
+        : null;
       root.innerHTML = live ? renderLobby(live) : renderCatalog();
+      if (!busy) {
+        if (focusedInput) {
+          const el = root.querySelector<HTMLInputElement>(`#${CSS.escape(focusedInput.id)}`);
+          if (el) {
+            el.focus({ preventScroll: true });
+            if (focusedInput.start != null && focusedInput.end != null) el.setSelectionRange(focusedInput.start, focusedInput.end);
+          }
+        } else {
+          const targetDataset = focusRestoreTarget ?? focusedBtn;
+          if (targetDataset) findMatchingButton(root, targetDataset)?.focus({ preventScroll: true });
+        }
+        focusRestoreTarget = null;
+      }
       return;
     }
     if (!root.querySelector(".cg-game")) {
@@ -891,12 +1149,18 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       .map(input => [input.dataset.cgPhoto, input]));
     const draftKey = room.ownActiveAttempt ? JSON.stringify([room.ownActiveAttempt.landmarkId, room.ownActiveAttempt.challenge, room.ownActiveAttempt.currentStep]) : "";
     const restoreId = document.activeElement instanceof HTMLInputElement && sheet.contains(document.activeElement) ? document.activeElement.id : "";
+    const activeBtnDataset = document.activeElement instanceof HTMLButtonElement && sheet.contains(document.activeElement)
+      ? { ...document.activeElement.dataset }
+      : null;
     const selectionStart = answer?.selectionStart;
     const selectionEnd = answer?.selectionEnd;
     const previousScroll = sheet.scrollTop;
+    const activeScreenAlert = inlineError && (inlineError.slot === "lobby" || inlineError.slot === "catalog")
+      ? renderInlineAlert(inlineError.message, inlineError.tone)
+      : "";
     sheet.dataset.draftKey = draftKey;
     sheet.hidden = folded;
-    sheet.innerHTML = `${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
+    sheet.innerHTML = `${activeScreenAlert}
       ${panel === "cards" ? renderCards(room) : panel === "score" ? renderScore(room) : `
         ${room.ownActiveAttempt
           ? renderActiveAttempt(room.ownActiveAttempt, room) + (room.ownActiveAttempt.landmarkId !== selectedId && selectedId ? renderLandmark(live) : "")
@@ -926,6 +1190,15 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     for (const button of sheet.querySelectorAll<HTMLButtonElement>("button[data-action]")) {
       if (busy) button.disabled = true;
     }
+    if (!busy && !restoreId) {
+      const desired = focusRestoreTarget ?? activeBtnDataset;
+      if (desired) {
+        const match = findMatchingButton(sheet, desired)
+          ?? (desired.action === "play-card" ? sheet.querySelector<HTMLButtonElement>('[data-action="close-card"]') : null);
+        match?.focus({ preventScroll: true });
+      }
+      focusRestoreTarget = null;
+    }
     for (const button of game.querySelectorAll<HTMLButtonElement>("[data-panel]")) {
       button.setAttribute("aria-pressed", String(!folded && button.dataset.panel === panel));
     }
@@ -940,6 +1213,13 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     }
     return getLocation();
   }
+
+  root.addEventListener("input", event => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (target.id === "rb-claim-join-code") joinCode = target.value;
+    if (target.id === "rb-claim-join-name") joinName = target.value;
+  }, { signal: lifetime.signal });
 
   root.addEventListener("change", event => {
     if (event.target instanceof HTMLSelectElement && event.target.hasAttribute("data-claim-hand")) {
@@ -965,11 +1245,15 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       if (live?.pass.mode) return onBack();
       live = null;
       roomCode = "";
+      joinCode = "";
       selectedId = selectedCardId = selectedRivalId = challengeHandId = "";
       panel = "challenge";
       mapFailed = false;
       folded = false;
-      statusMsg = errorMsg = "";
+      statusMsg = "";
+      inlineError = null;
+      pendingAction = null;
+      toast.clear();
       refreshSeq++;
       syncRoomUrl("");
       render();
@@ -1008,80 +1292,140 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       return;
     }
 
+    if (action === "join-room") {
+      const codeInput = (root.querySelector<HTMLInputElement>("#rb-claim-join-code")?.value ?? joinCode).trim();
+      joinCode = codeInput;
+      joinName = (root.querySelector<HTMLInputElement>("#rb-claim-join-name")?.value ?? joinName).trim() || "Penantang";
+      if (!codeInput) {
+        reportError("join-code-required", { surface: "lobby", action: "join-room" }, "join");
+        render();
+        root.querySelector<HTMLInputElement>("#rb-claim-join-code")?.focus({ preventScroll: true });
+        return;
+      }
+    }
+
+    if (action === "submit-input") {
+      const inputEl = root.querySelector<HTMLInputElement>("#claim-input-answer");
+      const inputValue = inputEl?.value.trim() ?? "";
+      if (!inputValue) {
+        reportError("input-required", { action: "submit-input", target: btn.dataset.landmark }, "challenge-input", btn.dataset.landmark);
+        render();
+        root.querySelector<HTMLInputElement>("#claim-input-answer")?.focus({ preventScroll: true });
+        return;
+      }
+    }
+
     busy = true;
     root.setAttribute("aria-busy", "true");
-    errorMsg = "";
+    inlineError = null;
+    focusRestoreTarget = { ...btn.dataset };
+
+    let catchSlot: ClaimInlineSlot = live ? (live.room.phase === "lobby" ? "lobby" : "landmark-checkin") : "catalog";
+    let catchTarget: string | undefined = btn.dataset.landmark ?? btn.dataset.curse ?? btn.dataset.pack;
+    if (action === "sim-start-checkin") catchSlot = "lobby-checkin";
+    else if (action === "checkin-landmark") catchSlot = "landmark-checkin";
+    else if (action === "submit-timed-gps") catchSlot = "challenge-gps";
+    else if (action === "clear-curse-gps" || action === "submit-curse-photo") catchSlot = "curse-action";
+    else if (action === "join-room") catchSlot = "join";
+
     void (async () => {
       if (action === "start-free") {
-        busy = true;
         render();
-        const res = await apiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
-          type: "create-free-room",
-          packId: btn.dataset.pack,
-          version: Number(btn.dataset.version ?? 1),
-          hostName: "Tuan Rumah",
+        const packId = btn.dataset.pack ?? "";
+        const version = Number(btn.dataset.version ?? 1);
+        const persistKey = `kelana-claim-free:${packId}:${version}`;
+        const pending = ensurePendingAction(`create-free:${packId}:${version}`, "create-free-room", undefined, persistKey);
+        const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
+          signal: lifetime.signal,
+          body: {
+            type: "create-free-room",
+            packId,
+            version,
+            hostName: "Tuan Rumah",
+            requestId: pending.id,
+          },
         });
-        if (res.ok && res.roomCode) {
+        clearPendingAction(persistKey);
+        if (ok && res.ok && res.roomCode) {
           roomCode = res.roomCode;
+          joinCode = res.roomCode;
           statusMsg = `Ruang Claim ${roomCode} berhasil dibuat.`;
-          await refreshRoom();
+          toast.clear();
+          toast.resetDedupe();
+          await refreshRoom(false, false, true);
         } else {
-          errorMsg = res.error ?? "Gagal membuat ruang.";
-          render();
+          reportError({ error: res.error ?? "invalid-request", status }, { surface: "catalog", action: "start-free", target: packId }, "catalog");
         }
       } else if (action === "buy-pack") {
-        busy = true;
         render();
-        const res = await apiJson<{ ok?: boolean; order?: { orderId: string }; error?: string }>("/api/rulebooks", {
-          type: "create-order",
-          packId: btn.dataset.pack,
-          version: Number(btn.dataset.version ?? 1),
+        const packId = btn.dataset.pack ?? "";
+        const version = Number(btn.dataset.version ?? 1);
+        const persistKey = `kelana-claim-order:${packId}:${version}`;
+        const pending = ensurePendingAction(`create-order:${packId}:${version}`, "create-order", undefined, persistKey);
+        const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; order?: { orderId: string }; error?: string }>("/api/rulebooks", {
+          signal: lifetime.signal,
+          body: {
+            type: "create-order",
+            packId,
+            version,
+            requestId: pending.id,
+          },
         });
-        if (res.ok && res.order) {
+        clearPendingAction(persistKey);
+        if (ok && res.ok && res.order) {
           activeOrderId = res.order.orderId;
           statusMsg = `Order ${activeOrderId} dibuat (Test Payment).`;
+          toast.clear();
+          toast.resetDedupe();
         } else {
-          errorMsg = res.error ?? "Gagal membuat pesanan.";
+          reportError({ error: res.error ?? "invalid-request", status }, { surface: "checkout", action: "buy-pack", target: packId }, "catalog");
         }
-        render();
       } else if (action === "settle-order") {
-        busy = true;
         render();
-        const res = await apiJson<{ ok?: boolean; pass?: { roomCode: string }; error?: string }>("/api/rulebooks", {
-          type: "verify-settlement",
-          orderId: btn.dataset.order,
-          transactionStatus: "settlement",
-          statusCode: "200",
-          currency: "IDR",
-          hostName: "Tuan Rumah",
+        const orderId = btn.dataset.order ?? "";
+        const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; pass?: { roomCode: string }; error?: string }>("/api/rulebooks", {
+          signal: lifetime.signal,
+          body: {
+            type: "verify-settlement",
+            orderId,
+            transactionStatus: "settlement",
+            statusCode: "200",
+            currency: "IDR",
+            hostName: "Tuan Rumah",
+          },
         });
-        if (res.ok && res.pass) {
+        if (ok && res.ok && res.pass) {
           activeOrderId = null;
           roomCode = res.pass.roomCode;
+          joinCode = res.pass.roomCode;
           statusMsg = `Pembayaran lunas! Ruang ${roomCode} terbuka.`;
-          await refreshRoom();
+          toast.clear();
+          toast.resetDedupe();
+          await refreshRoom(false, false, true);
         } else {
-          errorMsg = res.error ?? "Verifikasi gagal.";
-          render();
+          reportError({ error: res.error ?? "payment-pending", status }, { surface: "checkout", action: "settle-order", target: orderId }, "catalog");
         }
       } else if (action === "join-room") {
-        const codeInput = root.querySelector<HTMLInputElement>("#rb-claim-join-code")?.value.trim() ?? "";
-        const nameInput = root.querySelector<HTMLInputElement>("#rb-claim-join-name")?.value.trim() || "Penantang";
-        const res = await apiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
-          type: "join-room",
-          roomCode: codeInput,
-          name: nameInput,
+        render();
+        const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
+          signal: lifetime.signal,
+          body: {
+            type: "join-room",
+            roomCode: joinCode,
+            name: joinName,
+          },
         });
-        if (res.ok) {
-          roomCode = codeInput;
-          await refreshRoom();
+        if (ok && res.ok) {
+          roomCode = joinCode;
+          toast.clear();
+          toast.resetDedupe();
+          await refreshRoom(false, false, true);
         } else {
-          errorMsg = res.error ?? "Gagal bergabung.";
-          render();
+          reportError({ error: res.error ?? "room-not-found", status }, { surface: "lobby", action: "join-room", target: joinCode }, "join");
         }
       } else if (action === "refresh") {
         btn.closest("details")?.removeAttribute("open");
-        await refreshRoom();
+        await refreshRoom(false, false, true);
       } else if (action === "sim-start-checkin" && live) {
         await postRoomAction({
           type: "check-in-start",
@@ -1160,7 +1504,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         await postRoomAction({ type: "clear-curse-honor", curseInstanceId: btn.dataset.curse });
       }
     })().catch(error => {
-      if (!lifetime.signal.aborted) errorMsg = error instanceof Error ? error.message : "Aksi gagal. Coba lagi.";
+      if (lifetime.signal.aborted) return;
+      reportError(error, { action, target: catchTarget }, catchSlot, catchTarget);
     }).finally(() => {
       busy = false;
       if (lifetime.signal.aborted) return;
@@ -1169,12 +1514,19 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     });
   }, { signal: lifetime.signal });
 
+  window.addEventListener("online", () => {
+    if (!busy && roomCode) {
+      void refreshRoom(false, true).catch(() => {});
+    }
+  }, { signal: lifetime.signal });
+
   void isSimulatedLocationAllowed(lifetime.signal).then(allowed => {
     demoLocation = allowed;
     if (live?.room.phase === "lobby") render();
   });
-  void loadCatalog().catch(() => {
-    errorMsg = "Katalog belum dapat dimuat. Coba muat ulang halaman.";
+  void loadCatalog().catch((error) => {
+    if (lifetime.signal.aborted) return;
+    reportError(error, { surface: "catalog", action: "load-catalog" }, "catalog");
     render();
   });
   const clock = window.setInterval(updateClocks, 250);

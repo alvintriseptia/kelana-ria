@@ -324,6 +324,8 @@ export function rulebookHandler(
       }
       if (type === "create-free-room") {
         if (body.qa === true && !allowHideSeekQa) return json(response, 403, { error: "seek-qa-disabled" });
+        const requestId = typeof body.requestId === "string" && /^[\w-]{8,100}$/.test(body.requestId)
+          ? body.requestId : undefined;
         const res = store.createFreeRoomFromRulebook(
           String(body.packId ?? ""),
           Number(body.version ?? 1),
@@ -331,13 +333,24 @@ export function rulebookHandler(
           String(body.hostName ?? "Host"),
           ts,
           body.qa === true,
+          undefined,
+          requestId,
         );
         json(response, res.ok ? 200 : 400, res);
         return;
       }
       if (type === "create-order") {
         if (!allowSandboxCheckout) return json(response, 403, { error: "checkout-unavailable" });
-        const res = await store.createOrder(cred, String(body.packId ?? ""), Number(body.version ?? 1), ts);
+        const requestId = typeof body.requestId === "string" && /^[\w-]{8,100}$/.test(body.requestId)
+          ? body.requestId : undefined;
+        const res = await store.createOrder(
+          cred,
+          String(body.packId ?? ""),
+          Number(body.version ?? 1),
+          ts,
+          undefined,
+          requestId,
+        );
         json(response, res.ok ? 200 : 400, res);
         return;
       }
@@ -385,7 +398,9 @@ export function rulebookHandler(
         return;
       }
       if (type === "play-card") {
-        const res = store.playCardInRoom(roomCode, cred, body.params as PlaySeekCardParams, roomTs);
+        const actionId = typeof body.actionId === "string" && body.actionId.length > 0 && body.actionId.length <= 100
+          ? body.actionId : undefined;
+        const res = store.playCardInRoom(roomCode, cred, body.params as PlaySeekCardParams, roomTs, actionId);
         json(response, res.ok ? 200 : 400, res);
         return;
       }
