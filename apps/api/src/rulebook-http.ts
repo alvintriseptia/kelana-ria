@@ -60,9 +60,11 @@ export function rulebookHandler(
   return async function handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const path = url.pathname;
     if (request.method === "GET" && path === "/api/rulebooks/catalog") {
+      const member = credential(request, cookieName);
       json(response, 200, {
         editions: store.listPublicListings(undefined, true),
         sharedRecaps: store.listPublicRecaps(),
+        activeRooms: member ? store.listActiveRooms(member, now()) : [],
         allowSandboxCheckout,
       });
       return;

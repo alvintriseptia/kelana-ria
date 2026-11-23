@@ -272,3 +272,26 @@ export type HideSeekRulebookValidationResult = {
   summary: HideSeekRulebookValidationSummary;
 };
 export type RulebookPlayMode = "solo" | "group";
+
+export type ActiveRulebookRoomPhase =
+  | "lobby"
+  | "active"
+  | "head_start"
+  | "seeking"
+  | "endgame"
+  | "regroup";
+
+export type ActiveRulebookRoomSummary = {
+  roomCode: string;
+  format: RulebookFormat;
+  packId: string;
+  version: number;
+  title: string;
+  phase: ActiveRulebookRoomPhase;
+  role?: "hider" | "seeker" | "lobby" | "none" | "solo" | "group";
+  turnNumber?: number;
+  totalPlannedTurns?: number;
+  playerCount?: number;
+  maxPlayers?: number;
+};
+
