@@ -1,4 +1,4 @@
-import type { HideSeekCardCategory, HideSeekQuestionFamily, PackOrderSummary, RulebookFormat, RulebookPlayMode } from "@kelana-ria/contracts";
+import type { HideSeekCardCategory, HideSeekQuestionFamily, PackOrderSummary, PublicMatchRecapSummary, RulebookFormat, RulebookPlayMode } from "@kelana-ria/contracts";
 import { escapeText } from "./escape-text";
 import jakartaCover from "./assets/jakarta.webp";
 import "./rulebook-catalog.css";
@@ -6,6 +6,7 @@ import "./rulebook-catalog.css";
 const endpoint = "/api/rulebooks/catalog";
 const cacheKey = "kelana-rulebook-catalog";
 const formatNames = { "claim-the-city": "Claim the City", "hide-and-seek": "Hide & Seek" } as const;
+const recapDate = new Intl.DateTimeFormat("id-ID", { dateStyle: "medium" });
 const gameOverviews = {
   "claim-the-city": "Jelajahi landmark di peta. Check-in di lokasi, lalu selesaikan tantangan untuk mengunci landmark.",
   "hide-and-seek": "Bergantian jadi penyembunyi dan pencari. Ajukan pertanyaan untuk mempersempit area pencarian.",
@@ -60,7 +61,7 @@ export type CatalogEdition = {
 });
 type Edition = CatalogEdition;
 
-type Catalog = { editions: Edition[]; allowSandboxCheckout: boolean };
+type Catalog = { editions: Edition[]; sharedRecaps?: PublicMatchRecapSummary[]; allowSandboxCheckout: boolean };
 type Attempt = { id: string; order?: PackOrderSummary };
 type CheckoutReply = { error?: string; roomCode?: string; order?: PackOrderSummary; pass?: { roomCode: string } };
 type Options = {
@@ -184,6 +185,30 @@ function action(type: string, label: string, style = "secondary", disabled = fal
   return `<button type="button" class="${style}" data-cat-action="${type}" ${disabled ? "disabled" : ""}>${label}</button>`;
 }
 
+function communityResults(item: Edition, sharedRecaps: PublicMatchRecapSummary[] | undefined) {
+  const matches = (sharedRecaps ?? []).filter(
+    recap => recap.packId === item.packId && recap.editionVersion === item.version,
+  );
+  return `<section class="cat-community" aria-label="Hasil komunitas">
+    <div class="cat-community-head">
+      <h2>Hasil komunitas</h2>
+      <span>v${item.version} · ${matches.length} dibagikan</span>
+    </div>
+    ${matches.length
+      ? `<ul class="cat-community-list">${matches.map(entry => `<li>
+          <a class="cat-recap-card" href="/?shared=${encodeURIComponent(entry.shareId)}" data-catalog-link data-share-id="${escapeText(entry.shareId)}">
+            <div class="cat-recap-top">
+              <strong>${escapeText(entry.outcomeLabel)}</strong>
+              <span>${escapeText(formatNames[entry.format])} · v${entry.editionVersion}${entry.simulated ? " · QA" : ""} · ${recapDate.format(entry.completedAt)}</span>
+            </div>
+            <p class="cat-recap-score">${escapeText(entry.scoreSummary)}</p>
+            ${entry.topMoment ? `<p class="cat-recap-moment">${escapeText(entry.topMoment.label)} · ${escapeText(entry.topMoment.detail)}</p>` : ""}
+          </a>
+        </li>`).join("")}</ul>`
+      : `<p class="cat-community-empty">Belum ada hasil pertandingan yang dibagikan untuk edisi v${item.version}. Selesaikan pertandingan lalu bagikan ringkasanmu dari Riwayat.</p>`}
+  </section>`;
+}
+
 export function mountRulebookCatalog(root: HTMLElement, options: Options, focusHeading = false) {
   const lifetime = new AbortController();
   const { signal } = lifetime;
@@ -269,6 +294,7 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
             ? action("play", mode === "solo" ? "Main Solo" : "Main Grup", "primary", busy || !fresh)
             : payment(item)}
         </div>
+        ${communityResults(item, catalog?.sharedRecaps)}
       </article>` : `<article class="cat-detail">${back}<h1>Edisi permainan</h1>
         ${loading ? '<p role="status">Memuat edisi…</p>' : offline || '<p role="alert">Edisi ini tidak tersedia. Pilih edisi lain dari katalog.</p>'}</article>`;
       focusTitle();

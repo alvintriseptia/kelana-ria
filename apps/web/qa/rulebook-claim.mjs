@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
@@ -8,6 +9,8 @@ import { openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
+const results = path.join(root, "qa-results");
+mkdirSync(results, { recursive: true });
 
 let now = 1_800_000_000_000;
 const server = createSoloServer({
@@ -229,9 +232,64 @@ try {
   await pageP2.getByRole("link", { name: "Riwayat pertandingan" }).click();
   await recapLink.click();
   await pageP2.getByRole("heading", { name: "Pemenang · Penantang 2" }).waitFor();
+
+  // 2b. Community recap sharing: private by default -> visitor denied -> preview & publish with alias -> visitor views public recap & edition list -> unshare keeps private recap intact
   await ctxP1.close();
-  await ctxP2.close();
   await ctxP3.close();
+  const ctxVisitor = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const pageVisitor = await ctxVisitor.newPage();
+  await pageVisitor.goto(`${baseUrl}/?recap=${encodeURIComponent(roomCode)}`);
+  await pageVisitor.locator(".recap-shell").getByText(/privat|belum tersedia/i).waitFor();
+  await pageVisitor.goto(`${baseUrl}/?edition=official-jakarta-compact-claim&version=1`);
+  const communitySection = pageVisitor.getByRole("region", { name: "Hasil komunitas" });
+  await communitySection.waitFor();
+  await communitySection.getByText(/Belum ada hasil pertandingan yang dibagikan/).waitFor();
+
+  assert.match(await pageP2.getByTestId("recap-visibility-badge").innerText(), /Privat/);
+  const previewBefore = await pageP2.getByTestId("public-recap-preview").innerText();
+  assert.match(previewBefore, /Pemain 2/);
+  assert.doesNotMatch(previewBefore, /Penantang 2/);
+  await pageP2.locator('input[data-alias-seat]').nth(1).fill("Juara Blok M");
+  assert.match(await pageP2.getByTestId("public-recap-preview").innerText(), /Pemenang · Juara Blok M/);
+  await pageP2.screenshot({ path: path.join(results, "recap-share-composer.png"), fullPage: true });
+  await Promise.all([
+    pageP2.waitForResponse(r => r.url().includes(`/api/rulebooks/recaps/${roomCode}/share`) && r.status() === 200),
+    pageP2.getByRole("button", { name: "Bagikan ke komunitas", exact: true }).click(),
+  ]);
+  assert.match(await pageP2.getByTestId("recap-visibility-badge").innerText(), /Publik/);
+  const publicHref = await pageP2.getByTestId("public-recap-link").getAttribute("href");
+  assert.match(publicHref, /^\/\?shared=SR-[\dA-F]{12}$/);
+  assert.ok(await pageP2.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+
+  // Separate visitor session opens the public link and navigates to the exact edition & rules version page.
+  await pageVisitor.goto(new URL(publicHref, baseUrl).href);
+  await pageVisitor.getByRole("heading", { name: "Pemenang · Juara Blok M" }).waitFor();
+  const publicBody = await pageVisitor.locator(".recap-shell").innerText();
+  assert.doesNotMatch(publicBody, /Penantang 2/);
+  assert.equal(publicBody.includes(roomCode), false, "Public recap view must not expose room code");
+  assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await pageVisitor.screenshot({ path: path.join(results, "recap-public-shared.png"), fullPage: true });
+  const sharedEditionLink = pageVisitor.getByTestId("shared-edition-link");
+  assert.equal(await sharedEditionLink.getAttribute("href"), "/?edition=official-jakarta-compact-claim&version=1");
+  await sharedEditionLink.click();
+  await communitySection.waitFor();
+  await communitySection.getByText(/Pemenang · Juara Blok M/).waitFor();
+  assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+
+  // Unshare from participant session -> disappears from public link & edition list while private recap survives.
+  await Promise.all([
+    pageP2.waitForResponse(r => r.url().includes(`/api/rulebooks/recaps/${roomCode}/unshare`) && r.status() === 200),
+    pageP2.getByRole("button", { name: "Tarik dari komunitas", exact: true }).click(),
+  ]);
+  assert.match(await pageP2.getByTestId("recap-visibility-badge").innerText(), /Privat/);
+  await pageP2.getByRole("heading", { name: "Pemenang · Penantang 2" }).waitFor();
+  await pageVisitor.goto(new URL(publicHref, baseUrl).href);
+  await pageVisitor.locator(".recap-shell").getByText(/tidak tersedia|ditarik/i).waitFor();
+  await pageVisitor.goto(`${baseUrl}/?edition=official-jakarta-compact-claim&version=1`);
+  await communitySection.waitFor();
+  await communitySection.getByText(/Belum ada hasil pertandingan yang dibagikan/).waitFor();
+  await ctxVisitor.close();
+  await ctxP2.close();
 
   // 3. Creator opens unified Studio directly from /, clones Official Claim pack, walks 4-step stepper, publishes, buys via Midtrans
   const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });

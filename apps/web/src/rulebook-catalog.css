@@ -75,6 +75,21 @@
   border-radius: 9px; background: #234439; color: #faffef;
 }
 .cat-toast button { min-width: 44px; min-height: 44px; border: 0; background: transparent; color: inherit; }
+.cat-community { display: grid; gap: 8px; margin-top: 4px; }
+.cat-community-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px; }
+.cat-community-head span { font-size: .78rem; font-weight: 750; color: var(--catalog-forest); background: var(--catalog-lime); padding: 2px 7px; border-radius: 999px; }
+.cat-community-list { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.cat-recap-card {
+  display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--catalog-line); border-radius: 10px;
+  background: var(--catalog-mint); color: inherit; text-decoration: none;
+}
+.cat-recap-card:hover { border-color: var(--catalog-forest); background: #dbece0; }
+.cat-recap-top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 8px; }
+.cat-recap-top strong { color: var(--catalog-forest); font-size: .95rem; }
+.cat-recap-top span { font-size: .76rem; color: var(--muted); font-weight: 700; }
+.cat-recap-score { margin: 0; font-size: .84rem; font-weight: 650; color: #183d35; }
+.cat-recap-moment { margin: 0; font-size: .8rem; color: var(--muted); }
+.cat-community-empty { margin: 0; padding: 10px 12px; border: 1px dashed var(--catalog-line); border-radius: 10px; background: #f4faf3; font-size: .85rem; color: var(--muted); }
 @media (max-width: 600px) {
   .catalog-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .catalog-top { align-items: start; }

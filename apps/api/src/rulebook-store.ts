@@ -42,7 +42,7 @@ import {
 } from "./midtrans-adapter.js";
 import { sanitizeSeekPhoto } from "./seek-photo.js";
 import { loadOfficialClaimPacks, loadOfficialSeekPacks } from "./official-packs.js";
-import { claimMatchRecap, rulebookRecapStore, seekMatchRecap } from "./rulebook-recaps.js";
+import { claimMatchRecap, rulebookRecapStore, seekMatchRecap, type ShareRecapOptions } from "./rulebook-recaps.js";
 import {
   buyoutSeekCurse,
   chooseSeekDrawCards,
@@ -1279,6 +1279,12 @@ export function rulebookStore(
     listAllVersions: allRecords,
     listRecaps: (participant: string) => recaps.list(digest(participant)),
     readRecap: (matchId: string, participant: string) => recaps.get(matchId, digest(participant)),
+    readRecapDetail: (matchId: string, participant: string) => recaps.getWithShare(matchId, digest(participant)),
+    shareRecap: (matchId: string, participant: string, options: ShareRecapOptions, at: number) =>
+      recaps.share(matchId, digest(participant), options, at),
+    unshareRecap: (matchId: string, participant: string) => recaps.unshare(matchId, digest(participant)),
+    readPublicRecap: (shareId: string) => recaps.getPublic(shareId),
+    listPublicRecaps: (packId?: string, editionVersion?: number) => recaps.listPublic(packId, editionVersion),
     creatorStudio,
     listOrders: () => (listOrdersStmt.all() as { payload: string }[]).map((r) => JSON.parse(r.payload) as PackOrderSummary),
     listEarnings,

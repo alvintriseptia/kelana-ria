@@ -145,3 +145,161 @@ test("private rulebook recaps persist authoritative results exactly once and sur
   assert.equal(restored.outcome.winnerSeatId, lastTurn.outcome.winnerSeatId);
   assert.doesNotMatch(JSON.stringify(restored), /latitude|longitude|anchorStationId|foundCode|privateComputedAnswer|photoId|overlay|cardId|credentialHash/);
 });
+
+test("community recap sharing is private by default, strips private fields, supports unshare, and isolates edition versions", async t => {
+  const dir = mkdtempSync(join(tmpdir(), "kelana-shared-recaps-"));
+  const databasePath = join(dir, "shared.sqlite");
+  let server;
+  t.after(async () => {
+    if (server?.listening) await new Promise(resolve => server.close(resolve));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const creator = "c".repeat(43);
+  const store = rulebookStore(databasePath);
+  let claimV1Code, claimV2Code, seekCode;
+  const customPackId = "komunitas-blok-m-claim";
+  try {
+    // Publish v1 of a custom creator edition and complete a match on v1.
+    const clonedV1 = store.cloneOfficialTemplate("official-jakarta-compact-claim", creator, {
+      packId: customPackId, title: "Edisi Komunitas Blok M", byline: "Tim Komunitas", priceIdr: 0,
+    }, start);
+    assert.ok(clonedV1.ok, clonedV1.error);
+    assert.ok(store.submitDraft(creator, customPackId, 1, start).ok);
+    assert.ok(store.reviewVersion(customPackId, 1, { action: "publish" }, start).ok);
+
+    const createdV1 = store.createFreeRoomFromRulebook(customPackId, 1, host, "Rahasia Host", start, false, "group");
+    assert.ok(createdV1.ok, createdV1.error);
+    claimV1Code = createdV1.roomCode;
+    assert.ok(store.joinRoom(claimV1Code, guest, "Rahasia Guest", start).ok);
+    const boardV1 = store.viewRoom(claimV1Code, host, start).publicBoard;
+    for (const member of [host, guest]) {
+      act(store, claimV1Code, member, start, { type: "check-in-start", fix: fix(boardV1.startPoint, start) });
+      act(store, claimV1Code, member, start, { type: "ready", ready: true });
+    }
+    const startedV1 = act(store, claimV1Code, host, start, { type: "start" });
+    const lm = boardV1.landmarks.find(item => item.id === "m-bloc") ?? boardV1.landmarks[0];
+    act(store, claimV1Code, host, start + 1000, { type: "check-in-landmark", landmarkId: lm.id, fix: fix(lm, start + 1000) });
+    act(store, claimV1Code, host, start + 2000, { type: "submit-challenge", landmarkId: lm.id, inputValue: "2" });
+    store.viewRoom(claimV1Code, host, startedV1.deadline);
+
+    // Publish v2 of the SAME packId and complete a match on v2.
+    const clonedV2 = store.cloneOfficialTemplate("official-jakarta-compact-claim", creator, {
+      packId: customPackId, title: "Edisi Komunitas Blok M Rev 2", byline: "Tim Komunitas", priceIdr: 0,
+    }, start + 5000);
+    assert.ok(clonedV2.ok, clonedV2.error);
+    assert.equal(clonedV2.record.version, 2);
+    assert.ok(store.submitDraft(creator, customPackId, 2, start + 5000).ok);
+    assert.ok(store.reviewVersion(customPackId, 2, { action: "publish" }, start + 5000).ok);
+
+    const createdV2 = store.createFreeRoomFromRulebook(customPackId, 2, host, "Nama Ruang V2", start + 6000, false, "solo");
+    assert.ok(createdV2.ok, createdV2.error);
+    claimV2Code = createdV2.roomCode;
+    const boardV2 = store.viewRoom(claimV2Code, host, start + 6000).publicBoard;
+    act(store, claimV2Code, host, start + 6000, { type: "check-in-start", fix: fix(boardV2.startPoint, start + 6000) });
+    act(store, claimV2Code, host, start + 6000, { type: "ready", ready: true });
+    const startedV2 = act(store, claimV2Code, host, start + 6000, { type: "start" });
+    store.viewRoom(claimV2Code, host, startedV2.deadline);
+
+    // Also finish a Hide & Seek match on official compact seek.
+    const seek = startMatch(store, "seek", [[guest, "Sembunyi Rahasia"]]);
+    seekCode = seek.roomCode;
+    const regroup = seekTurn(store, seekCode, host, guest, start + 1000, true);
+    const regroupAt = regroup.now + 1000;
+    for (const member of [host, guest]) {
+      act(store, seekCode, member, regroupAt, { type: "regroup-check-in", fix: fix(regroup.regroupPoint, regroupAt) });
+    }
+    seekTurn(store, seekCode, guest, host, regroupAt + 1000);
+  } finally {
+    store.close();
+  }
+
+  server = createSoloServer({ databasePath });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}/api/rulebooks`;
+  const get = (path, cred) => fetch(base + path, cred ? { headers: { cookie: `kelana_rulebook=${cred}` } } : undefined);
+  const post = (path, body, cred) => fetch(base + path, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(cred ? { cookie: `kelana_rulebook=${cred}` } : {}) },
+    body: JSON.stringify(body),
+  });
+
+  // Private by default: visitor cannot open private recap, public list is empty, outsider cannot publish.
+  assert.equal((await get(`/recaps/${claimV1Code}`)).status, 404);
+  assert.equal((await get(`/recaps/${claimV1Code}`, outsider)).status, 404);
+  assert.deepEqual((await (await get("/shared")).json()).recaps, []);
+  assert.equal((await post(`/recaps/${claimV1Code}/share`, {}, outsider)).status, 404);
+  const privateDetail = await (await get(`/recaps/${claimV1Code}`, host)).json();
+  assert.equal(privateDetail.share, null);
+  assert.equal(privateDetail.publicRecap, null);
+
+  // Participant shares v1 with default anonymous aliases (room names must NOT leak!).
+  const sharedV1Res = await post(`/recaps/${claimV1Code}/share`, {}, host);
+  assert.equal(sharedV1Res.status, 200);
+  const sharedV1 = await sharedV1Res.json();
+  assert.match(sharedV1.share.shareId, /^SR-[\dA-F]{12}$/);
+  assert.equal(sharedV1.publicRecap.editionVersion, 1);
+  assert.equal(sharedV1.publicRecap.editionHref, `/?edition=${customPackId}&version=1`);
+  assert.deepEqual(sharedV1.publicRecap.players.map(p => p.alias), ["Pemain 1", "Pemain 2"]);
+
+  // Visitor reads the public recap and catalog without any cookie.
+  const visitorV1 = await (await get(`/shared/${sharedV1.share.shareId}`)).json();
+  const v1Json = JSON.stringify(visitorV1);
+  assert.equal(visitorV1.recap.shareId, sharedV1.share.shareId);
+  assert.doesNotMatch(v1Json, /Rahasia Host|Rahasia Guest/);
+  assert.equal(v1Json.includes(claimV1Code), false, "Public payload must never include room code / matchId");
+  assert.doesNotMatch(v1Json, /matchId|seatId|teamId|credentialHash|latitude|longitude|photoId|anchorStationId|foundCode|cardId/);
+
+  // Publish v2 with a custom alias attempting to embed a room code -> room code is stripped.
+  const v2Recap = (await (await get(`/recaps/${claimV2Code}`, host)).json()).recap;
+  const v2Seat = v2Recap.players[0].seatId;
+  const sharedV2 = await (await post(`/recaps/${claimV2Code}/share`, {
+    aliases: { [v2Seat]: `Penjelajah ${claimV2Code} Jaya` },
+  }, host)).json();
+  assert.equal(sharedV2.publicRecap.editionVersion, 2);
+  assert.equal(sharedV2.publicRecap.editionHref, `/?edition=${customPackId}&version=2`);
+  assert.equal(sharedV2.publicRecap.players[0].alias, "Penjelajah Jaya");
+  assert.equal(JSON.stringify(sharedV2.publicRecap).includes(claimV2Code), false);
+
+  // Edition version isolation: v1 and v2 list ONLY their respective shared matches.
+  const v1List = (await (await get(`/shared?edition=${customPackId}&version=1`)).json()).recaps;
+  const v2List = (await (await get(`/shared?edition=${customPackId}&version=2`)).json()).recaps;
+  assert.deepEqual(v1List.map(item => item.shareId), [sharedV1.share.shareId]);
+  assert.deepEqual(v2List.map(item => item.shareId), [sharedV2.share.shareId]);
+  assert.equal(v1List[0].editionHref, `/?edition=${customPackId}&version=1`);
+  assert.equal(v2List[0].editionHref, `/?edition=${customPackId}&version=2`);
+
+  // Edition with no shared matches returns an empty list gracefully.
+  assert.deepEqual((await (await get("/shared?edition=official-jakarta-wide-claim&version=1")).json()).recaps, []);
+
+  // Share Hide & Seek recap and confirm zero private clue / hiding location / photo / credential fields.
+  const sharedSeek = await (await post(`/recaps/${seekCode}/share`, { useApprovedRoomNames: true }, guest)).json();
+  const seekPublic = await (await get(`/shared/${sharedSeek.share.shareId}`)).json();
+  const seekJson = JSON.stringify(seekPublic);
+  assert.equal(seekPublic.recap.format, "hide-and-seek");
+  assert.equal(seekPublic.recap.turns.length, 2);
+  assert.equal(seekPublic.recap.turns[0].answeredQuestions, 1);
+  assert.equal(seekJson.includes(seekCode), false);
+  assert.doesNotMatch(seekJson, /matchId|seatId|hiderSeatId|credentialHash|latitude|longitude|anchorStationId|foundCode|photoId|overlay|cardId|privateComputedAnswer/);
+
+  // Catalog endpoint exposes sharedRecaps for edition pages without extra requests.
+  const catalog = await (await get("/catalog")).json();
+  assert.equal(catalog.sharedRecaps.filter(r => r.packId === customPackId && r.editionVersion === 1).length, 1);
+  assert.equal(catalog.sharedRecaps.filter(r => r.packId === customPackId && r.editionVersion === 2).length, 1);
+
+  // Outsider cannot unshare; participant unshares -> disappears from public link & edition list, private recap stays intact!
+  assert.equal((await post(`/recaps/${claimV1Code}/unshare`, {}, outsider)).status, 404);
+  const unshared = await (await post(`/recaps/${claimV1Code}/unshare`, {}, guest)).json();
+  assert.equal(unshared.share, null);
+  assert.equal((await get(`/shared/${sharedV1.share.shareId}`)).status, 404);
+  assert.deepEqual((await (await get(`/shared?edition=${customPackId}&version=1`)).json()).recaps, []);
+  const stillPrivate = await (await get(`/recaps/${claimV1Code}`, host)).json();
+  assert.equal(stillPrivate.recap.matchId, claimV1Code);
+  assert.equal(stillPrivate.share, null);
+
+  // Re-sharing generates a brand-new shareId so the previously revoked link remains dead.
+  const reshared = await (await post(`/recaps/${claimV1Code}/share`, {}, host)).json();
+  assert.notEqual(reshared.share.shareId, sharedV1.share.shareId);
+  assert.equal((await get(`/shared/${sharedV1.share.shareId}`)).status, 404);
+  assert.equal((await get(`/shared/${reshared.share.shareId}`)).status, 200);
+});
