@@ -552,7 +552,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       <label class="rb-field"><span>Kunci peninjau</span><input type="password" id="studio-reviewer-key" autocomplete="off"></label>
       <button type="button" class="primary" data-action="open-review">Buka antrean tinjauan</button>
     </div>`;
-    return `<div class="rb-card"><ul class="rb-list">
+    return `<section class="rb-card" aria-label="Paket untuk tinjauan"><ul class="rb-list">
       ${reviewVersions.length === 0 ? "<li>Belum ada paket untuk ditinjau.</li>" : reviewVersions.map(record => `<li>
         <div class="rb-rev-head"><strong>${escapeText(record.pack.meta.title)}</strong>
           <small>${escapeText(formatLabels[record.format])} · v${record.version} · ${escapeText(statusLabel(record.status))}</small>
@@ -566,7 +566,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             : `<button type="button" class="secondary" data-action="pause" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Jeda Penjualan</button>`}
         </div>
       </li>`).join("")}
-    </ul></div>`;
+    </ul></section>`;
   }
 
   function renderStep2(active?: StudioVersionRecord): string {

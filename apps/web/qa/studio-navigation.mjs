@@ -15,10 +15,13 @@ export async function openReview(page) {
   await page.locator('button[data-studio-view="home"]').click();
   await page.locator('button[data-studio-view="review"]').click();
   const auth = page.getByLabel("Kunci peninjau");
-  if (await auth.count()) {
+  const queue = page.getByRole("region", { name: "Paket untuk tinjauan" });
+  await auth.or(queue).waitFor();
+  if (await auth.isVisible()) {
     await auth.fill(reviewerKey);
     await page.getByRole("button", { name: "Buka antrean tinjauan" }).click();
   }
+  await queue.waitFor();
 }
 
 export async function buyPublishedDraft(page, packId, version = 1) {
