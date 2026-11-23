@@ -9,6 +9,7 @@ import type {
 } from "@kelana-ria/contracts";
 import { escapeText } from "./solo-view";
 import { mapPinIconSvg } from "./studio-assets";
+import { renderClaimChallenges, type ClaimStep3State } from "./studio-claim-builder";
 import type {
   StudioMapMode,
   StudioTransitMode,
@@ -279,22 +280,17 @@ export function ensureStep2Selection(record: StudioVersionRecord, state: Step2St
   return state.selected;
 }
 
-function formatAttributes(attrs: Record<string, string>): string {
-  return Object.entries(attrs)
-    .map(([k, v]) => `${k}=${v}`)
-    .join(", ");
-}
-
-export function parseAttributes(raw: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const part of raw.split(",")) {
-    const idx = part.indexOf("=");
-    if (idx === -1) continue;
-    const key = part.slice(0, idx).trim();
-    const val = part.slice(idx + 1).trim();
-    if (key && val) out[key] = val;
-  }
-  return out;
+export function updateStationAttributes(
+  existing: Record<string, string> | undefined,
+  kecamatan: string,
+  corridor: string,
+): Record<string, string> {
+  const next: Record<string, string> = { ...(existing ?? {}) };
+  if (kecamatan) next.kecamatan = kecamatan;
+  else delete next.kecamatan;
+  if (corridor) next.corridor = corridor;
+  else delete next.corridor;
+  return next;
 }
 
 function renderInspector(record: StudioVersionRecord, selected: Step2Target | null, editable: boolean): string {
@@ -328,7 +324,8 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
         <label class="rb-field"><span>Jalur Transit (pisahkan koma)</span><input id="ed-st-lines" value="${escapeText(st.transitLines.join(", "))}" ${dis}></label>
         <label class="rb-field"><span>Latitude</span><input id="ed-st-lat" type="number" step="0.00001" value="${st.latitude}" ${dis}></label>
         <label class="rb-field"><span>Longitude</span><input id="ed-st-lng" type="number" step="0.00001" value="${st.longitude}" ${dis}></label>
-        <label class="rb-field"><span>Atribut (kunci=nilai, koma)</span><input id="ed-st-attrs" value="${escapeText(formatAttributes(st.attributes))}" ${dis}></label>
+        <label class="rb-field"><span>Wilayah / Kecamatan</span><input id="ed-st-attr-kecamatan" value="${escapeText(st.attributes?.kecamatan ?? "")}" placeholder="Mis. Kebayoran Baru" ${dis}></label>
+        <label class="rb-field"><span>Koridor / Area</span><input id="ed-st-attr-corridor" value="${escapeText(st.attributes?.corridor ?? "")}" placeholder="Mis. Selatan" ${dis}></label>
         <label class="rb-field"><span>Jam Publik</span><input id="ed-st-hours" value="${escapeText(st.publicHours ?? "05:00-23:00")}" ${dis}></label>
         <label class="rb-field"><span>Estimasi Tempuh (menit)</span><input id="ed-st-travel" type="number" value="${Math.round((st.estimatedTravelFromStartMs ?? 600_000) / 60_000)}" ${dis}></label>
         <label class="rb-field"><span>Layak Jangkar Sembunyi</span>
@@ -588,13 +585,30 @@ function renderBoundaryEditor(record: StudioVersionRecord, state: Step2State, ed
   </section>`;
 }
 
-export function renderStep2Bottom(record: StudioVersionRecord, state: Step2State, editable: boolean): string {
+export function renderStep2Bottom(
+  record: StudioVersionRecord,
+  state: Step2State,
+  editable: boolean,
+  claimStep3?: ClaimStep3State,
+): string {
   const claim = isClaimStudioPack(record.pack);
   const selected = ensureStep2Selection(record, state);
   const currentPoint = state.subTab === "secondary" && !claim && selected?.kind !== "poi" ? null : selected;
   const zoneView = claim && state.subTab === "secondary";
   const boundaryView = state.subTab === "boundary";
   const addPoint = editable && (state.subTab === "primary" || (state.subTab === "secondary" && !claim));
+  const showLandmarkChallenges =
+    claim &&
+    isClaimStudioPack(record.pack) &&
+    !zoneView &&
+    !boundaryView &&
+    currentPoint?.kind === "landmark" &&
+    claimStep3 !== undefined;
+  if (showLandmarkChallenges && isClaimStudioPack(record.pack) && claimStep3) {
+    if (claimStep3.challengeTarget !== "backup" && claimStep3.challengeTarget !== currentPoint.id) {
+      claimStep3.challengeTarget = currentPoint.id;
+    }
+  }
   return `<div class="rb-actions studio-map-layers" aria-label="Layer lokasi">
       ${([["primary", claim ? "Landmark" : "Stasiun"], ["secondary", claim ? "Zona" : "POI"],
         ["start", "Titik mulai"], ["boundary", "Batas"]] as const).map(([tab, label]) =>
@@ -609,13 +623,21 @@ export function renderStep2Bottom(record: StudioVersionRecord, state: Step2State
         ? `<button type="button" class="secondary" data-map-mode="move" aria-pressed="${state.mapMode === "move"}">Pindahkan titik di peta</button>` : ""}
       ${addPoint ? `<button type="button" class="secondary" data-map-action="${claim ? "add-landmark" : state.subTab === "secondary" ? "add-poi" : "add-station"}">Tambah ${claim ? "landmark" : state.subTab === "secondary" ? "POI" : "stasiun"}</button>` : ""}
     </fieldset>
+    ${showLandmarkChallenges && isClaimStudioPack(record.pack) && claimStep3
+      ? `<fieldset data-challenge-fields aria-label="Editor tantangan lokasi">${renderClaimChallenges(record.pack, claimStep3, editable ? "" : "disabled", editable)}</fieldset>`
+      : ""}
     <div class="rb-sticky-footer">
       <button type="button" class="secondary" data-step="1">← Draf</button>
       <button type="button" class="primary" data-step="3">Aturan →</button>
     </div>`;
 }
 
-export function renderStep2View(record: StudioVersionRecord, state: Step2State, editable: boolean): string {
+export function renderStep2View(
+  record: StudioVersionRecord,
+  state: Step2State,
+  editable: boolean,
+  claimStep3?: ClaimStep3State,
+): string {
   return `<div class="rb-card studio-map-editor" data-studio-slot="map-editor">
     <div id="st-map-host" class="rb-map-host" data-testid="studio-map-host" ${state.mapFailed ? "hidden" : ""}></div>
     <div id="st-map-fallback" data-testid="studio-map-fallback" ${state.mapFailed ? "" : "hidden"}>
@@ -623,7 +645,7 @@ export function renderStep2View(record: StudioVersionRecord, state: Step2State, 
       <button type="button" class="secondary" data-map-action="retry-map">Coba muat peta</button>
     </div>
     <div id="st-step2-top">${renderStep2Top(state, editable)}</div>
-    <div id="st-step2-bottom">${renderStep2Bottom(record, state, editable)}</div>
+    <div id="st-step2-bottom">${renderStep2Bottom(record, state, editable, claimStep3)}</div>
   </div>`;
 }
 

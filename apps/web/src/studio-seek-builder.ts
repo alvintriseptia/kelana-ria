@@ -105,10 +105,6 @@ function renderSeekTimers(pack: HideSeekRulebookPack, dis: string, editable: boo
       <label class="rb-field"><span>Batas Kartu Tangan</span><input id="ed-hand" type="number" min="3" max="8" value="${pack.deck.baseHandLimit}" ${dis}></label>
       <label class="rb-field"><span>Maks Kutukan Pemblokir Aktif</span><input id="ed-max-curses" type="number" min="1" max="2" value="${pack.deck.maxActiveBlockingCurses}" ${dis}></label>
     </div>
-    <label class="rb-field">
-      <span>Tambah Cepat Kutukan Foto (Judul)</span>
-      <input id="ed-curse-title" placeholder="Mis. Kutukan Kopi Senopati" ${dis}>
-    </label>
     ${
       editable
         ? `<div class="rb-badges"><span class="rb-badge">Tab Petunjuk: 6 Keluarga</span><span class="rb-badge">Tab Dek: Kartu &amp; Kutukan</span></div>`

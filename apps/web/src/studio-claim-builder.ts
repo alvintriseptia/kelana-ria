@@ -12,7 +12,7 @@ import {
   type CardPreviewChip,
 } from "./studio-assets";
 
-export type ClaimStep3SubTab = "session" | "challenges" | "deck";
+export type ClaimStep3SubTab = "session" | "deck";
 
 export type ClaimStep3State = {
   subTab: ClaimStep3SubTab;
@@ -48,19 +48,16 @@ export function renderClaimStep3(
   const totalCards = pack.tacticalDeck.cards.reduce((sum, c) => sum + c.copies, 0);
 
   return `<div class="rb-card" data-studio-slot="rules-builder">
-    <h3>3. Aturan, Tantangan &amp; Dek Taktis Claim</h3>
+    <h3>3. Aturan Sesi &amp; Kartu Claim</h3>
     <div class="rb-actions" aria-label="Sub-tab builder Claim the City">
       <button type="button" class="${state.subTab === "session" ? "primary" : "secondary"}" data-c3-tab="session">Sesi &amp; Skor</button>
-      <button type="button" class="${state.subTab === "challenges" ? "primary" : "secondary"}" data-c3-tab="challenges">Tantangan (6 Primitif)</button>
       <button type="button" class="${state.subTab === "deck" ? "primary" : "secondary"}" data-c3-tab="deck">Dek Taktis (${totalCards})</button>
     </div>
 
     ${
       state.subTab === "session"
         ? renderClaimSession(pack, dis)
-        : state.subTab === "challenges"
-          ? renderClaimChallenges(pack, state, dis, editable)
-          : renderClaimDeck(pack, state, dis, editable)
+        : renderClaimDeck(pack, state, dis, editable)
     }
 
     <div class="rb-sticky-footer">
@@ -94,14 +91,10 @@ function renderClaimSession(pack: ClaimRulebookPack, dis: string): string {
       <label class="rb-field"><span>Cooldown Gagal (menit)</span><input id="ed-claim-cooldown" type="number" min="0" max="30" value="${Math.round((pack.claiming.failCooldownMs ?? 300_000) / 60_000)}" ${dis}></label>
       <label class="rb-field"><span>Batas Kartu Taktis</span><input id="ed-claim-hand" type="number" min="1" max="4" value="${pack.tacticalDeck.maxHandSize}" ${dis}></label>
     </div>
-    <label class="rb-field">
-      <span>Tambah Cepat Tantangan Foto ke Backup Pool (Judul)</span>
-      <input id="ed-claim-photo-title" placeholder="Mis. Foto Mural Blok M" ${dis}>
-    </label>
   </div>`;
 }
 
-function renderClaimChallenges(
+export function renderClaimChallenges(
   pack: ClaimRulebookPack,
   state: ClaimStep3State,
   dis: string,

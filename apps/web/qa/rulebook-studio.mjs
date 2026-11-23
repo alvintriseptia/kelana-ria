@@ -319,6 +319,18 @@ try {
   await clickAndWaitStudioSave(page, 'button[data-map-action="apply-selected"]');
   assert.equal(await page.locator('button[data-jump-zone="kemang"]').count(), 0);
   assert.equal(await fixedPin.evaluate(pin => pin.style.transform), pinTransform, "Editing retains the map camera");
+
+  assert.equal(await page.locator('button[data-c3-prim] svg').count(), 6, "Expected 6 Challenge Primitive SVG tiles on Step 2 Peta");
+  await page.click('button[data-c3-prim="call_your_shot"]');
+  assert.equal(await page.getAttribute('button[data-c3-prim="call_your_shot"]', "aria-pressed"), "true");
+  assert.equal(await page.inputValue("#ed-chal-prim"), "call_your_shot");
+  await page.screenshot({ path: path.join(results, "studio-step3-claim-primitives.png") });
+  await assertNoHorizontalOverflow(page, "Claim Step 2 challenges");
+  await page.fill("#ed-chal-title", "Uji Call Your Shot Kemang");
+  await page.fill("#ed-chal-notes", "Contoh rubrik Studio QA. Foto papan nama dari trotoar.");
+  await page.check("#ed-chal-reviewed");
+  await clickAndWaitStudioSave(page, 'button[data-c3-action="add-challenge"]');
+
   await page.click('button[data-map-action="recenter"]');
   for (const mapTab of ["primary", "secondary", "start", "boundary"]) {
     await page.click(`button[data-map-tab="${mapTab}"]`);
@@ -332,20 +344,10 @@ try {
     "Same MapLibre canvas DOM element must remain mounted across Step 2 interactions",
   );
 
-  // Step 3: add Call Your Shot challenge & Sabotage Curse card
+  // Step 3: Sesi & Skor and Sabotage Curse card in Dek Taktis
   await page.click('button[data-step="3"]');
   await assertNoHorizontalOverflow(page, "Claim Step 3 session");
-  await page.click('button[data-c3-tab="challenges"]');
-  assert.equal(await page.locator('button[data-c3-prim] svg').count(), 6, "Expected 6 Challenge Primitive SVG tiles");
-  await page.click('button[data-c3-prim="call_your_shot"]');
-  assert.equal(await page.getAttribute('button[data-c3-prim="call_your_shot"]', "aria-pressed"), "true");
-  assert.equal(await page.inputValue("#ed-chal-prim"), "call_your_shot");
-  await page.screenshot({ path: path.join(results, "studio-step3-claim-primitives.png") });
-  await assertNoHorizontalOverflow(page, "Claim Step 3 challenges");
-  await page.fill("#ed-chal-title", "Uji Call Your Shot Kemang");
-  await page.fill("#ed-chal-notes", "Contoh rubrik Studio QA. Foto papan nama dari trotoar.");
-  await page.check("#ed-chal-reviewed");
-  await clickAndWaitStudioSave(page, 'button[data-c3-action="add-challenge"]');
+  assert.equal(await page.locator('button[data-c3-tab="challenges"]').count(), 0, "Challenges tab should be on Step 2 Peta, not Step 3 Aturan");
   await page.click('button[data-c3-tab="deck"]');
   await assertNoHorizontalOverflow(page, "Claim Step 3 deck");
   await page.fill("#ed-ccard-title", "Sabotase Kemang");
