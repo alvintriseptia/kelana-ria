@@ -331,8 +331,6 @@ try {
     true,
     "Same MapLibre canvas DOM element must remain mounted across Step 2 interactions",
   );
-  await page.unroute("**/api/map/config");
-  await page.unroute("**/api/map/style.json");
 
   // Step 3: add Call Your Shot challenge & Sabotage Curse card
   await page.click('button[data-step="3"]');
@@ -345,6 +343,8 @@ try {
   await page.screenshot({ path: path.join(results, "studio-step3-claim-primitives.png") });
   await assertNoHorizontalOverflow(page, "Claim Step 3 challenges");
   await page.fill("#ed-chal-title", "Uji Call Your Shot Kemang");
+  await page.fill("#ed-chal-notes", "Contoh rubrik Studio QA. Foto papan nama dari trotoar.");
+  await page.check("#ed-chal-reviewed");
   await clickAndWaitStudioSave(page, 'button[data-c3-action="add-challenge"]');
   await page.click('button[data-c3-tab="deck"]');
   await assertNoHorizontalOverflow(page, "Claim Step 3 deck");
@@ -367,6 +367,60 @@ try {
   await assertNoHorizontalOverflow(page, "Claim Step 4 interactive modal");
   const claimDryText = await page.textContent('[data-testid="dry-claim-result"]');
   assert.ok(claimDryText.includes("Jawaban Benar"), `Expected pass in dry-run modal, got: ${claimDryText}`);
+
+  await page.locator('button[data-step="2"]').first().click();
+  await page.click('button[data-map-tab="primary"]');
+  await page.locator('#st-map-host button[data-map-point="taman-literasi"]').press("Enter");
+  await page.click('button[data-map-action="edit-challenges"]');
+  await page.unroute("**/api/map/config");
+  await page.unroute("**/api/map/style.json");
+  assert.equal(await page.inputValue("#ed-chal-target"), "taman-literasi");
+  await page.click('button[data-c3-prim="observation_mcq"]');
+  await page.fill("#ed-chal-title", "Undakan untuk menonton");
+  await page.fill("#ed-chal-prompt", "Susunan mana yang membantu penonton melihat panggung dari belakang?");
+  await page.fill("#ed-chal-opt-a", "Semua baris sejajar.");
+  await page.fill("#ed-chal-opt-b", "Baris belakang lebih tinggi.");
+  await page.fill("#ed-chal-opt-c", "Baris belakang lebih rendah.");
+  await page.selectOption("#ed-chal-correct", "b");
+  await page.fill("#ed-chal-notes", "Jakarta Smart City mendokumentasikan amfiteater di Plaza Kabaresi. Sampel desk review.");
+  await page.fill("#ed-chal-hint", "Bandingkan tinggi baris depan dan belakang.");
+  await page.fill("#ed-chal-explanation", "Undakan membuat penonton dapat melihat dari beberapa baris.");
+  await page.fill("#ed-chal-estimate", "45");
+  await page.click('button[data-c3-action="add-challenge"]');
+  await page.locator("[data-claim-composer-error]").waitFor();
+  assert.equal(await page.inputValue("#ed-chal-title"), "Undakan untuk menonton");
+  await page.check("#ed-chal-reviewed");
+  await clickAndWaitStudioSave(page, 'button[data-c3-action="add-challenge"]');
+  await page.click('button[data-c3-prim="observation_input"]');
+  await page.fill("#ed-chal-title", "Pandangan ke panggung");
+  await page.fill("#ed-chal-prompt", "Baris mana yang lebih tinggi saat kamu melihat ke panggung?");
+  await page.fill("#ed-chal-answer", "baris belakang, belakang");
+  await page.fill("#ed-chal-notes", "Sumber Plaza Kabaresi. Bandingkan dua baris dari jalur tanpa tangga saat uji lapangan.");
+  await page.fill("#ed-chal-hint", "Lihat dari sisi undakan.");
+  await page.fill("#ed-chal-explanation", "Posisi yang lebih tinggi membantu penonton di belakang melihat panggung.");
+  await page.fill("#ed-chal-estimate", "70");
+  await page.check("#ed-chal-reviewed");
+  await clickAndWaitStudioSave(page, 'button[data-c3-action="add-challenge"]');
+  await page.getByText("Varian tantangan (3)", { exact: true }).click();
+  await page.getByText(/Selisih perkiraan lebih dari 20 detik/).waitFor();
+  await page.locator("li").filter({ hasText: "Undakan untuk menonton" }).getByRole("button", { name: "Pratinjau varian" }).click();
+
+  const variantPreview = page.getByTestId("dry-claim-modal");
+  assert.match(await variantPreview.innerText(), /Undakan untuk menonton/);
+  assert.doesNotMatch(await variantPreview.innerText(), /Fakta lokasi|Jakarta Smart City/);
+  await variantPreview.getByText("Petunjuk lokasi", { exact: true }).click();
+  await variantPreview.getByText("Bandingkan tinggi baris depan dan belakang.").waitFor();
+  await variantPreview.locator('input[name="dry-mcq"][value="b"]').check();
+  await variantPreview.locator('button[data-dry-action="submit-claim-test"]').click();
+  await variantPreview.getByText(/Undakan membuat penonton/).waitFor();
+  await page.selectOption("#dry-claim-variant", { label: "Pandangan ke panggung" });
+  await page.click('button[data-dry-action="open-claim-test"]');
+  assert.doesNotMatch(await variantPreview.innerText(), /Fakta lokasi/);
+  await page.fill("#dry-input-val", "  BARIS   BELAKANG  ");
+  await variantPreview.locator('button[data-dry-action="submit-claim-test"]').click();
+  await variantPreview.getByText(/Posisi yang lebih tinggi/).waitFor();
+  await assertNoHorizontalOverflow(page, "Claim custom variant preview");
+  await page.screenshot({ path: path.join(results, "studio-claim-variant-preview.png") });
 
   // Submit -> Reviewer Publish -> Public Catalog -> Midtrans settlement -> Live Room
   await clickAndWaitPost(page, 'button[data-action="submit-draft"]');

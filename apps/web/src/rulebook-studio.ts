@@ -169,12 +169,37 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     seekClueKey: "",
     seekClueOutput: "",
     claimLandmarkId: "",
+    claimVariantId: "",
+    claimTimedDeadline: null,
+    claimTestDone: false,
     claimTestOpen: false,
     claimShotTier: null,
     claimMultiStepIdx: 0,
     claimTestResult: "",
   };
   const dryRun = { ...initialDryRun };
+  let dryClock: number | undefined;
+
+  function updateDryClock() {
+    const display = root.querySelector<HTMLElement>("[data-dry-claim-clock]");
+    if (dryRun.claimTestDone || dryRun.claimTimedDeadline === null) {
+      window.clearInterval(dryClock);
+      return;
+    }
+    const seconds = Math.max(0, Math.ceil((dryRun.claimTimedDeadline - Date.now()) / 1000));
+    if (display) display.textContent = `${seconds} detik`;
+    if (!seconds) window.clearInterval(dryClock);
+  }
+
+  function resetClaimPreview(open: boolean) {
+    window.clearInterval(dryClock);
+    dryRun.claimTestOpen = open;
+    dryRun.claimShotTier = null;
+    dryRun.claimMultiStepIdx = 0;
+    dryRun.claimTimedDeadline = null;
+    dryRun.claimTestDone = false;
+    dryRun.claimTestResult = "";
+  }
 
   function go(next: StudioView, draft?: StudioVersionRecord, message = "", errors: RulebookValidationIssue[] = []) {
     if (signal.aborted) return;
@@ -1004,9 +1029,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     if (target instanceof HTMLSelectElement && target.id === "dry-claim-landmark") {
       dryRun.claimLandmarkId = target.value;
-      dryRun.claimShotTier = null;
-      dryRun.claimMultiStepIdx = 0;
-      dryRun.claimTestResult = "";
+      dryRun.claimVariantId = "";
+      resetClaimPreview(false);
+      render();
+      return;
+    }
+    if (target instanceof HTMLSelectElement && target.id === "dry-claim-variant") {
+      dryRun.claimVariantId = target.value;
+      resetClaimPreview(false);
       render();
       return;
     }
@@ -1100,16 +1130,23 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       if (dryAction === "open-claim-test" && isClaimStudioPack(active.pack)) {
         dryRun.claimLandmarkId =
           root.querySelector<HTMLSelectElement>("#dry-claim-landmark")?.value ?? dryRun.claimLandmarkId;
-        dryRun.claimTestOpen = true;
-        dryRun.claimShotTier = null;
-        dryRun.claimMultiStepIdx = 0;
-        dryRun.claimTestResult = "";
+        dryRun.claimVariantId = root.querySelector<HTMLSelectElement>("#dry-claim-variant")?.value ?? dryRun.claimVariantId;
+        resetClaimPreview(true);
         render();
         return;
       }
       if (dryAction === "dry-shot-tier") {
         dryRun.claimShotTier = btn.dataset.tier === "bold" ? "bold" : "standard";
         render();
+        return;
+      }
+      if (dryAction === "start-claim-timer") {
+        dryRun.claimTimedDeadline = Date.now() + Number(btn.dataset.dryLimit);
+        dryRun.claimTestResult = "";
+        render();
+        window.clearInterval(dryClock);
+        dryClock = window.setInterval(updateDryClock, 250);
+        updateDryClock();
         return;
       }
       if (dryAction === "submit-claim-test" && isClaimStudioPack(active.pack)) {
@@ -1308,6 +1345,23 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
     const c3Action = btn.dataset.c3Action;
     if (c3Action) {
+      if (c3Action === "preview-challenge") {
+        const active = currentDraft();
+        if (!active || !isClaimStudioPack(active.pack)) return;
+        const target = claimStep3.challengeTarget;
+        const items = target === "backup" ? active.pack.challenges.backupPool : active.pack.challenges.landmarkChallenges[target];
+        const item = items?.[Number(btn.dataset.index)];
+        if (!item) return;
+        step = 4;
+        dryRun.claimLandmarkId = target;
+        dryRun.claimVariantId = item.id;
+        resetClaimPreview(true);
+        render();
+        const preview = root.querySelector<HTMLElement>("[data-testid='dry-claim-modal']");
+        preview?.focus({ preventScroll: true });
+        preview?.scrollIntoView({ block: "nearest" });
+        return;
+      }
       void (async () => {
         const active = currentDraft();
         if (!active || !isEditable(active) || !isClaimStudioPack(active.pack)) return;
@@ -1316,8 +1370,11 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         if (c3Action === "add-challenge") {
           const chal = buildClaimChallengeFromForm(root, claimStep3);
           if (!chal) {
-            errorMsg = "Judul tantangan wajib diisi.";
-            render();
+            const error = root.querySelector<HTMLElement>("[data-claim-composer-error]");
+            if (error) {
+              error.textContent = "Isi judul, jawaban bila diperlukan, dan catatan sumber atau bukti. Centang peninjauan sebelum menyimpan.";
+              error.hidden = false;
+            }
             return;
           }
           if (claimStep3.challengeTarget === "backup") {
@@ -1374,6 +1431,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
     const mapAction = btn.dataset.mapAction;
     if (mapAction) {
+      if (mapAction === "edit-challenges" && format === "claim-the-city" && step2.selected?.kind === "landmark") {
+        claimStep3.challengeTarget = step2.selected.id;
+        claimStep3.subTab = "challenges";
+        step = 3;
+        render();
+        root.querySelector<HTMLSelectElement>("#ed-chal-target")?.focus();
+        return;
+      }
       if (mapAction === "retry-map") {
         step2.mapFailed = false;
         mapCfgPromise = null;
@@ -1813,6 +1878,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   void refresh();
   return () => {
     lifetime.abort();
+    window.clearInterval(dryClock);
     destroyStep2Map();
   };
 }

@@ -6,7 +6,9 @@ import type {
   HideSeekRulebookPack,
   RulebookFormat,
 } from "@kelana-ria/contracts";
+import { matchesClaimInputAnswer } from "@kelana-ria/contracts";
 import { escapeText } from "./solo-view";
+import { challengePrimitiveTileMeta } from "./studio-assets";
 import { isClaimStudioPack, type StudioStep, type StudioVersionRecord } from "./studio-types";
 
 export type DryRunState = {
@@ -15,6 +17,9 @@ export type DryRunState = {
   seekClueKey: string;
   seekClueOutput: string;
   claimLandmarkId: string;
+  claimVariantId: string;
+  claimTimedDeadline: number | null;
+  claimTestDone: boolean;
   claimTestOpen: boolean;
   claimShotTier: "standard" | "bold" | null;
   claimMultiStepIdx: 0 | 1;
@@ -150,10 +155,14 @@ export function evaluateSeekDryRunClue(
   return `Hasil Uji Foto: Penyembunyi mengirim foto dari sekitar ${hiderSt.name}.`;
 }
 
-function getActiveClaimChallenge(pack: ClaimRulebookPack, landmarkId: string): ClaimChallengeItem | null {
-  if (landmarkId === "backup") return pack.challenges.backupPool[0] ?? null;
-  const list = pack.challenges.landmarkChallenges[landmarkId];
-  return list?.[0] ?? pack.challenges.backupPool[0] ?? null;
+function claimVariants(pack: ClaimRulebookPack, landmarkId: string): ClaimChallengeItem[] {
+  const items = pack.challenges.landmarkChallenges[landmarkId];
+  return landmarkId !== "backup" && items?.length ? items : pack.challenges.backupPool;
+}
+
+function getActiveClaimChallenge(pack: ClaimRulebookPack, state: DryRunState): ClaimChallengeItem | undefined {
+  const variants = claimVariants(pack, state.claimLandmarkId);
+  return variants.find(item => item.id === state.claimVariantId) ?? variants[0];
 }
 
 function resolveDryRunLeaf(
@@ -176,44 +185,51 @@ export function evaluateClaimDryRunAnswer(
   state: DryRunState,
   root: HTMLElement,
 ): string {
-  const chal = getActiveClaimChallenge(pack, state.claimLandmarkId);
+  const chal = getActiveClaimChallenge(pack, state);
   if (!chal) return "Belum ada tantangan untuk diuji.";
   const leaf = resolveDryRunLeaf(chal, state);
-  if (!leaf) return "Pilih tingkat risiko (Standar atau Bold) terlebih dahulu.";
+  if (!leaf) return "Pilih tingkat risiko terlebih dahulu.";
+  if (leaf.primitive === "timed_micro_task") {
+    if (state.claimTimedDeadline === null) return "Mulai waktu uji sebelum menjawab.";
+    if (Date.now() >= state.claimTimedDeadline) return "Waktu latihan habis. Mulai lagi untuk mencoba.";
+  }
 
+  let correct = true;
   if (leaf.primitive === "observation_mcq") {
-    const picked = root.querySelector<HTMLInputElement>('input[name="dry-mcq"]:checked')?.value ?? "";
-    const ok = picked === leaf.correctChoiceId;
-    if (ok && chal.payload.primitive === "multi_step" && state.claimMultiStepIdx === 0) {
-      state.claimMultiStepIdx = 1;
-      return "✅ Langkah 1 benar! Lanjut ke Langkah 2.";
-    }
-    return ok ? "✅ Jawaban Benar! Landmark terkunci dalam simulasi." : `❌ Jawaban belum tepat (kunci: ${leaf.correctChoiceId}).`;
+    correct = root.querySelector<HTMLInputElement>('input[name="dry-mcq"]:checked')?.value === leaf.correctChoiceId;
+  } else if (leaf.primitive === "observation_input" ||
+      (leaf.primitive === "timed_micro_task" && leaf.taskType === "observation_input")) {
+    const raw = root.querySelector<HTMLInputElement>("#dry-input-val")?.value ?? "";
+    const mode = leaf.primitive === "observation_input" ? leaf.inputMode : leaf.numericRange ? "number" : "text";
+    correct = matchesClaimInputAnswer(raw, mode, leaf.acceptedAnswers, leaf.numericRange);
   }
-  if (leaf.primitive === "observation_input") {
-    const raw = (root.querySelector<HTMLInputElement>("#dry-input-val")?.value ?? "").trim();
-    let ok = false;
-    if (leaf.inputMode === "number" && leaf.numericRange) {
-      const n = Number(raw);
-      ok = Number.isFinite(n) && n >= leaf.numericRange.min && n <= leaf.numericRange.max;
-    } else if (leaf.acceptedAnswers) {
-      const norm = raw.toLowerCase();
-      ok = leaf.acceptedAnswers.some((a) => a.trim().toLowerCase() === norm);
-    }
-    if (ok && chal.payload.primitive === "multi_step" && state.claimMultiStepIdx === 0) {
-      state.claimMultiStepIdx = 1;
-      return "✅ Langkah 1 benar! Lanjut ke Langkah 2.";
-    }
-    return ok ? "✅ Jawaban Benar! Landmark terkunci dalam simulasi." : "❌ Jawaban tidak cocok dengan kunci.";
+  if (!correct) return "Jawaban belum tepat. Coba pilih atau masukkan jawaban lagi.";
+  if (chal.payload.primitive === "multi_step" && state.claimMultiStepIdx === 0) {
+    state.claimMultiStepIdx = 1;
+    state.claimTimedDeadline = null;
+    return "Langkah 1 selesai. Lanjut ke Langkah 2.";
   }
-  if (leaf.primitive === "photo_proof" || leaf.primitive === "timed_micro_task") {
-    if (chal.payload.primitive === "multi_step" && state.claimMultiStepIdx === 0) {
-      state.claimMultiStepIdx = 1;
-      return "✅ Langkah 1 (Foto/Timer) diterima! Lanjut ke Langkah 2.";
-    }
-    return "✅ Simulasi foto/tugas bertimer lulus dan mengunci landmark!";
+  state.claimTestDone = true;
+  return "Jawaban Benar! Landmark terkunci dalam simulasi.";
+}
+
+function renderDryClaimLeaf(leaf: ClaimLeafChallengePayload, state: DryRunState): string {
+  if (leaf.primitive === "timed_micro_task" && state.claimTimedDeadline === null) {
+    return `<p>${escapeText(leaf.prompt)}</p>
+      <button type="button" class="primary" data-dry-action="start-claim-timer" data-dry-limit="${leaf.timeLimitMs}">Mulai waktu uji</button>`;
   }
-  return "✅ Simulasi selesai.";
+  if (leaf.primitive === "observation_mcq") return `<p>${escapeText(leaf.prompt)}</p>
+    <div class="rb-list" role="radiogroup" aria-label="Pilihan jawaban">${leaf.choices.map((choice, index) =>
+      `<label><input type="radio" name="dry-mcq" value="${escapeText(choice.id)}" ${index === 0 ? "checked" : ""}> ${escapeText(choice.label)}</label>`
+    ).join("")}</div><button type="button" class="primary" data-dry-action="submit-claim-test">Uji Jawaban MCQ</button>`;
+  if (leaf.primitive === "observation_input" || (leaf.primitive === "timed_micro_task" && leaf.taskType === "observation_input")) {
+    return `<p>${escapeText(leaf.prompt)}</p>
+      <label class="rb-field"><span>Jawaban uji</span><input id="dry-input-val" placeholder="Masukkan jawaban uji"></label>
+      <button type="button" class="primary" data-dry-action="submit-claim-test">Uji Jawaban</button>`;
+  }
+  const isGps = leaf.primitive === "timed_micro_task" && leaf.taskType === "sub_point_gps";
+  return `<p>${escapeText(leaf.prompt)}</p><button type="button" class="primary" data-dry-action="submit-claim-test">
+    ${isGps ? "Simulasikan check-in titik" : "Simulasikan bukti foto"}</button>`;
 }
 
 export function renderInteractiveDryRunPanel(
@@ -225,7 +241,7 @@ export function renderInteractiveDryRunPanel(
     if (!state.claimLandmarkId && pack.geography.landmarks[0]) {
       state.claimLandmarkId = pack.geography.landmarks[0].id;
     }
-    const chal = getActiveClaimChallenge(pack, state.claimLandmarkId);
+    const chal = getActiveClaimChallenge(pack, state);
     const leaf = chal ? resolveDryRunLeaf(chal, state) : null;
     const soloTarget = pack.session.soloTargets?.lockedLandmarks ?? 4;
     const minRouteMin = Math.round(
@@ -237,7 +253,7 @@ export function renderInteractiveDryRunPanel(
     const durMin = Math.round(pack.session.durationMs / 60_000);
 
     return `<div class="rb-card" data-testid="interactive-dry-run">
-      <h4>Simulasi Dry-Run Interaktif (Claim the City)</h4>
+      <h4>Uji tantangan Claim the City</h4>
       <div class="rb-badges">
         <span class="rb-badge">Zona: ${pack.geography.zones.length}</span>
         <span class="rb-badge">Landmark: ${pack.geography.landmarks.length}</span>
@@ -254,14 +270,19 @@ export function renderInteractiveDryRunPanel(
             <option value="backup" ${state.claimLandmarkId === "backup" ? "selected" : ""}>Backup Pool</option>
           </select>
         </label>
+        <label class="rb-field"><span>Varian untuk diuji</span><select id="dry-claim-variant">
+          ${claimVariants(pack, state.claimLandmarkId).map(item =>
+            `<option value="${escapeText(item.id)}" ${chal?.id === item.id ? "selected" : ""}>${escapeText(item.title)}</option>`
+          ).join("")}
+        </select></label>
       </div>
-      <button type="button" class="secondary" data-dry-action="open-claim-test">${state.claimTestOpen ? "Muat Ulang Modal Uji" : "Buka Modal Uji Tantangan"}</button>
+      <button type="button" class="secondary" data-dry-action="open-claim-test">${state.claimTestOpen ? "Ulangi uji tantangan" : "Coba tantangan"}</button>
 
       ${
         state.claimTestOpen && chal
-          ? `<div class="rb-card" data-testid="dry-claim-modal">
+          ? `<section class="rb-card" data-testid="dry-claim-modal" tabindex="-1" aria-label="Pratinjau tantangan">
               <div class="rb-badges">
-                <span class="rb-badge">${escapeText(chal.payload.primitive)}</span>
+                <span class="rb-badge">${escapeText(challengePrimitiveTileMeta(chal.payload.primitive).short)}</span>
                 ${chal.payload.primitive === "multi_step" ? `<span class="rb-badge">Langkah ${state.claimMultiStepIdx + 1}/2</span>` : ""}
               </div>
               <strong>${escapeText(chal.title)}</strong>
@@ -272,25 +293,14 @@ export function renderInteractiveDryRunPanel(
                        <button type="button" class="secondary" data-dry-action="dry-shot-tier" data-tier="standard">Uji Standar</button>
                        <button type="button" class="primary" data-dry-action="dry-shot-tier" data-tier="bold">Uji Bold</button>
                      </div>`
-                  : leaf
-                    ? leaf.primitive === "observation_mcq"
-                      ? `<p>${escapeText(leaf.prompt)}</p>
-                         <div class="rb-list">${leaf.choices
-                           .map(
-                             (c, i) => `<label><input type="radio" name="dry-mcq" value="${escapeText(c.id)}" ${i === 0 ? "checked" : ""}> ${escapeText(c.label)}</label>`,
-                           )
-                           .join("")}</div>
-                         <button type="button" class="primary" data-dry-action="submit-claim-test">Uji Jawaban MCQ</button>`
-                      : leaf.primitive === "observation_input"
-                        ? `<p>${escapeText(leaf.prompt)}</p>
-                           <label class="rb-field"><span>Jawaban Uji (${leaf.inputMode})</span><input id="dry-input-val" placeholder="Masukkan jawaban uji"></label>
-                           <button type="button" class="primary" data-dry-action="submit-claim-test">Uji Jawaban</button>`
-                        : `<p>${escapeText(leaf.prompt)}</p>
-                           <button type="button" class="primary" data-dry-action="submit-claim-test">Simulasikan Bukti Foto / Timer</button>`
-                    : ""
+                  : leaf && !state.claimTestDone ? renderDryClaimLeaf(leaf, state) : ""
               }
+              ${leaf?.primitive === "timed_micro_task" && state.claimTimedDeadline !== null && !state.claimTestDone
+                ? `<p>Sisa waktu uji <strong data-dry-claim-clock>${Math.max(0, Math.ceil((state.claimTimedDeadline - Date.now()) / 1000))} detik</strong></p>` : ""}
+              ${chal.hint && !state.claimTestDone ? `<details><summary>Petunjuk lokasi</summary><p>${escapeText(chal.hint)}</p></details>` : ""}
               ${state.claimTestResult ? `<p role="status" data-testid="dry-claim-result">${escapeText(state.claimTestResult)}</p>` : ""}
-            </div>`
+              ${state.claimTestDone && chal.learningExplanation ? `<p><strong>Fakta lokasi</strong><br>${escapeText(chal.learningExplanation)}</p>` : ""}
+            </section>`
           : ""
       }
     </div>`;

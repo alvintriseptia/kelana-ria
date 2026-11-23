@@ -112,6 +112,8 @@ function renderClaimChallenges(
     ? pack.challenges.backupPool
     : (pack.challenges.landmarkChallenges[state.challengeTarget] ?? []);
   const prim = state.challengePrimitive;
+  const estimates = items.flatMap(item => item.estimatedSeconds === undefined ? [] : [item.estimatedSeconds]);
+  const compare = estimates.length > 1 && Math.max(...estimates) - Math.min(...estimates) > 20;
 
   return `<div data-testid="claim-challenges-panel">
     <label class="rb-field"><span>Target Tantangan</span>
@@ -127,7 +129,8 @@ function renderClaimChallenges(
     </label>
 
     <details class="rb-accordion">
-      <summary>Daftar Tantangan (${items.length})</summary>
+      <summary>Varian tantangan (${items.length})</summary>
+      ${compare ? '<p>Selisih perkiraan lebih dari 20 detik. Bandingkan usaha yang diperlukan sebelum menerbitkan.</p>' : ""}
       <ul class="rb-list">
         ${
           items.length === 0
@@ -137,6 +140,8 @@ function renderClaimChallenges(
                   (item, idx) => `<li>
                     <div><strong>${escapeText(item.title)}</strong> <span class="rb-badge">${escapeText(item.payload.primitive)}</span></div>
                     <small>${item.reviewed ? `Ditinjau ${escapeText(item.reviewedAt)}` : "Belum ditinjau"} · ${escapeText(item.verificationNotes)}</small>
+                    ${item.estimatedSeconds ? `<small>Perkiraan ${item.estimatedSeconds} detik</small>` : ""}
+                    <button type="button" class="secondary" data-c3-action="preview-challenge" data-index="${idx}">Pratinjau varian</button>
                     ${editable ? `<button type="button" class="secondary" data-c3-action="delete-challenge" data-index="${idx}">Hapus</button>` : ""}
                   </li>`,
                 )
@@ -174,9 +179,12 @@ function renderClaimChallenges(
               prim === "observation_mcq"
                 ? `<label class="rb-field"><span>Pertanyaan Pengamatan</span><input id="ed-chal-prompt" value="Apa warna dominan penanda utama lokasi ini?"></label>
                    <div class="rb-grid-2">
-                     <label class="rb-field"><span>Opsi A (Benar)</span><input id="ed-chal-opt-a" value="Hijau Tua"></label>
+                     <label class="rb-field"><span>Opsi A</span><input id="ed-chal-opt-a" value="Hijau Tua"></label>
                      <label class="rb-field"><span>Opsi B</span><input id="ed-chal-opt-b" value="Merah Muda"></label>
                      <label class="rb-field"><span>Opsi C</span><input id="ed-chal-opt-c" value="Ungu Neon"></label>
+                     <label class="rb-field"><span>Jawaban benar</span><select id="ed-chal-correct">
+                       <option value="a">Opsi A</option><option value="b">Opsi B</option><option value="c">Opsi C</option>
+                     </select></label>
                    </div>`
                 : prim === "observation_input"
                   ? `<label class="rb-field"><span>Pertanyaan Isian</span><input id="ed-chal-prompt" value="Berapa jumlah tiang utama gerbang?"></label>
@@ -210,6 +218,7 @@ function renderClaimChallenges(
                                <option value="observation_input">Isian Cepat</option>
                              </select>
                            </label>
+                           <label class="rb-field"><span>Jawaban isian cepat (pisahkan dengan koma)</span><input id="ed-chal-timed-answer" placeholder="pintu utara, utara"></label>
                          </div>`
                       : prim === "call_your_shot"
                         ? `<div class="rb-grid-2">
@@ -224,7 +233,12 @@ function renderClaimChallenges(
                             <label class="rb-field"><span>Jawaban Langkah 2</span><input id="ed-chal-answer" value="sudirman, panglima polim"></label>
                           </div>`
             }
-            <label class="rb-field"><span>Catatan Verifikasi Lapangan</span><input id="ed-chal-notes" value="Terverifikasi di ruang publik bebas tiket masuk."></label>
+            <label class="rb-field"><span>Sumber atau kriteria bukti</span><textarea id="ed-chal-notes" rows="2" required placeholder="Catat sumber fakta atau ciri yang harus terlihat dalam bukti."></textarea></label>
+            <label class="rb-field"><span>Petunjuk setelah check-in (opsional)</span><textarea id="ed-chal-hint" rows="2"></textarea></label>
+            <label class="rb-field"><span>Penjelasan setelah berhasil (opsional)</span><textarea id="ed-chal-explanation" rows="2"></textarea></label>
+            <label class="rb-field"><span>Perkiraan pengerjaan (detik)</span><input id="ed-chal-estimate" type="number" min="1" step="1"></label>
+            <label><input id="ed-chal-reviewed" type="checkbox" required> Saya sudah meninjau tugas, kunci jawaban atau kriteria bukti, dan sumbernya.</label>
+            <p class="rb-errors" role="alert" data-claim-composer-error hidden></p>
             <button type="button" class="primary" data-c3-action="add-challenge">+ Simpan Tantangan ke Target</button>
           </div>`
         : ""
@@ -309,9 +323,9 @@ function renderClaimDeck(
 
 export function buildClaimChallengeFromForm(root: HTMLElement, state: ClaimStep3State): ClaimChallengeItem | null {
   const title = root.querySelector<HTMLInputElement>("#ed-chal-title")?.value.trim();
-  if (!title) return null;
-  const verificationNotes =
-    root.querySelector<HTMLInputElement>("#ed-chal-notes")?.value.trim() || "Terverifikasi di area publik.";
+  const verificationNotes = root.querySelector<HTMLTextAreaElement>("#ed-chal-notes")?.value.trim();
+  const reviewed = root.querySelector<HTMLInputElement>("#ed-chal-reviewed")?.checked;
+  if (!title || !verificationNotes || verificationNotes.length < 6 || !reviewed) return null;
   const reviewedAt = new Date().toISOString().slice(0, 10);
   const prim = state.challengePrimitive;
   let payload: ClaimChallengePrimitive;
@@ -325,13 +339,14 @@ export function buildClaimChallengeFromForm(root: HTMLElement, state: ClaimStep3
         { id: "b", label: root.querySelector<HTMLInputElement>("#ed-chal-opt-b")?.value.trim() || "Pilihan B" },
         { id: "c", label: root.querySelector<HTMLInputElement>("#ed-chal-opt-c")?.value.trim() || "Pilihan C" },
       ],
-      correctChoiceId: "a",
+      correctChoiceId: root.querySelector<HTMLSelectElement>("#ed-chal-correct")?.value ?? "a",
     };
   } else if (prim === "observation_input") {
     const mode = (root.querySelector<HTMLSelectElement>("#ed-chal-inmode")?.value ?? "text") as "text" | "number";
     const ans = root.querySelector<HTMLInputElement>("#ed-chal-answer")?.value.trim() || "jakarta";
     if (mode === "number") {
-      const n = Number(ans) || 1;
+      const n = Number(ans);
+      if (!Number.isFinite(n)) return null;
       payload = {
         primitive: "observation_input",
         prompt: root.querySelector<HTMLInputElement>("#ed-chal-prompt")?.value.trim() || "Masukkan angka.",
@@ -360,6 +375,9 @@ export function buildClaimChallengeFromForm(root: HTMLElement, state: ClaimStep3
     const taskType = (root.querySelector<HTMLSelectElement>("#ed-chal-ttype")?.value ?? "photo_proof") as
       | "photo_proof"
       | "observation_input";
+    const answers = (root.querySelector<HTMLInputElement>("#ed-chal-timed-answer")?.value ?? "")
+      .split(",").map(answer => answer.trim()).filter(Boolean);
+    if (taskType === "observation_input" && !answers.length) return null;
     payload =
       taskType === "observation_input"
         ? {
@@ -367,7 +385,7 @@ export function buildClaimChallengeFromForm(root: HTMLElement, state: ClaimStep3
             prompt: root.querySelector<HTMLInputElement>("#ed-chal-prompt")?.value.trim() || "Jawab cepat.",
             timeLimitMs: secs * 1000,
             taskType: "observation_input",
-            acceptedAnswers: ["jakarta", "blok m"],
+            acceptedAnswers: answers,
           }
         : {
             primitive: "timed_micro_task",
@@ -422,10 +440,16 @@ export function buildClaimChallengeFromForm(root: HTMLElement, state: ClaimStep3
     };
   }
 
+  const hint = root.querySelector<HTMLTextAreaElement>("#ed-chal-hint")?.value.trim();
+  const learningExplanation = root.querySelector<HTMLTextAreaElement>("#ed-chal-explanation")?.value.trim();
+  const estimatedSeconds = root.querySelector<HTMLInputElement>("#ed-chal-estimate")?.valueAsNumber;
   return {
     id: `chal-${prim}-${Date.now().toString(36)}`,
     title,
     verificationNotes,
+    ...(hint ? { hint } : {}),
+    ...(learningExplanation ? { learningExplanation } : {}),
+    ...(Number.isFinite(estimatedSeconds) ? { estimatedSeconds } : {}),
     reviewed: true,
     reviewedAt,
     payload,
