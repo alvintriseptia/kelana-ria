@@ -22,7 +22,6 @@ import {
 } from "./studio-claim-builder";
 import {
   parseStudioBundleJson,
-  serializeStudioBundle,
   triggerStudioBundleDownload,
 } from "./studio-json";
 import {
@@ -69,6 +68,13 @@ import {
   type StudioVersionRecord,
 } from "./studio-types";
 import "./rulebook-seek-play.css";
+import "./studio-entry.css";
+
+type StudioView = "home" | "format" | "template" | "import" | "editor" | "review";
+type StudioTemplate = { packId: string; title: string; format: RulebookFormat; isOfficial: boolean };
+type CloneFields = { templatePackId: string; packId: string; title: string; byline: string; priceIdr: string };
+
+const formatLabels = { "claim-the-city": "Claim the City", "hide-and-seek": "Hide & Seek" };
 
 const STEP_META: { step: StudioStep; short: string; label: string }[] = [
   { step: 1, short: "1. Draf", label: "Draf & Info" },
@@ -90,17 +96,25 @@ function statusLabel(status: string): string {
 }
 
 export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () => void {
-  const initialFormat =
-    new URLSearchParams(location.search).get("format") === "claim-the-city" ? "claim-the-city" : "hide-and-seek";
-  let format: RulebookFormat = initialFormat;
-  let tab: "writer" | "reviewer" = "writer";
+  const lifetime = new AbortController();
+  const { signal } = lifetime;
+  const params = new URLSearchParams(location.search);
+  let format: RulebookFormat = params.get("format") === "hide-and-seek" ? "hide-and-seek" : "claim-the-city";
+  const requestedView = params.get("studio");
+  let view: StudioView = requestedView === "format" || requestedView === "template" || requestedView === "import" ||
+      requestedView === "editor" || requestedView === "review" ? requestedView : "home";
   let step: StudioStep = 1;
-  let showCloneForm = false;
-  let showJsonTools = false;
+  let cloneFields: CloneFields | undefined;
   let jsonBuffer = "";
   let versions: StudioVersionRecord[] = [];
+  let templates: StudioTemplate[] = [];
   let earnings: StudioEarningsRecord[] = [];
-  let selectedKey = "";
+  let reviewEnabled = false;
+  let reviewerKey = "";
+  let reviewVersions: StudioVersionRecord[] = [];
+  let selectedKey = view === "editor" ? `${params.get("draft") ?? ""}@${Number(params.get("version"))}` : "";
+  let loading = true;
+  let busy = false;
   let validationErrors: RulebookValidationIssue[] = [];
   let dryRunSummary = "";
   let statusMsg = "";
@@ -139,7 +153,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     challengePrimitive: "call_your_shot",
     cardPrimitive: "sabotage_curse",
   };
-  const dryRun: DryRunState = {
+  const initialDryRun: DryRunState = {
     seekAnchorId: "",
     seekSeekerPosId: "start",
     seekClueKey: "",
@@ -150,6 +164,42 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     claimMultiStepIdx: 0,
     claimTestResult: "",
   };
+  const dryRun = { ...initialDryRun };
+
+  function go(next: StudioView, draft?: StudioVersionRecord, message = "", errors: RulebookValidationIssue[] = []) {
+    if (signal.aborted) return;
+    refreshSeq++;
+    view = next;
+    if (next === "home" || next === "review") loading = true;
+    format = draft?.format ?? format;
+    if (draft) versions = [draft, ...versions.filter(record => record.packId !== draft.packId || record.version !== draft.version)];
+    selectedKey = draft ? `${draft.packId}@${draft.version}` : "";
+    step = 1;
+    step2.selected = null;
+    step2.mapMode = "select";
+    step2.subTab = "primary";
+    step2.mapFailed = false;
+    Object.assign(dryRun, initialDryRun);
+    dryRunSummary = "";
+    cloneFields = undefined;
+    jsonBuffer = "";
+    validationErrors = errors;
+    errorMsg = "";
+    statusMsg = message;
+    const query = new URLSearchParams({ play: "rulebook-studio" });
+    if (next !== "home") {
+      query.set("studio", next);
+      query.set("format", format);
+    }
+    if (draft) {
+      query.set("draft", draft.packId);
+      query.set("version", String(draft.version));
+    }
+    history.pushState(null, "", `/?${query}`);
+    render();
+    root.querySelector<HTMLElement>("#studio-page-heading")?.focus();
+    if (loading) void refresh();
+  }
 
   async function persistDraft(
     updatedPack: StudioPack,
@@ -168,7 +218,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       rehashSnapshot: true,
     });
     if (res.ok) {
-      if (res.record) selectedKey = `${res.record.packId}@${res.record.version}`;
       validationErrors = res.validation?.errors ?? [];
       statusMsg =
         successMessage ??
@@ -343,10 +392,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
   }
 
-  async function apiJson<T>(path: string, body?: unknown): Promise<T> {
+  async function apiJson<T>(path: string, body?: unknown, key?: string): Promise<T> {
+    const headers = new Headers();
+    if (body !== undefined) headers.set("content-type", "application/json");
+    if (key) headers.set("authorization", `Bearer ${key}`);
     const res = await fetch(path, {
       method: body === undefined ? "GET" : "POST",
-      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     return (await res.json()) as T;
@@ -354,24 +406,36 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   async function refresh() {
     const seq = ++refreshSeq;
-    const targetFormat = format;
-    const data = await apiJson<{ versions?: StudioVersionRecord[]; earnings?: StudioEarningsRecord[] }>(
-      "/api/rulebooks?role=reviewer",
-    );
-    if (seq !== refreshSeq || targetFormat !== format) return;
-    versions = (data.versions ?? []).filter((v) => v.format === format);
-    earnings = data.earnings ?? [];
-    const community = versions.filter((v) => !v.isOfficial);
-    if (!selectedKey || !community.some((v) => `${v.packId}@${v.version}` === selectedKey)) {
-      const firstDraft = community[0];
-      selectedKey = firstDraft ? `${firstDraft.packId}@${firstDraft.version}` : "";
+    try {
+      if (view === "review" && reviewerKey) {
+        const data = await apiJson<{ versions?: StudioVersionRecord[]; error?: string }>("/api/rulebooks?role=reviewer", undefined, reviewerKey);
+        if (seq !== refreshSeq || signal.aborted) return;
+        if (data.error) {
+          reviewerKey = "";
+          reviewVersions = [];
+          errorMsg = "Kunci peninjau belum cocok. Periksa lalu coba lagi.";
+        } else reviewVersions = data.versions ?? [];
+      } else {
+        const data = await apiJson<{ versions?: StudioVersionRecord[]; earnings?: StudioEarningsRecord[]; listings?: StudioTemplate[]; reviewEnabled?: boolean }>(
+          "/api/rulebooks?role=writer",
+        );
+        if (seq !== refreshSeq || signal.aborted) return;
+        versions = data.versions ?? [];
+        earnings = data.earnings ?? [];
+        const official = (data.listings ?? []).filter(item => item.isOfficial);
+        templates = official.filter((item, i) => official.findIndex(template => template.packId === item.packId) === i);
+        reviewEnabled = Boolean(data.reviewEnabled);
+      }
+    } catch {
+      if (seq !== refreshSeq || signal.aborted) return;
+      errorMsg = "Studio belum bisa dibuka. Periksa koneksi, lalu coba lagi.";
     }
-    if (community.length === 0) showCloneForm = true;
+    loading = false;
     render();
   }
 
   function currentDraft(): StudioVersionRecord | undefined {
-    return versions.find((v) => !v.isOfficial && `${v.packId}@${v.version}` === selectedKey);
+    return versions.find(v => v.format === format && `${v.packId}@${v.version}` === selectedKey);
   }
 
   function isEditable(rec: StudioVersionRecord): boolean {
@@ -402,129 +466,107 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     </nav>`;
   }
 
-  function renderCloneCard(officialTemplates: StudioVersionRecord[]): string {
+  function renderCloneCard(officialTemplates: StudioTemplate[]): string {
     if (officialTemplates.length === 0) {
       return `<div class="rb-card" data-testid="clone-template-card"><h3>Kloning dari Templat Resmi</h3><p role="status">Memuat templat resmi…</p></div>`;
     }
     const defaultPackId = format === "claim-the-city" ? "pack-senopati-claim" : "pack-senopati-seek";
     const defaultTitle =
       format === "claim-the-city" ? "Senopati Culinary Claim the City" : "Senopati Coffee Hide & Seek";
+    const fields = cloneFields ?? { templatePackId: "", packId: defaultPackId, title: defaultTitle, byline: "Kolektif Selatan", priceIdr: "30000" };
     return `<div class="rb-card" data-testid="clone-template-card">
       <h3>Kloning dari Templat Resmi</h3>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Templat Resmi</span>
           <select id="st-template">
-            ${officialTemplates.map((t) => `<option value="${escapeText(t.packId)}">${escapeText(t.pack.meta.title)}</option>`).join("")}
+            ${officialTemplates.map(t => `<option value="${escapeText(t.packId)}" ${fields.templatePackId === t.packId ? "selected" : ""}>${escapeText(t.title)}</option>`).join("")}
           </select>
         </label>
-        <label class="rb-field"><span>ID Paket Baru</span><input id="st-pack-id" value="${defaultPackId}"></label>
-        <label class="rb-field"><span>Judul Paket</span><input id="st-title" value="${defaultTitle}"></label>
-        <label class="rb-field"><span>Nama Kreator</span><input id="st-byline" value="Kolektif Selatan"></label>
-        <label class="rb-field"><span>Harga Sesi (IDR)</span><input id="st-price" type="number" value="30000" min="0" step="1000"></label>
+        <label class="rb-field"><span>ID Paket Baru</span><input id="st-pack-id" value="${escapeText(fields.packId)}"></label>
+        <label class="rb-field"><span>Judul Paket</span><input id="st-title" value="${escapeText(fields.title)}"></label>
+        <label class="rb-field"><span>Nama Kreator</span><input id="st-byline" value="${escapeText(fields.byline)}"></label>
+        <label class="rb-field"><span>Harga Sesi (IDR)</span><input id="st-price" type="number" value="${escapeText(fields.priceIdr)}" min="0" step="1000"></label>
       </div>
       <div class="rb-actions">
-        <button type="button" class="primary" data-action="clone">Kloning Templat Jadi Draf</button>
+        <button type="button" class="primary" data-action="clone" ${busy ? "disabled" : ""}>Buat draf</button>
       </div>
     </div>`;
   }
 
-  function renderStep1(
-    officialTemplates: StudioVersionRecord[],
-    communityVersions: StudioVersionRecord[],
-    active?: StudioVersionRecord,
-  ): string {
-    const nextVersionNum = active
-      ? Math.max(...communityVersions.filter((v) => v.packId === active.packId).map((v) => v.version)) + 1
-      : 2;
-
+  function renderStep1(active: StudioVersionRecord): string {
+    const editable = isEditable(active);
+    const disabled = editable ? "" : "disabled";
+    const nextVersion = Math.max(...versions.filter(record => record.packId === active.packId).map(record => record.version)) + 1;
     return `
-      ${
-        active && active.status === "changes-requested" && active.reviewNote
-          ? `<div class="rb-banner-warn" role="alert" data-testid="revision-note-banner">
-              <strong>Catatan Peninjau (${escapeText(active.packId)} v${active.version}):</strong>
-              <span>${escapeText(active.reviewNote)}</span>
-            </div>`
-          : ""
-      }
-
+      ${active.status === "changes-requested" && active.reviewNote
+        ? `<div class="rb-banner-warn" role="alert" data-testid="revision-note-banner"><strong>Catatan Peninjau</strong><p>${escapeText(active.reviewNote)}</p></div>` : ""}
       <div class="rb-card">
-        <h3>Draf Saya (${communityVersions.length})</h3>
-        ${
-          communityVersions.length > 0
-            ? `<label class="rb-field"><span>Pilih Draf / Versi Aktif</span>
-                <select id="st-draft-select">
-                  ${communityVersions
-                    .map((v) => {
-                      const key = `${v.packId}@${v.version}`;
-                      return `<option value="${escapeText(key)}" ${key === selectedKey ? "selected" : ""}>${escapeText(v.pack.meta.title)} · ${escapeText(v.packId)} v${v.version} (${escapeText(statusLabel(v.status))})</option>`;
-                    })
-                    .join("")}
-                </select>
-              </label>`
-            : `<p>Belum ada draf untuk format ini. Kloning templat resmi di bawah untuk memulai.</p>`
-        }
-        <div class="rb-actions">
-          <button type="button" class="secondary" data-action="toggle-clone">${showCloneForm ? "Tutup Form Kloning" : "+ Kloning Templat Baru"}</button>
-          ${
-            active && !isEditable(active)
-              ? `<button type="button" class="primary" data-action="clone-next-version">Buat Versi Berikutnya (v${nextVersionNum})</button>`
-              : ""
-          }
-          <button type="button" class="secondary" data-action="toggle-json">${showJsonTools ? "Tutup JSON Tools" : "Ekspor / Impor JSON"}</button>
+        <h3>Info paket</h3>
+        ${editable ? "" : `<p>Versi ini terkunci. Buat versi berikutnya untuk melanjutkan penyuntingan.</p>
+          <button type="button" class="primary" data-action="clone-next-version" ${busy ? "disabled" : ""}>Buat Versi Berikutnya (v${nextVersion})</button>`}
+        <div class="rb-grid-2">
+          <label class="rb-field"><span>Judul Paket</span><input id="ed-meta-title" value="${escapeText(active.pack.meta.title)}" ${disabled}></label>
+          <label class="rb-field"><span>Nama Kreator</span><input id="ed-meta-byline" value="${escapeText(active.pack.meta.byline)}" ${disabled}></label>
+          <label class="rb-field"><span>Kota / Wilayah</span><input id="ed-meta-city" value="${escapeText(active.pack.meta.cityLabel)}" ${disabled}></label>
+          <label class="rb-field"><span>Harga Sesi (IDR)</span><input id="ed-meta-price" type="number" min="0" step="1000" value="${active.pack.meta.priceIdr}" ${disabled}></label>
         </div>
-      </div>
+        <label class="rb-field"><span>Ringkasan Paket</span><input id="ed-meta-summary" value="${escapeText(active.pack.meta.summary)}" ${disabled}></label>
+        <div class="rb-sticky-footer">
+          <button type="button" class="secondary" data-action="export-json">Unduh JSON</button>
+          ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan</button>` : ""}
+          <button type="button" class="primary" data-step="2">Peta →</button>
+        </div>
+      </div>`;
+  }
 
-      ${showCloneForm ? renderCloneCard(officialTemplates) : ""}
+  function renderEntry(): string {
+    if (view === "format") return `<div class="st-format-grid" role="group" aria-label="Pilih format permainan">
+      ${(Object.keys(formatLabels) as RulebookFormat[]).map(item => `<button type="button" class="st-format-card" data-format="${item}">
+        ${formatHeroCardSvg(item)}<strong>${escapeText(formatLabels[item])}</strong>
+      </button>`).join("")}
+    </div>`;
+    if (view === "template") return `${renderCloneCard(templates.filter(item => item.format === format))}
+      <button type="button" class="secondary" data-studio-view="import">Sudah punya JSON? Impor</button>`;
+    if (view === "import") return `<div class="rb-card" data-testid="json-tools-card">
+      <label class="rb-field"><span>Pilih Berkas JSON</span><input id="st-json-file" type="file" accept="application/json,.json"></label>
+      <label class="rb-field"><span>JSON Bundel</span><textarea id="st-json-text" class="rb-json-area" placeholder='{"pack": {}, "snapshot": {}}'>${escapeText(jsonBuffer)}</textarea></label>
+      <button type="button" class="primary" data-action="import-json" ${busy ? "disabled" : ""}>Impor &amp; Validasi JSON</button>
+    </div>`;
+    return `<div class="rb-card studio-home">
+      <button type="button" class="primary" data-studio-view="format">Buat Game</button>
+      <h3>Draf Saya</h3>
+      ${loading ? '<p role="status">Memuat draf…</p>' : versions.length ? `<ul class="studio-drafts">
+        ${versions.map(record => `<li><button type="button" class="secondary studio-draft" data-draft="${escapeText(record.packId)}@${record.version}">
+          <strong>${escapeText(record.pack.meta.title)}</strong>
+          <small>${escapeText(formatLabels[record.format])} · v${record.version} · ${escapeText(statusLabel(record.status))}</small>
+        </button></li>`).join("")}
+      </ul>` : "<p>Draf yang kamu buat muncul di sini.</p>"}
+      ${reviewEnabled ? '<button type="button" class="secondary" data-studio-view="review">Peninjau</button>' : ""}
+    </div>`;
+  }
 
-      ${
-        showJsonTools
-          ? `<div class="rb-card" data-testid="json-tools-card">
-              <h3>JSON Power Tools (<code>{ pack, snapshot }</code>)</h3>
-              <p><small>Unduh draf sebagai JSON untuk disunting eksternal atau tempel/unggah berkas JSON untuk mengimpornya menjadi draf baru.</small></p>
-              <div class="rb-actions">
-                ${active ? `<button type="button" class="secondary" data-action="export-json">Unduh JSON Draf Aktif</button>` : ""}
-                <label class="rb-field"><span>Pilih Berkas JSON</span><input id="st-json-file" type="file" accept="application/json,.json"></label>
-              </div>
-              <label class="rb-field">
-                <span>JSON Bundel (<code>{ pack, snapshot }</code>)</span>
-                <textarea id="st-json-text" class="rb-json-area" placeholder='{"pack": {...}, "snapshot": {...}}'>${escapeText(jsonBuffer)}</textarea>
-              </label>
-              <div class="rb-actions">
-                <button type="button" class="primary" data-action="import-json">Impor &amp; Validasi JSON</button>
-              </div>
-            </div>`
-          : ""
-      }
-
-      ${
-        active
-          ? `<div class="rb-card">
-              <div class="rb-badges">
-                <span class="rb-badge">${escapeText(active.packId)} v${active.version}</span>
-                <span class="rb-badge">${escapeText(statusLabel(active.status))}</span>
-              </div>
-              <h3>Info Paket Aktif</h3>
-              ${
-                !isEditable(active)
-                  ? `<p><small>Versi ini berstatus <strong>${escapeText(statusLabel(active.status))}</strong> dan terkunci. Klik <strong>Buat Versi Berikutnya</strong> untuk menyunting versi baru.</small></p>`
-                  : ""
-              }
-              <div class="rb-grid-2">
-                <label class="rb-field"><span>Judul Paket</span><input id="ed-meta-title" value="${escapeText(active.pack.meta.title)}" ${!isEditable(active) ? "disabled" : ""}></label>
-                <label class="rb-field"><span>Nama Kreator</span><input id="ed-meta-byline" value="${escapeText(active.pack.meta.byline)}" ${!isEditable(active) ? "disabled" : ""}></label>
-                <label class="rb-field"><span>Kota / Wilayah</span><input id="ed-meta-city" value="${escapeText(active.pack.meta.cityLabel)}" ${!isEditable(active) ? "disabled" : ""}></label>
-                <label class="rb-field"><span>Harga Sesi (IDR)</span><input id="ed-meta-price" type="number" min="0" step="1000" value="${active.pack.meta.priceIdr}" ${!isEditable(active) ? "disabled" : ""}></label>
-              </div>
-              <label class="rb-field"><span>Ringkasan Paket</span><input id="ed-meta-summary" value="${escapeText(active.pack.meta.summary)}" ${!isEditable(active) ? "disabled" : ""}></label>
-              <div class="rb-sticky-footer">
-                <span></span>
-                ${isEditable(active) ? `<button type="button" class="secondary" data-action="save-draft">Simpan</button>` : "<span></span>"}
-                <button type="button" class="primary" data-step="2">Peta →</button>
-              </div>
-            </div>`
-          : ""
-      }
-    `;
+  function renderReview(): string {
+    if (loading) return '<p role="status">Memuat antrean…</p>';
+    if (!reviewEnabled) return '<div class="rb-card"><p>Akses peninjau belum diaktifkan.</p></div>';
+    if (!reviewerKey) return `<div class="rb-card">
+      <label class="rb-field"><span>Kunci peninjau</span><input type="password" id="studio-reviewer-key" autocomplete="off"></label>
+      <button type="button" class="primary" data-action="open-review">Buka antrean tinjauan</button>
+    </div>`;
+    return `<section class="rb-card" aria-label="Paket untuk tinjauan"><ul class="rb-list">
+      ${reviewVersions.length === 0 ? "<li>Belum ada paket untuk ditinjau.</li>" : reviewVersions.map(record => `<li>
+        <div class="rb-rev-head"><strong>${escapeText(record.pack.meta.title)}</strong>
+          <small>${escapeText(formatLabels[record.format])} · v${record.version} · ${escapeText(statusLabel(record.status))}</small>
+        </div>
+        ${record.status === "submitted" ? `<label class="rb-field"><span>Catatan Revisi (opsional)</span>
+          <input data-review-note value="Perjelas catatan akses lokasi."></label>` : ""}
+        <div class="rb-actions">
+          ${record.status === "submitted"
+            ? `<button type="button" class="primary" data-action="publish" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Terbitkan ke Katalog</button>
+              <button type="button" class="secondary" data-action="request-changes" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Minta Revisi</button>`
+            : `<button type="button" class="secondary" data-action="pause" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Jeda Penjualan</button>`}
+        </div>
+      </li>`).join("")}
+    </ul></section>`;
   }
 
   function renderStep2(active?: StudioVersionRecord): string {
@@ -565,7 +607,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       <div class="rb-sticky-footer">
         <button type="button" class="secondary" data-step="3">← Aturan</button>
         ${editable ? `<button type="button" class="secondary" data-action="save-draft">Validasi</button>` : "<span></span>"}
-        <button type="button" class="secondary" data-tab="reviewer">Peninjau →</button>
       </div>
     </div>
 
@@ -588,102 +629,47 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }
 
   function render() {
-    const officialTemplates = versions.filter((v) => v.isOfficial);
-    const communityVersions = versions.filter((v) => !v.isOfficial);
-    const submittedCount = communityVersions.filter((v) => v.status === "submitted").length;
+    if (signal.aborted) return;
     const active = currentDraft();
-
     if (!root.querySelector("#st-header-slot")) {
-      root.innerHTML = `<section class="rb-shell" aria-label="Studio Kreator Rulebook">
+      root.innerHTML = `<section class="rb-shell" aria-label="Studio Kreator">
         <div id="st-header-slot"></div>
         <div id="st-stepper-slot"></div>
         <div id="st-body-slot"></div>
       </section>`;
     }
-
     const headerSlot = root.querySelector<HTMLElement>("#st-header-slot")!;
     const stepperSlot = root.querySelector<HTMLElement>("#st-stepper-slot")!;
     const bodySlot = root.querySelector<HTMLElement>("#st-body-slot")!;
+    const heading = {
+      home: "Studio Kreator", format: "Pilih format permainan", template: "Pilih templat", import: "Impor game",
+      editor: active?.pack.meta.title ?? "Editor draf", review: "Antrean Tinjauan Editorial",
+    }[view];
 
-    headerSlot.innerHTML = `<div class="rb-card">
-      <h2>Studio Kreator · ${format === "claim-the-city" ? "Claim the City" : "Hide &amp; Seek"}</h2>
-      <div class="rb-badges">
-        <span class="rb-badge">4 Langkah Visual</span>
-        <span class="rb-badge">Peta Interaktif</span>
-        <span class="rb-badge">Uji Coba Langsung</span>
-      </div>
-      <div class="st-format-grid" role="group" aria-label="Pilih format permainan">
-        <button type="button" class="st-format-card" data-format="hide-and-seek" aria-pressed="${format === "hide-and-seek"}">
-          ${formatHeroCardSvg("hide-and-seek")}
-          <strong>Hide &amp; Seek</strong>
-          <span class="st-tile-meta">6 Petunjuk · Dek &amp; Kutukan</span>
-        </button>
-        <button type="button" class="st-format-card" data-format="claim-the-city" aria-pressed="${format === "claim-the-city"}">
-          ${formatHeroCardSvg("claim-the-city")}
-          <strong>Claim the City</strong>
-          <span class="st-tile-meta">Zona · 6 Primitif Tantangan</span>
-        </button>
-      </div>
+    headerSlot.innerHTML = `<div class="rb-card studio-heading">
       <div class="rb-actions">
-        <button type="button" class="${tab === "writer" ? "primary" : "secondary"}" data-tab="writer">Penulis (Creator)</button>
-        <button type="button" class="${tab === "reviewer" ? "primary" : "secondary"}" data-tab="reviewer">Peninjau (${submittedCount})</button>
-        <button type="button" class="secondary" data-nav="catalog">Katalog Publik</button>
-        <button type="button" class="secondary" data-nav="back">Beranda</button>
+        ${view === "home" ? '<button type="button" class="secondary" data-nav="back">‹ Katalog</button>'
+          : `<button type="button" class="secondary" data-studio-view="${view === "template" ? "format" : view === "import" ? "template" : "home"}">${view === "template" ? "‹ Pilih format" : view === "import" ? "‹ Pilih templat" : "‹ Studio"}</button>`}
+        ${view === "review" ? '<button type="button" class="secondary" data-nav="catalog">Katalog Publik</button>' : ""}
       </div>
+      <h2 id="studio-page-heading" tabindex="-1">${escapeText(heading)}</h2>
+      ${active ? `<p class="studio-context">${escapeText(formatLabels[active.format])} · ${escapeText(active.packId)} v${active.version} · ${escapeText(statusLabel(active.status))}</p>`
+        : view === "template" || view === "import" ? `<p class="studio-context">${escapeText(formatLabels[format])}</p>` : ""}
       ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
       ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
-      ${
-        validationErrors.length > 0
-          ? `<ul class="rb-errors" aria-label="Kesalahan validasi">${validationErrors
-              .map((e) => {
-                const target = resolveValidationJump(e.path, format);
-                return `<li>
-                  <div><code>${escapeText(e.code)}</code> (${escapeText(e.path)}): ${escapeText(e.message)}</div>
-                  <button type="button" class="secondary" data-jump-path="${escapeText(e.path)}">Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button>
-                </li>`;
-              })
-              .join("")}</ul>`
-          : ""
-      }
+      ${validationErrors.length > 0
+        ? `<ul class="rb-errors" aria-label="Kesalahan validasi">${validationErrors.map(error => {
+            const target = resolveValidationJump(error.path, format);
+            return `<li><div><code>${escapeText(error.code)}</code> (${escapeText(error.path)}): ${escapeText(error.message)}</div>
+              <button type="button" class="secondary" data-jump-path="${escapeText(error.path)}">Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button></li>`;
+          }).join("")}</ul>` : ""}
     </div>`;
 
-    stepperSlot.innerHTML = tab === "writer" ? renderStepper() : "";
-
-    if (tab !== "writer") {
+    stepperSlot.innerHTML = active ? renderStepper() : "";
+    if (view !== "editor" || !active) {
       destroyStep2Map();
-      bodySlot.innerHTML = `<div class="rb-card">
-        <h3>Antrean Tinjauan Editorial (${communityVersions.length})</h3>
-        <ul class="rb-list">
-          ${
-            communityVersions.length === 0
-              ? "<li>Belum ada paket komunitas untuk format ini.</li>"
-              : communityVersions
-                  .map(
-                    (v) => `<li>
-                      <div class="rb-rev-head">
-                        <strong>${escapeText(v.pack.meta.title)}</strong>
-                        <div class="rb-badges">
-                          <code>${escapeText(v.packId)} v${v.version}</code>
-                          <span class="rb-badge">${escapeText(statusLabel(v.status))}</span>
-                        </div>
-                      </div>
-                      ${v.reviewNote ? `<small>Catatan terakhir: ${escapeText(v.reviewNote)}</small>` : ""}
-                      ${
-                        v.status === "submitted"
-                          ? `<label class="rb-field"><span>Catatan Revisi (opsional)</span><input id="rev-note-${escapeText(v.packId)}-${v.version}" value="Perjelas catatan akses lokasi."></label>`
-                          : ""
-                      }
-                      <div class="rb-actions">
-                        ${v.status === "submitted" ? `<button type="button" class="primary" data-action="publish" data-pack="${escapeText(v.packId)}" data-version="${v.version}">Terbitkan ke Katalog</button>` : ""}
-                        ${v.status === "submitted" ? `<button type="button" class="secondary" data-action="request-changes" data-pack="${escapeText(v.packId)}" data-version="${v.version}">Minta Revisi</button>` : ""}
-                        ${v.status === "published" ? `<button type="button" class="secondary" data-action="pause" data-pack="${escapeText(v.packId)}" data-version="${v.version}">Jeda Penjualan</button>` : ""}
-                      </div>
-                    </li>`,
-                  )
-                  .join("")
-          }
-        </ul>
-      </div>`;
+      bodySlot.innerHTML = view === "review" ? renderReview() : view !== "editor" ? renderEntry()
+        : loading ? '<p role="status">Memuat draf…</p>' : '<p role="status">Versi draf ini tidak tersedia. Buka Draf Saya untuk memilih versi lain.</p>';
       return;
     }
 
@@ -731,7 +717,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     destroyStep2Map();
     bodySlot.innerHTML =
       step === 1
-        ? renderStep1(officialTemplates, communityVersions, active)
+        ? renderStep1(active)
         : step === 2
           ? renderStep2(active)
           : step === 3
@@ -874,7 +860,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (target.id.startsWith("ed-card-") || target.id.startsWith("ed-curse-") || target.id.startsWith("ed-ccard-")) {
       updateLiveCardPreview();
     }
-  });
+  }, { signal });
 
   root.addEventListener("change", (event) => {
     const target = event.target as HTMLElement | null;
@@ -885,16 +871,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       target.id !== "ed-ccard-prim"
     ) {
       updateLiveCardPreview();
-      return;
-    }
-    if (target instanceof HTMLSelectElement && target.id === "st-draft-select") {
-      selectedKey = target.value;
-      step2.selected = null;
-      dryRunSummary = "";
-      validationErrors = [];
-      statusMsg = "";
-      errorMsg = "";
-      render();
       return;
     }
     if (target instanceof HTMLSelectElement && target.id === "ed-card-prim") {
@@ -949,6 +925,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       const file = target.files?.[0];
       if (!file) return;
       void file.text().then((text) => {
+        if (signal.aborted || view !== "import") return;
         jsonBuffer = text;
         const area = root.querySelector<HTMLTextAreaElement>("#st-json-text");
         if (area) area.value = text;
@@ -956,41 +933,29 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         render();
       });
     }
-  });
+  }, { signal });
 
   root.addEventListener("click", (event) => {
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
-    if (!btn) return;
+    if (!btn || busy) return;
     if (btn.dataset.nav === "back") return onBack();
     if (btn.dataset.nav === "catalog") {
-      const url = new URL(location.href);
-      url.searchParams.set("play", format === "claim-the-city" ? "rulebook-claim" : "rulebook-seek");
-      url.searchParams.delete("format");
-      history.pushState({ fromChooser: true }, "", url);
+      history.pushState(null, "", "/");
       window.dispatchEvent(new PopStateEvent("popstate"));
       return;
     }
     if (btn.dataset.format === "hide-and-seek" || btn.dataset.format === "claim-the-city") {
       format = btn.dataset.format;
-      selectedKey = "";
-      versions = [];
-      step2.selected = null;
-      step2.subTab = "primary";
-      step2.mapMode = "select";
-      step = 1;
-      showCloneForm = false;
-      showJsonTools = false;
-      dryRunSummary = "";
-      statusMsg = "";
-      errorMsg = "";
-      validationErrors = [];
-      render();
-      void refresh();
+      go("template");
       return;
     }
-    if (btn.dataset.tab === "writer" || btn.dataset.tab === "reviewer") {
-      tab = btn.dataset.tab;
-      render();
+    if (btn.dataset.studioView) {
+      go(btn.dataset.studioView as StudioView);
+      return;
+    }
+    if (btn.dataset.draft) {
+      const draft = versions.find(record => `${record.packId}@${record.version}` === btn.dataset.draft);
+      if (draft) go("editor", draft);
       return;
     }
     if (btn.dataset.step) {
@@ -1003,7 +968,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     if (btn.dataset.jumpPath) {
       const target = resolveValidationJump(btn.dataset.jumpPath, format);
-      tab = "writer";
       step = target.step;
       if (target.step2Tab) step2.subTab = target.step2Tab;
       if (target.seekSubTab) seekStep3.subTab = target.seekSubTab;
@@ -1467,28 +1431,32 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     const action = btn.dataset.action;
     if (!action) return;
 
+    const isCreating = action === "clone" || action === "import-json" || action === "clone-next-version";
+    if (isCreating) {
+      busy = true;
+      btn.disabled = true;
+    }
+
     void (async () => {
       errorMsg = "";
       validationErrors = [];
 
-      if (action === "toggle-clone") {
-        showCloneForm = !showCloneForm;
-        render();
-        return;
-      }
-      if (action === "toggle-json") {
-        showJsonTools = !showJsonTools;
-        const active = currentDraft();
-        if (showJsonTools && active && !jsonBuffer) {
-          jsonBuffer = serializeStudioBundle(active);
+      if (action === "open-review") {
+        reviewerKey = root.querySelector<HTMLInputElement>("#studio-reviewer-key")?.value.trim() ?? "";
+        if (!reviewerKey) {
+          errorMsg = "Masukkan kunci peninjau untuk membuka antrean.";
+          render();
+          root.querySelector<HTMLInputElement>("#studio-reviewer-key")?.focus();
+          return;
         }
+        loading = true;
         render();
+        await refresh();
         return;
       }
       if (action === "export-json") {
         const active = currentDraft();
         if (!active) return;
-        jsonBuffer = serializeStudioBundle(active);
         triggerStudioBundleDownload(active);
         statusMsg = `Bundel JSON ${active.packId} v${active.version} diekspor.`;
         render();
@@ -1522,12 +1490,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           rehashSnapshot: true,
         });
         if (res.ok && res.record) {
-          selectedKey = `${res.record.packId}@${res.record.version}`;
-          validationErrors = res.validation?.errors ?? [];
-          statusMsg = res.validation?.ok
+          const message = res.validation?.ok
             ? `JSON berhasil diimpor sebagai ${res.record.packId} v${res.record.version} dan lolos validator otomatis.`
             : `JSON diimpor sebagai ${res.record.packId} v${res.record.version} dengan kesalahan validasi.`;
-          await refresh();
+          go("editor", res.record, message, res.validation?.errors ?? []);
         } else {
           errorMsg = res.error ?? "Gagal mengimpor JSON.";
           render();
@@ -1535,21 +1501,24 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         return;
       }
       if (action === "clone") {
+        cloneFields = {
+          templatePackId: root.querySelector<HTMLSelectElement>("#st-template")?.value ?? "",
+          packId: root.querySelector<HTMLInputElement>("#st-pack-id")?.value.trim() ?? "",
+          title: root.querySelector<HTMLInputElement>("#st-title")?.value.trim() ?? "",
+          byline: root.querySelector<HTMLInputElement>("#st-byline")?.value.trim() ?? "",
+          priceIdr: root.querySelector<HTMLInputElement>("#st-price")?.value ?? "",
+        };
         const res = await apiJson<{ ok?: boolean; record?: StudioVersionRecord; error?: string }>("/api/rulebooks", {
           type: "clone-official",
-          templatePackId: root.querySelector<HTMLSelectElement>("#st-template")?.value,
-          packId: root.querySelector<HTMLInputElement>("#st-pack-id")?.value.trim(),
-          title: root.querySelector<HTMLInputElement>("#st-title")?.value.trim(),
-          byline: root.querySelector<HTMLInputElement>("#st-byline")?.value.trim(),
-          priceIdr: Number(root.querySelector<HTMLInputElement>("#st-price")?.value ?? 0),
+          ...cloneFields,
+          priceIdr: Number(cloneFields.priceIdr),
         });
         if (res.ok && res.record) {
-          selectedKey = `${res.record.packId}@${res.record.version}`;
-          showCloneForm = false;
-          statusMsg = `Draf ${res.record.packId} v${res.record.version} berhasil dikloning.`;
-          await refresh();
+          go("editor", res.record, `Draf ${res.record.packId} v${res.record.version} berhasil dikloning.`);
         } else {
-          errorMsg = res.error ?? "Gagal kloning templat.";
+          errorMsg = res.error === "pack-unavailable" ? "ID paket ini sudah dipakai. Gunakan ID paket lain."
+            : res.error === "invalid-metadata" ? "Isi ID paket, judul, dan nama kreator."
+            : "Draf belum bisa dibuat. Periksa templat, lalu coba lagi.";
           render();
         }
         return;
@@ -1567,9 +1536,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           rehashSnapshot: true,
         });
         if (res.ok && res.record) {
-          selectedKey = `${res.record.packId}@${res.record.version}`;
-          statusMsg = `Versi baru ${res.record.packId} v${res.record.version} siap disunting.`;
-          await refresh();
+          go("editor", res.record, `Versi baru ${res.record.packId} v${res.record.version} siap disunting.`);
         } else {
           errorMsg = res.error ?? "Gagal membuat versi baru.";
           render();
@@ -1637,18 +1604,19 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         return;
       }
       if (action === "publish" || action === "request-changes" || action === "pause") {
+        if (view !== "review" || !reviewerKey) return;
         const packId = btn.dataset.pack ?? "";
         const version = Number(btn.dataset.version ?? 1);
         const type =
           action === "publish" ? "publish-version" : action === "pause" ? "pause-version" : "request-changes";
-        const noteInput = root.querySelector<HTMLInputElement>(`#rev-note-${packId}-${version}`)?.value.trim();
+        const noteInput = btn.closest("li")?.querySelector<HTMLInputElement>("[data-review-note]")?.value.trim();
         const res = await apiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
           type,
           packId,
           version,
           note: noteInput || "Perjelas catatan akses lokasi.",
           reason: "Lokasi sedang perawatan.",
-        });
+        }, reviewerKey);
         if (res.ok) {
           statusMsg = `Status diperbarui (${type}).`;
           await refresh();
@@ -1657,11 +1625,22 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           render();
         }
       }
-    })();
-  });
+    })().catch(() => {
+      errorMsg = "Perubahan belum bisa dikirim. Periksa koneksi, lalu coba lagi.";
+      render();
+    }).finally(() => {
+      if (isCreating) {
+        busy = false;
+        const actionButton = root.querySelector<HTMLButtonElement>(`[data-action="${action}"]`);
+        if (actionButton && !signal.aborted) actionButton.disabled = false;
+      }
+    });
+  }, { signal });
 
+  render();
   void refresh();
   return () => {
+    lifetime.abort();
     destroyStep2Map();
   };
 }

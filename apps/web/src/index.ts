@@ -84,7 +84,7 @@ async function showRoute(focusCatalog = false) {
         if (currentNavigation === navigation && !practice.open) mountEditionPractice(practice, edition, mode);
       },
       openStudio: () => {
-        history.pushState({ fromChooser: true }, "", "/?play=rulebook-studio&format=claim-the-city");
+        history.pushState({ fromChooser: true }, "", "/?play=rulebook-studio");
         void showRoute();
       },
     }, focusCatalog);
@@ -102,7 +102,7 @@ async function showRoute(focusCatalog = false) {
   const heading = mode === "creator-packs"
     ? '<h1>Paket Kreator Jakarta</h1><p class="intro">Jakarta (Compact) · Claim the City · Tinjauan &amp; Katalog</p>'
     : rulebookStudio
-      ? '<h1>Studio Rulebook</h1><p class="intro">Hide &amp; Seek &amp; Claim the City · Authoring &amp; Tinjauan Paket Komunitas</p>'
+      ? '<h1>Studio Kreator</h1>'
       : rulebookSeek
         ? '<h1 lang="en">Hide &amp; Seek · Rulebook</h1><p class="intro">2–6 Pemain · Zona Sembunyi, Endgame &amp; Dek Kartu</p>'
         : rulebookClaim

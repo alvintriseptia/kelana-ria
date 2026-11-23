@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
+import { buyPublishedDraft, openDraft, openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -16,6 +17,7 @@ const server = createSoloServer({
   midtrans: createRecordedMidtransAdapter(),
   allowSimulatedLocation: true,
   allowRulebookSandboxCheckout: true,
+  rulebookReviewerKey: reviewerKey,
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -36,7 +38,7 @@ async function clickAndWaitPost(page, selector) {
 async function clickAndWaitStudioSave(page, selector) {
   await Promise.all([
     page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
-    page.waitForResponse((r) => r.url().includes("/api/rulebooks?role=reviewer") && r.request().method() === "GET"),
+    page.waitForResponse((r) => r.url().includes("/api/rulebooks?role=writer") && r.request().method() === "GET"),
     page.click(selector),
   ]);
 }
@@ -80,32 +82,41 @@ try {
 
   // 1. Hide & Seek Studio: multi-draft switcher, intentional validator error -> jump link -> fix -> interactive clue dry-run
   await page.click("#chooser-studio");
+  await page.getByRole("button", { name: "Buat Game", exact: true }).click();
+  assert.equal(await page.locator('button[data-format] svg').count(), 2, "Expected SVG art on format hero cards");
+  await page.screenshot({ path: path.join(results, "studio-step1-format-cards.png") });
+  await assertNoHorizontalOverflow(page, "Format choices");
   await page.click('button[data-format="hide-and-seek"]');
   await page.waitForSelector('button[data-action="clone"]');
-  assert.equal(await page.locator('button[data-format] svg').count(), 2, "Expected SVG art on format hero cards");
-  assert.equal(await page.locator('button[data-step] svg').count(), 4, "Expected SVG icons on all 4 step buttons");
-  await page.screenshot({ path: path.join(results, "studio-step1-format-cards.png") });
-  await assertNoHorizontalOverflow(page, "Step 1 initial clone form");
+  await assertNoHorizontalOverflow(page, "Template setup");
 
   await page.fill("#st-pack-id", "pack-seek-alpha");
   await page.fill("#st-title", "Alpha Seek Draft Very Long Title For Mobile Select Wrapping Check");
-  await clickAndWaitStudioSave(page, 'button[data-action="clone"]');
-  await page.waitForSelector("#st-draft-select");
-  await assertNoHorizontalOverflow(page, "Step 1 draft switcher");
+  await clickAndWaitPost(page, 'button[data-action="clone"]');
+  await page.locator("#ed-meta-title").waitFor();
+  assert.equal(await page.locator('button[data-step] svg').count(), 4, "Expected SVG icons on all 4 step buttons");
+  assert.equal(await page.locator('button[data-format], #st-template, button[data-draft]').count(), 0);
+  await assertNoHorizontalOverflow(page, "Draft editor");
+  await page.screenshot({ path: path.join(results, "studio-dedicated-editor.png") });
+  await page.fill("#ed-meta-summary", "Catatan draf Alpha tersimpan");
+  await clickAndWaitStudioSave(page, 'button[data-action="save-draft"]');
+  await page.reload();
+  await page.locator("#ed-meta-summary").waitFor();
+  assert.equal(await page.inputValue("#ed-meta-summary"), "Catatan draf Alpha tersimpan");
 
-  await page.click('button[data-action="toggle-json"]');
-  await page.waitForSelector('[data-testid="json-tools-card"]');
-  await assertNoHorizontalOverflow(page, "Step 1 JSON tools expanded");
-  await page.click('button[data-action="toggle-json"]');
-
-  await page.click('button[data-action="toggle-clone"]');
+  await page.click('button[data-studio-view="home"]');
+  await page.locator('button[data-draft="pack-seek-alpha@1"]').waitFor();
+  await assertNoHorizontalOverflow(page, "My drafts");
+  await page.screenshot({ path: path.join(results, "studio-my-drafts.png") });
+  await startDraft(page, "hide-and-seek");
   await page.fill("#st-pack-id", "pack-seek-beta");
   await page.fill("#st-title", "Beta Seek Draft");
-  await clickAndWaitStudioSave(page, 'button[data-action="clone"]');
+  await clickAndWaitPost(page, 'button[data-action="clone"]');
 
   // Switch back to Alpha draft
-  await page.selectOption("#st-draft-select", "pack-seek-alpha@1");
+  await openDraft(page, "pack-seek-alpha");
   await page.waitForFunction(() => document.body.textContent.includes("pack-seek-alpha v1"));
+  assert.equal(await page.inputValue("#ed-meta-summary"), "Catatan draf Alpha tersimpan");
 
   // Intercept /api/map/config & /api/map/style.json before first Step 2 entry so both Hide & Seek and Claim verify zero style re-fetches
   let styleFetchCount = 0;
@@ -217,12 +228,17 @@ try {
   assert.match(seekDryText, /Hasil Uji Radar.*m\)/);
 
   // 2. Claim the City Studio: Step 2 zone+landmark -> Step 3 challenge+card -> Step 4 interactive modal test -> Publish -> Midtrans
-  await page.click('button[data-format="claim-the-city"]');
+  await page.click('button[data-studio-view="home"]');
+  await startDraft(page, "claim-the-city");
   await page.waitForSelector('button[data-action="clone"]');
   await page.fill("#st-pack-id", "pack-claim-studio-qa");
   await page.fill("#st-title", "Studio QA Claim Pack");
   await page.fill("#st-price", "25000");
-  await clickAndWaitStudioSave(page, 'button[data-action="clone"]');
+  await clickAndWaitPost(page, 'button[data-action="clone"]');
+  await page.locator("#ed-meta-title").waitFor();
+  await page.reload();
+  await page.locator("#ed-meta-title").waitFor();
+  assert.equal(await page.inputValue("#ed-meta-title"), "Studio QA Claim Pack");
 
   // Step 2: add zone & landmark, asserting persistent MapLibre canvas & zero extra style.json fetch during interactions
   const countBeforeClaimStep2 = styleFetchCount;
@@ -300,19 +316,13 @@ try {
   // Submit -> Reviewer Publish -> Public Catalog -> Midtrans settlement -> Live Room
   await clickAndWaitPost(page, 'button[data-action="submit-draft"]');
   await page.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
-  await page.click('button[data-tab="reviewer"]');
+  await openReview(page);
   await assertNoHorizontalOverflow(page, "Reviewer queue tab");
   await clickAndWaitPost(page, 'button[data-action="publish"]');
   await page.waitForFunction(() => document.body.textContent.includes("publish-version"));
 
   await page.click('button[data-nav="catalog"]');
-  await page.waitForSelector('article[data-pack-id="pack-claim-studio-qa"]');
-  await clickAndWaitPost(
-    page,
-    'article[data-pack-id="pack-claim-studio-qa"] button[data-action="buy-pack"]',
-  );
-  await page.waitForSelector('button[data-action="settle-order"]');
-  await clickAndWaitPost(page, 'button[data-action="settle-order"]');
+  await buyPublishedDraft(page, "pack-claim-studio-qa");
   await page.waitForFunction(
     () => document.body.textContent.includes("Ruang Tunggu") && document.body.textContent.includes("Pass Berbayar"),
   );
