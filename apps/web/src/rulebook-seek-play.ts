@@ -20,6 +20,7 @@ import { fetchMapConfig } from "./map-config";
 import { fetchApiJson, resolvePlayerError, type PlayerErrorSurface, type PlayerErrorTone } from "./player-errors";
 import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { isSimulatedLocationAllowed } from "./runtime-config";
+import { clearActiveRoom, saveActiveRoom } from "./active-room-storage";
 import { answerText, incomingQuestion, questionDeck, questionNames, questionOptions, rewardCard } from "./seek-game-panels";
 import "./rulebook-seek-play.css";
 
@@ -536,6 +537,30 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       clockBase = performance.now();
       live = data;
       reconcilePendingAction(data);
+      if (
+        (data.room.phase === "lobby" ||
+          data.room.phase === "head_start" ||
+          data.room.phase === "seeking" ||
+          data.room.phase === "endgame" ||
+          data.room.phase === "regroup") &&
+        !data.room.outcome
+      ) {
+        saveActiveRoom({
+          roomCode: data.room.code,
+          format: "hide-and-seek",
+          packId: data.room.packMeta.packId,
+          version: data.room.packMeta.version,
+          title: data.room.packMeta.title,
+          phase: data.room.phase,
+          role: data.room.role,
+          turnNumber: data.room.turnNumber,
+          totalPlannedTurns: data.room.totalPlannedTurns,
+          playerCount: data.room.seats.length,
+          maxPlayers: data.pass.maxPlayers,
+        });
+      } else {
+        clearActiveRoom(data.room.code);
+      }
       if (previous?.room.code !== data.room.code) {
         qaStationId = data.qa ? sessionStorage.getItem(`seek-qa-location:${data.room.code}`) ?? "" : "";
         qaAdvanceRetry = undefined;

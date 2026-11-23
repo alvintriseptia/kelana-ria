@@ -437,6 +437,9 @@ try {
   assert.match(await pageG2.locator(".recap-shell").innerText(), /Giliran 1 · Ditemukan · 3 pertanyaan dijawab/);
   assert.ok(await pageG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageG2.screenshot({ path: path.join(results, "rulebook-seek-recap.png") });
+  await pageG2.locator('header.mast a.brand[href="/"]').click();
+  await pageG2.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+  assert.equal(await pageG2.getByTestId("resume-room-banner").count(), 0, "Completed Hide & Seek room must not show resume banner");
   for (const [context, page, filename] of [
     [ctxCreator, pageCreator, "rulebook-seek-card-playback.webm"],
     [ctxG2, pageG2, "rulebook-seek-map-playback.webm"],

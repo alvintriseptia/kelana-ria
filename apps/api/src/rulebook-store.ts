@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
+  ActiveRulebookRoomSummary,
   ClaimEngineAction,
   ClaimEngineActionReply,
   ClaimEngineRoomView,
@@ -923,20 +924,24 @@ export function rulebookStore(
     if (session.format === "claim-the-city") {
       const existingSeat = findClaimEngineSeat(session.match, credHash);
       if (existingSeat) {
+        touchLiveRoom(roomCode, session);
         return { ok: true, seatId: existingSeat, room: viewClaimEngineMatch(session.match, existingSeat, now) };
       }
       const nextSeatId = `seat-${session.match.seats.length + 1}`;
       const joined = joinClaimEngineMatch(session.match, { seatId: nextSeatId, name, credentialHash: credHash });
       if (!joined.ok) return joined;
+      touchLiveRoom(roomCode, session);
       return { ok: true, seatId: nextSeatId, room: viewClaimEngineMatch(session.match, nextSeatId, now) };
     }
     const existingSeat = findSeekEngineSeat(session.match, credHash);
     if (existingSeat) {
+      touchLiveRoom(roomCode, session);
       return { ok: true, seatId: existingSeat, room: viewSeekEngineMatch(session.match, existingSeat, now) };
     }
     const nextSeatId = `seat-${session.match.seats.length + 1}`;
     const joined = joinSeekEngineMatch(session.match, { seatId: nextSeatId, name, credentialHash: credHash });
     if (!joined.ok) return joined;
+    touchLiveRoom(roomCode, session);
     return { ok: true, seatId: nextSeatId, room: viewSeekEngineMatch(session.match, nextSeatId, now) };
   }
 
@@ -1246,6 +1251,11 @@ export function rulebookStore(
     return { ok: false, error: "unknown-deck-action" };
   }
 
+  function touchLiveRoom(roomCode: string, session: LiveSession) {
+    liveRooms.delete(roomCode);
+    liveRooms.set(roomCode, session);
+  }
+
   function viewRoom(roomCode: string, credential: string, now: number) {
     const session = liveRooms.get(roomCode);
     if (!session) return undefined;
@@ -1253,6 +1263,7 @@ export function rulebookStore(
     if (session.format === "claim-the-city") {
       const seatId = findClaimEngineSeat(session.match, credHash);
       if (!seatId) return undefined;
+      touchLiveRoom(roomCode, session);
       expireClaimEngineMatch(session.match, now);
       pruneClaimPhotos(session);
       captureCompletedMatch(session);
@@ -1279,6 +1290,7 @@ export function rulebookStore(
     }
     const seatId = findSeekEngineSeat(session.match, credHash);
     if (!seatId) return undefined;
+    touchLiveRoom(roomCode, session);
     expireRoomPhotos(session, now);
     expireSeekDeckAndCurses(session.deck, session.match, now);
     session.activity.observeSeek(session.match, session.deck, now);
@@ -1308,6 +1320,66 @@ export function rulebookStore(
     };
   }
 
+  function listActiveRooms(credential: string, currentNow: number): ActiveRulebookRoomSummary[] {
+    const credHash = digest(credential);
+    const active: ActiveRulebookRoomSummary[] = [];
+    for (const session of [...liveRooms.values()].reverse()) {
+      const code = session.pass.roomCode;
+      const ts = roomTime(code, currentNow);
+      if (session.format === "claim-the-city") {
+        const seatId = findClaimEngineSeat(session.match, credHash);
+        if (!seatId) continue;
+        expireClaimEngineMatch(session.match, ts);
+        pruneClaimPhotos(session);
+        captureCompletedMatch(session);
+        const room = viewClaimEngineMatch(session.match, seatId, ts);
+        if ((room.phase !== "lobby" && room.phase !== "active") || room.outcome) continue;
+        active.push({
+          roomCode: room.code,
+          format: "claim-the-city",
+          packId: room.packMeta.packId,
+          version: room.packMeta.version,
+          title: room.packMeta.title,
+          phase: room.phase,
+          role: room.isSolo ? "solo" : "group",
+          playerCount: room.seats.length,
+          maxPlayers: session.pass.maxPlayers,
+        });
+      } else {
+        const seatId = findSeekEngineSeat(session.match, credHash);
+        if (!seatId) continue;
+        expireRoomPhotos(session, ts);
+        expireSeekDeckAndCurses(session.deck, session.match, ts);
+        session.activity.observeSeek(session.match, session.deck, ts);
+        const room = viewSeekEngineMatch(session.match, seatId, ts);
+        if (
+          (room.phase !== "lobby" &&
+            room.phase !== "head_start" &&
+            room.phase !== "seeking" &&
+            room.phase !== "endgame" &&
+            room.phase !== "regroup") ||
+          room.outcome
+        ) {
+          continue;
+        }
+        active.push({
+          roomCode: room.code,
+          format: "hide-and-seek",
+          packId: room.packMeta.packId,
+          version: room.packMeta.version,
+          title: room.packMeta.title,
+          phase: room.phase,
+          role: room.role,
+          turnNumber: room.turnNumber,
+          totalPlannedTurns: room.totalPlannedTurns,
+          playerCount: room.seats.length,
+          maxPlayers: session.pass.maxPlayers,
+        });
+      }
+    }
+    return active;
+  }
+
   async function seedGeoFromOfficialFixture(request: GeoSeedRequest): Promise<GeoSnapshot> {
     const baseSnapshot = officialSeekLoaded[officialSeekLoaded.length - 1]?.snapshot;
     if (!baseSnapshot) throw new Error("No official geo fixture loaded");
@@ -1317,6 +1389,7 @@ export function rulebookStore(
 
   return {
     listPublicListings,
+    listActiveRooms,
     listAllVersions: allRecords,
     listRecaps: (participant: string) => recaps.list(digest(participant)),
     readRecap: (matchId: string, participant: string) => recaps.get(matchId, digest(participant)),

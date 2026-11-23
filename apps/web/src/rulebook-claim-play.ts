@@ -17,6 +17,7 @@ import { fetchApiJson, resolvePlayerError, type PlayerErrorSurface, type PlayerE
 import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { claimDecidingMetric, claimResultReasons } from "./rulebook-claim-result";
 import { isSimulatedLocationAllowed } from "./runtime-config";
+import { clearActiveRoom, saveActiveRoom } from "./active-room-storage";
 import { escapeText } from "./solo-view";
 import "./rulebook-seek-play.css";
 import "./rulebook-claim-play.css";
@@ -399,6 +400,21 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     if ("room" in data && data.room) {
       serverOffset = data.room.now - Date.now();
       reconcilePendingAction(data.room);
+      if ((data.room.phase === "lobby" || data.room.phase === "active") && !data.room.outcome) {
+        saveActiveRoom({
+          roomCode: data.room.code,
+          format: "claim-the-city",
+          packId: data.room.packMeta.packId,
+          version: data.room.packMeta.version,
+          title: data.room.packMeta.title,
+          phase: data.room.phase,
+          role: data.room.isSolo ? "solo" : "group",
+          playerCount: data.room.seats.length,
+          maxPlayers: data.pass.maxPlayers,
+        });
+      } else {
+        clearActiveRoom(data.room.code);
+      }
       if (selectedCardId && !data.room.ownHand.some(card => card.instanceId === selectedCardId)) {
         selectedCardId = "";
       }

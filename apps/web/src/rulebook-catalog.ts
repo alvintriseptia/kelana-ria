@@ -1,4 +1,19 @@
-import type { HideSeekCardCategory, HideSeekQuestionFamily, PackOrderSummary, PublicMatchRecapSummary, RulebookFormat, RulebookPlayMode } from "@kelana-ria/contracts";
+import type {
+  ActiveRulebookRoomPhase,
+  ActiveRulebookRoomSummary,
+  HideSeekCardCategory,
+  HideSeekQuestionFamily,
+  PackOrderSummary,
+  PublicMatchRecapSummary,
+  RulebookFormat,
+  RulebookPlayMode,
+} from "@kelana-ria/contracts";
+import {
+  dismissActiveRoom,
+  readStoredActiveRoom,
+  reconcileActiveRoomsFromServer,
+  saveActiveRoom,
+} from "./active-room-storage";
 import { escapeText } from "./escape-text";
 import { fetchApiJson, resolvePlayerError, type PlayerErrorTone } from "./player-errors";
 import { createPlayerToast, renderInlineAlert } from "./player-toast";
@@ -8,6 +23,14 @@ import "./rulebook-catalog.css";
 const endpoint = "/api/rulebooks/catalog";
 const cacheKey = "kelana-rulebook-catalog";
 const formatNames = { "claim-the-city": "Claim the City", "hide-and-seek": "Hide & Seek" } as const;
+const resumePhaseLabels: Record<ActiveRulebookRoomPhase, string> = {
+  lobby: "Ruang Tunggu",
+  active: "Ronde Aktif",
+  head_start: "Waktu Sembunyi",
+  seeking: "Fase Pencarian",
+  endgame: "Endgame",
+  regroup: "Berkumpul Kembali",
+};
 const recapDate = new Intl.DateTimeFormat("id-ID", { dateStyle: "medium" });
 const gameOverviews = {
   "claim-the-city": "Jelajahi landmark di peta. Check-in di lokasi, lalu selesaikan tantangan untuk mengunci landmark.",
@@ -63,7 +86,12 @@ export type CatalogEdition = {
 });
 type Edition = CatalogEdition;
 
-type Catalog = { editions: Edition[]; sharedRecaps?: PublicMatchRecapSummary[]; allowSandboxCheckout: boolean };
+type Catalog = {
+  editions: Edition[];
+  sharedRecaps?: PublicMatchRecapSummary[];
+  activeRooms?: ActiveRulebookRoomSummary[];
+  allowSandboxCheckout: boolean;
+};
 type Attempt = { id: string; order?: PackOrderSummary };
 type CheckoutReply = { error?: string; roomCode?: string; order?: PackOrderSummary; pass?: { roomCode: string } };
 type Options = {
@@ -109,13 +137,46 @@ function roundTime(item: Edition) {
     : `${item.searchLimitMinutes} mnt/pencarian`;
 }
 
-function editionTitle(item: Edition) {
-  const separator = ` · ${formatNames[item.format]}`;
-  const index = item.title.lastIndexOf(separator);
-  const suffix = item.title.slice(index + separator.length);
+function cleanTitle(title: string, format: RulebookFormat) {
+  const separator = ` · ${formatNames[format]}`;
+  const index = title.lastIndexOf(separator);
+  const suffix = title.slice(index + separator.length);
   return index > 0 && (suffix === "" || /^ \([^)]+\)$/.test(suffix))
-    ? item.title.slice(0, index) + suffix
-    : item.title;
+    ? title.slice(0, index) + suffix
+    : title;
+}
+
+function editionTitle(item: Edition) {
+  return cleanTitle(item.title, item.format);
+}
+
+function renderResumeBanner(room: ActiveRulebookRoomSummary) {
+  const title = cleanTitle(room.title, room.format);
+  const meta = [
+    `v${room.version}`,
+    room.format === "claim-the-city"
+      ? (room.role === "solo" ? "Solo" : "Grup")
+      : (room.turnNumber && room.totalPlannedTurns ? `Giliran ${room.turnNumber}/${room.totalPlannedTurns}` : ""),
+    room.role === "hider" ? "Penyembunyi" : room.role === "seeker" ? "Pencari" : "",
+    room.role !== "solo" && room.playerCount && room.maxPlayers ? `${room.playerCount}/${room.maxPlayers} pemain` : "",
+  ].filter(Boolean).join(" · ");
+  return `<section class="cat-resume" aria-label="Permainan sedang berlangsung" data-testid="resume-room-banner" data-room-code="${escapeText(room.roomCode)}" data-format="${room.format}">
+    <div class="cat-resume-head">
+      <div class="cat-resume-badges">
+        <span class="cat-resume-format ${room.format}"><span aria-hidden="true">${room.format === "claim-the-city" ? "◆" : "◎"}</span> ${escapeText(formatNames[room.format])}</span>
+        <span class="cat-resume-badge">Ruang ${escapeText(room.roomCode)}</span>
+        <span class="cat-resume-badge">${escapeText(resumePhaseLabels[room.phase])}</span>
+      </div>
+      <button type="button" class="secondary cat-resume-dismiss" data-cat-action="dismiss-resume" data-room-code="${escapeText(room.roomCode)}" aria-label="Tutup sesi ${escapeText(room.roomCode)}">Tutup</button>
+    </div>
+    <div class="cat-resume-body">
+      <div class="cat-resume-copy">
+        <h2>${escapeText(title)}</h2>
+        <p>${escapeText(meta)}</p>
+      </div>
+      <button type="button" class="primary cat-resume-cta" data-cat-action="resume-room" data-room-code="${escapeText(room.roomCode)}" data-format="${room.format}">Lanjutkan Permainan</button>
+    </div>
+  </section>`;
 }
 
 function cover(item: Edition) {
@@ -205,6 +266,7 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
   const version = Number(params.get("version"));
   let mode: RulebookPlayMode = params.get("mode") === "group" ? "group" : "solo";
   let catalog = readStored<Catalog>(cacheKey);
+  let activeRoom = readStoredActiveRoom() ?? (catalog?.activeRooms ? reconcileActiveRoomsFromServer(catalog.activeRooms) : undefined);
   let fresh = false;
   let loading = true;
   let busy = false;
@@ -297,6 +359,7 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       <p class="intro">Jelajahi kota lewat misi dan kartu.</p></div>
       <div class="catalog-links"><a class="cat-link" href="/?recaps=1">Riwayat pertandingan</a>
       <button type="button" id="chooser-studio" class="secondary" data-cat-action="studio">Studio Kreator</button></div></div>
+      ${activeRoom ? renderResumeBanner(activeRoom) : ""}
       ${offline}
       ${editions ? (Object.keys(formatNames) as RulebookFormat[]).map(format => {
         const cards = editions.filter(edition => edition.format === format);
@@ -326,6 +389,9 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       if (!ok || !Array.isArray(data.editions)) throw new Error("catalog-invalid");
       if (signal.aborted || sequence !== loadSequence) return;
       catalog = data;
+      if (Array.isArray(data.activeRooms)) {
+        activeRoom = reconcileActiveRoomsFromServer(data.activeRooms);
+      }
       fresh = true;
       failed = false;
       store(cacheKey, data);
@@ -381,6 +447,15 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       const code = reply.roomCode ?? reply.pass?.roomCode ?? reply.order?.roomCode;
       if (code) {
         setAttempt();
+        saveActiveRoom({
+          roomCode: code,
+          format: item.format,
+          packId: item.packId,
+          version: item.version,
+          title: item.title,
+          phase: "lobby",
+          role: item.format === "claim-the-city" ? mode : "none",
+        });
         options.openRoom(item.format, code);
       } else if (reply.order) {
         setAttempt({ ...attempt, order: reply.order });
@@ -412,6 +487,24 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     const type = control?.dataset.catAction;
     if (type === "studio") return options.openStudio();
     if (type === "retry") return void load();
+    if (type === "resume-room") {
+      const code = control?.dataset.roomCode ?? activeRoom?.roomCode;
+      const fmt = (control?.dataset.format as RulebookFormat | undefined) ?? activeRoom?.format;
+      if (code && (fmt === "claim-the-city" || fmt === "hide-and-seek")) {
+        options.openRoom(fmt, code);
+      }
+      return;
+    }
+    if (type === "dismiss-resume") {
+      const code = control?.dataset.roomCode ?? activeRoom?.roomCode;
+      if (code) {
+        dismissActiveRoom(code);
+        activeRoom = catalog?.activeRooms ? reconcileActiveRoomsFromServer(catalog.activeRooms) : readStoredActiveRoom();
+        if (catalog) store(cacheKey, catalog);
+        render();
+      }
+      return;
+    }
     const item = selected();
     if (!item || !type || control.disabled || busy) return;
     if (type === "practice") {

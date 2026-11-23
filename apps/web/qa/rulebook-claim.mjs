@@ -151,6 +151,33 @@ try {
   await pageSolo.getByRole("button", { name: "Coba Lagi" }).click();
   await pageSolo.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
   assert.equal(await pageSolo.getByRole("list", { name: "Daftar Landmark" }).count(), 0);
+
+  // App restart simulation: open a fresh tab at / in the same browser context -> Lanjutkan Permainan banner appears and resumes the active game
+  const pageRestart = await ctxSolo.newPage();
+  await pageRestart.goto(baseUrl, { waitUntil: "networkidle" });
+  const resumeBanner = pageRestart.getByTestId("resume-room-banner");
+  await resumeBanner.waitFor();
+  const resumeText = await resumeBanner.innerText();
+  assert.match(resumeText, /Claim the City/);
+  assert.ok(resumeText.includes(`Ruang ${soloRoomCode}`));
+  assert.match(resumeText, /Ronde Aktif/);
+  const resumeBtn = resumeBanner.getByRole("button", { name: "Lanjutkan Permainan", exact: true });
+  const dismissBtn = resumeBanner.locator('[data-cat-action="dismiss-resume"]');
+  const resumeBox = await resumeBtn.boundingBox();
+  const dismissBox = await dismissBtn.boundingBox();
+  assert.ok(resumeBox && resumeBox.width >= 44 && resumeBox.height >= 44, "Resume CTA must meet 44x44 touch target");
+  assert.ok(dismissBox && dismissBox.width >= 44 && dismissBox.height >= 44, "Dismiss button must meet 44x44 touch target");
+  assert.ok(await pageRestart.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await pageRestart.screenshot({ path: path.join(results, "catalog-resume-claim.png") });
+  await resumeBtn.click();
+  await pageRestart.waitForFunction(() => document.body.textContent.includes("2/4 terkunci"));
+  assert.equal(new URL(pageRestart.url()).searchParams.get("room"), soloRoomCode);
+
+  // Return to catalog and test dismissing the resume banner
+  await pageRestart.goto(baseUrl, { waitUntil: "networkidle" });
+  await resumeBanner.waitFor();
+  await dismissBtn.click();
+  assert.equal(await resumeBanner.count(), 0, "Dismissing resume banner should hide it on the catalog");
   await ctxSolo.close();
 
   // 2. 3-player Claim the City FFA launched directly from / + invite link join
@@ -272,6 +299,8 @@ try {
   await recapLink.first().waitFor();
   assert.equal(await recapLink.count(), 1);
   await pageP2.getByRole("link", { name: "‹ Katalog" }).click();
+  await pageP2.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+  assert.equal(await pageP2.getByTestId("resume-room-banner").count(), 0, "Completed room must not appear in resume banner");
   await pageP2.getByRole("link", { name: "Riwayat pertandingan" }).click();
   await recapLink.click();
   await pageP2.getByRole("heading", { name: "Pemenang · Penantang 2" }).waitFor();

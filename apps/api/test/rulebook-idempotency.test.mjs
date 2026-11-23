@@ -219,7 +219,87 @@ test("Hide & Seek deck-action and play-card deduplicate retries by actionId with
     // Verify hand has exact kept cards once (not duplicated)
     const afterDraw = await hider.get(`/api/rulebooks/rooms/${code}`);
     assert.equal(afterDraw.body.deck.hand.length, keepIds.length);
+
+    // GET /api/rulebooks/catalog includes activeRooms for both hider and seeker while seeking
+    const hiderCat = await hider.get("/api/rulebooks/catalog");
+    assert.equal(hiderCat.status, 200);
+    assert.equal(hiderCat.body.activeRooms.length, 1);
+    assert.equal(hiderCat.body.activeRooms[0].roomCode, code);
+    assert.equal(hiderCat.body.activeRooms[0].format, "hide-and-seek");
+    assert.equal(hiderCat.body.activeRooms[0].phase, "seeking");
+    assert.equal(hiderCat.body.activeRooms[0].role, "hider");
+
+    const seekerCat = await seeker.get("/api/rulebooks/catalog");
+    assert.equal(seekerCat.body.activeRooms.length, 1);
+    assert.equal(seekerCat.body.activeRooms[0].roomCode, code);
+    assert.equal(seekerCat.body.activeRooms[0].phase, "seeking");
+    assert.equal(seekerCat.body.activeRooms[0].role, "seeker");
+
+    // Anonymous visitor gets empty activeRooms
+    const anon = makeClient(baseUrl);
+    const anonCat = await anon.get("/api/rulebooks/catalog");
+    assert.deepEqual(anonCat.body.activeRooms, []);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("GET /api/rulebooks/catalog tracks Claim room from lobby to active and clears once finished", async () => {
+  const clock = { now: T0 };
+  const { server, baseUrl } = await startServer(clock);
+  try {
+    const player = makeClient(baseUrl);
+    const created = await player.post("/api/rulebooks/catalog", {
+      type: "play",
+      edition: "official-jakarta-compact-claim",
+      version: 1,
+      mode: "solo",
+      requestId: "resume-claim-001",
+    });
+    assert.equal(created.status, 200);
+    const roomCode = created.body.roomCode;
+    assert.ok(roomCode);
+
+    const lobbyCat = await player.get("/api/rulebooks/catalog");
+    assert.equal(lobbyCat.body.activeRooms.length, 1);
+    assert.equal(lobbyCat.body.activeRooms[0].roomCode, roomCode);
+    assert.equal(lobbyCat.body.activeRooms[0].format, "claim-the-city");
+    assert.equal(lobbyCat.body.activeRooms[0].phase, "lobby");
+    assert.equal(lobbyCat.body.activeRooms[0].role, "solo");
+
+    const roomView = await player.get(`/api/rulebooks/rooms/${roomCode}`);
+    const startPoint = roomView.body.publicBoard.startPoint;
+    await player.post("/api/rulebooks", {
+      type: "room-action",
+      roomCode,
+      action: {
+        type: "check-in-start",
+        actionId: "resume-start-ci",
+        fix: { latitude: startPoint.latitude, longitude: startPoint.longitude, accuracy: 10, timestamp: clock.now },
+      },
+    });
+    await player.post("/api/rulebooks", {
+      type: "room-action",
+      roomCode,
+      action: { type: "ready", actionId: "resume-ready", ready: true },
+    });
+    await player.post("/api/rulebooks", {
+      type: "room-action",
+      roomCode,
+      action: { type: "start", actionId: "resume-start" },
+    });
+
+    const activeCat = await player.get("/api/rulebooks/catalog");
+    assert.equal(activeCat.body.activeRooms.length, 1);
+    assert.equal(activeCat.body.activeRooms[0].roomCode, roomCode);
+    assert.equal(activeCat.body.activeRooms[0].phase, "active");
+
+    // Expire match clock -> room finishes and disappears from activeRooms
+    clock.now += 200 * 60_000;
+    const finishedCat = await player.get("/api/rulebooks/catalog");
+    assert.deepEqual(finishedCat.body.activeRooms, []);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
