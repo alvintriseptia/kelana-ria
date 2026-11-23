@@ -690,6 +690,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         <ul class="rb-list">${room.turns.map(turn => `<li>
           <strong>${escapeText(room.seats.find(seat => seat.seatId === turn.hiderSeatId)?.name ?? "Penyembunyi")}</strong>
           <span>${clockText(turn.adjustedMs)}</span></li>`).join("")}</ul>
+        ${room.startedAt !== null ? `<a class="cat-link" href="/?recap=${encodeURIComponent(room.code)}">Buka ringkasan</a>` : ""}
       </div>` : ""}
 
       ${room.phase === "regroup" ? `<div class="rb-card">

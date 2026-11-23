@@ -63,6 +63,16 @@ export function rulebookHandler(
       json(response, 200, { editions: store.listPublicListings(undefined, true), allowSandboxCheckout });
       return;
     }
+    if (request.method === "GET" && path === "/api/rulebooks/recaps") {
+      const member = credential(request, cookieName);
+      return json(response, 200, { recaps: member ? store.listRecaps(member) : [] });
+    }
+    const recapRoute = /^\/api\/rulebooks\/recaps\/((?:RC|RB)-[\dA-F]{6})$/.exec(path);
+    if (request.method === "GET" && recapRoute) {
+      const member = credential(request, cookieName);
+      const recap = member ? store.readRecap(recapRoute[1], member) : undefined;
+      return recap ? json(response, 200, { recap }) : json(response, 404, { error: "recap-unavailable" });
+    }
     if (request.method === "GET" && path === "/api/rulebooks") {
       const role = url.searchParams.get("role") ?? "public";
       const rawFormat = url.searchParams.get("format");

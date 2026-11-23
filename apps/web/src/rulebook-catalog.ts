@@ -278,7 +278,8 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     const editions = catalog?.editions;
     root.innerHTML = `<div class="catalog-top"><div><h1>Pilih permainan</h1>
       <p class="intro">Jelajahi kota lewat misi dan kartu.</p></div>
-      <button type="button" id="chooser-studio" class="secondary" data-cat-action="studio">Studio Kreator</button></div>
+      <div class="catalog-links"><a class="cat-link" href="/?recaps=1">Riwayat pertandingan</a>
+      <button type="button" id="chooser-studio" class="secondary" data-cat-action="studio">Studio Kreator</button></div></div>
       ${offline}
       ${editions ? (Object.keys(formatNames) as RulebookFormat[]).map(format => {
         const cards = editions.filter(edition => edition.format === format);

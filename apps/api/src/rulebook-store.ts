@@ -42,6 +42,7 @@ import {
 } from "./midtrans-adapter.js";
 import { sanitizeSeekPhoto } from "./seek-photo.js";
 import { loadOfficialClaimPacks, loadOfficialSeekPacks } from "./official-packs.js";
+import { claimMatchRecap, rulebookRecapStore, seekMatchRecap } from "./rulebook-recaps.js";
 import {
   buyoutSeekCurse,
   chooseSeekDrawCards,
@@ -210,7 +211,7 @@ type LiveClaimSession = {
   photos: Map<string, Buffer>;
 };
 
-type LiveSession = LiveSeekSession | LiveClaimSession;
+type LiveSession = (LiveSeekSession | LiveClaimSession) & { recapSaved?: boolean };
 
 function isClaimPack(pack: AnyRulebookPack): pack is ClaimRulebookPack {
   return pack.meta.format === "claim-the-city";
@@ -344,6 +345,7 @@ export function rulebookStore(
 ) {
   if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath);
+  const recaps = rulebookRecapStore(db);
   const midtrans = options.midtrans ?? createMidtransAdapterFromEnv();
 
   db.exec(`
@@ -637,7 +639,10 @@ export function rulebookStore(
     mode?: RulebookPlayMode,
   ): LiveSession {
     const prefix = rec.format === "claim-the-city" ? "RC" : "RB";
-    const roomCode = `${prefix}-${randomBytes(3).toString("hex").toUpperCase()}`;
+    let roomCode: string;
+    do {
+      roomCode = `${prefix}-${randomBytes(3).toString("hex").toUpperCase()}`;
+    } while (liveRooms.has(roomCode) || getPassByCodeStmt.get(roomCode) || recaps.has(roomCode));
     const passId = `pass-${randomBytes(5).toString("hex")}`;
     const pass: RulebookRoomPass = {
       passId,
@@ -953,6 +958,7 @@ export function rulebookStore(
       const pending = pendingClaimPhotos(session);
       if (!replay && !reply.error && photo && pending.has(photo.id)) session.photos.set(photo.id, photo.bytes);
       pruneClaimPhotos(session, pending);
+      captureCompletedMatch(session);
       return reply;
     }
     const seatId = findSeekEngineSeat(session.match, credHash);
@@ -978,6 +984,7 @@ export function rulebookStore(
     if (session.match.turnNumber !== prevTurn) {
       session.deck = createSeekDeckState(session.match.pack);
     }
+    captureCompletedMatch(session);
     return reply;
   }
 
@@ -1034,9 +1041,24 @@ export function rulebookStore(
     return { ok: true };
   }
 
+  function captureCompletedMatch(session: LiveSession) {
+    const { match } = session;
+    if (session.recapSaved || !match.outcome || match.startedAt === null) return;
+    const first = match.seats[0];
+    if (!first) return;
+    const recap = session.format === "claim-the-city"
+      ? claimMatchRecap(viewClaimEngineMatch(session.match, first.seatId, match.outcome.at),
+          new Map(session.match.pack.geography.landmarks.map(landmark => [landmark.id, landmark.name])))
+      : seekMatchRecap(viewSeekEngineMatch(session.match, first.seatId, match.outcome.at), Boolean(session.qa));
+    if (!recap) return;
+    recaps.save(recap, match.seats.map(seat => seat.credentialHash));
+    session.recapSaved = true;
+  }
+
   function expireRoomPhotos(session: LiveSeekSession, now: number) {
     const { purgedPhotoIds } = expireSeekEngineMatch(session.match, now);
     for (const id of purgedPhotoIds) session.photos.delete(id);
+    captureCompletedMatch(session);
   }
 
   async function answerSeekPhoto(
@@ -1109,6 +1131,7 @@ export function rulebookStore(
       if (!seatId) return undefined;
       expireClaimEngineMatch(session.match, now);
       pruneClaimPhotos(session);
+      captureCompletedMatch(session);
       if (!session.photos.has(photoId)) return undefined;
       const room = viewClaimEngineMatch(session.match, seatId, now);
       const eligible = room.pendingRivalPhotoReviews.some(review => review.photoId === photoId) ||
@@ -1196,6 +1219,7 @@ export function rulebookStore(
       if (!seatId) return undefined;
       expireClaimEngineMatch(session.match, now);
       pruneClaimPhotos(session);
+      captureCompletedMatch(session);
       return {
         format: "claim-the-city" as const,
         room: viewClaimEngineMatch(session.match, seatId, now),
@@ -1253,6 +1277,8 @@ export function rulebookStore(
   return {
     listPublicListings,
     listAllVersions: allRecords,
+    listRecaps: (participant: string) => recaps.list(digest(participant)),
+    readRecap: (matchId: string, participant: string) => recaps.get(matchId, digest(participant)),
     creatorStudio,
     listOrders: () => (listOrdersStmt.all() as { payload: string }[]).map((r) => JSON.parse(r.payload) as PackOrderSummary),
     listEarnings,
