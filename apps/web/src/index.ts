@@ -148,6 +148,15 @@ async function showRoute(focusCatalog = false) {
 for (const [key, value] of Object.entries(copy)) {
   document.querySelectorAll<HTMLElement>(`[data-copy="${key}"]`).forEach(el => { el.textContent = value; });
 }
+document.querySelector<HTMLAnchorElement>("a.brand")?.addEventListener("click", event => {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  if (location.pathname !== "/" || location.search !== "") {
+    navigateCatalog("/");
+  } else {
+    void showRoute(true);
+  }
+});
 document.getElementById("guide-open")!.addEventListener("click", () => guide.showModal());
 window.addEventListener("popstate", () => void showRoute());
 void showRoute();

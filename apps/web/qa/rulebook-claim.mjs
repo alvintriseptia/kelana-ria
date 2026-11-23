@@ -336,6 +336,26 @@ try {
   await pageVisitor.goto(`${baseUrl}/?edition=official-jakarta-compact-claim&version=1`);
   await communitySection.waitFor();
   await communitySection.getByText(/Belum ada hasil pertandingan yang dibagikan/).waitFor();
+
+  // Top app bar brand logo links back to home catalog (/) from edition detail, recaps, game screens, and Creator Studio
+  const brandLink = pageVisitor.locator('header.mast a.brand[href="/"]');
+  const brandBox = await brandLink.boundingBox();
+  assert.ok(brandBox && brandBox.width >= 44 && brandBox.height >= 44, "Brand logo link must meet 44x44 touch target");
+  await brandLink.click();
+  await pageVisitor.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+  assert.equal(new URL(pageVisitor.url()).search, "");
+  assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+
+  for (const route of ["/?recaps=1", "/?play=rulebook-claim", "/?play=rulebook-seek", "/?play=rulebook-studio"]) {
+    await pageVisitor.goto(`${baseUrl}${route}`);
+    await pageVisitor.waitForFunction(() => !document.getElementById("play")?.hidden);
+    await brandLink.click();
+    await pageVisitor.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+    assert.equal(new URL(pageVisitor.url()).search, "", `Clicking brand logo from ${route} should navigate to /`);
+    assert.equal(await pageVisitor.evaluate(() => document.getElementById("play")?.hidden), true);
+    assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  }
+
   await ctxVisitor.close();
   await ctxP2.close();
 
