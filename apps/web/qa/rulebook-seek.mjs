@@ -341,6 +341,13 @@ try {
   const next = (await snapshot()).room;
   assert.equal(next.turnStartPoint.id, "mrt-blok-m");
   assert.equal(next.phase, "head_start");
+  now = next.releaseAt + 24 * 60 * 60 * 1000;
+  await refreshSeekRoom(pageG2);
+  await pageG2.getByRole("link", { name: "Buka ringkasan" }).click();
+  await pageG2.getByRole("heading", { name: "Giliran sembunyi" }).waitFor();
+  assert.match(await pageG2.locator(".recap-shell").innerText(), /Giliran 1 · Ditemukan · 3 pertanyaan dijawab/);
+  assert.ok(await pageG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await pageG2.screenshot({ path: path.join(results, "rulebook-seek-recap.png") });
   console.log("qa:rulebook-seek passed (Studio, paid room, clue privacy, Thermometer, photos, map fallback, and role swap)");
 } finally {
   await browser.close();

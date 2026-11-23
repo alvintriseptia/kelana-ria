@@ -10,6 +10,7 @@ import type {
 import type { BoardMapHandle, BoardMapUpdateOptions } from "./board-map";
 import { getLocation } from "./device-location";
 import { fetchMapConfig } from "./map-config";
+import { claimDecidingMetric, claimResultReasons } from "./rulebook-claim-result";
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { escapeText } from "./solo-view";
 import "./rulebook-seek-play.css";
@@ -782,31 +783,15 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   function renderResult(room: ClaimEngineRoomView): string {
     if (!room.outcome) return "";
     const outcome = room.outcome;
-    const reasons: Record<typeof outcome.reason, string> = {
-      time: "Waktu ronde habis.",
-      all_locked: "Semua landmark terkunci.",
-      solo_target_met: "Target landmark dan zona tercapai.",
-      solo_impossible: "Target solo sudah tidak dapat dicapai.",
-      forfeit: "Lawan keluar dari permainan.",
-      abandoned: "Ruang sudah tidak aktif.",
-      canceled: "Ruang dibatalkan.",
-    };
     let title = "Seri!";
     if (outcome.reason === "abandoned" || outcome.reason === "canceled" || (outcome.reason === "forfeit" && !outcome.winnerTeamId)) {
       title = phaseLabels[room.phase];
     }
     else if (room.isSolo) title = outcome.soloWon ? "Menang Solo!" : "Sesi Solo Berakhir";
     else if (outcome.winnerTeamId) title = `Pemenang · ${teamName(room, outcome.winnerTeamId)}`;
-    const metrics = [
-      ["zonesControlled", "Zona yang dikuasai"],
-      ["lockedLandmarks", "Landmark yang terkunci"],
-      ["totalLandmarks", "Total landmark"],
-    ] as const;
-    const [leader, runnerUp] = room.standings;
-    const decidingMetric = !room.isSolo && leader?.teamId === outcome.winnerTeamId && runnerUp && outcome.reason !== "forfeit"
-      ? metrics.find(([key]) => leader[key] > runnerUp[key])?.[1] : undefined;
+    const decidingMetric = claimDecidingMetric(room.standings, outcome, room.isSolo);
     return `<div class="cg-result" data-testid="claim-outcome"><small>Hasil Akhir</small><h2>${escapeText(title)}</h2>
-      <p>${reasons[outcome.reason]}${decidingMetric ? ` Penentu kemenangan · ${decidingMetric}.` : ""}</p></div>`;
+      <p>${claimResultReasons[outcome.reason]}${decidingMetric ? ` Penentu kemenangan · ${decidingMetric}.` : ""}</p></div>`;
   }
 
   function renderScore(room: ClaimEngineRoomView): string {
@@ -821,6 +806,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         <small>${score.zonesControlled} zona · ${score.lockedLandmarks} terkunci · ${score.totalLandmarks} total landmark</small>
       </li>`).join("")}</ul>
       <p class="cg-rank-rule">Urutan skor · Zona dikuasai › Landmark terkunci › Total landmark</p>`}
+      ${room.outcome && room.startedAt !== null ? `<a class="cat-link" href="/?recap=${encodeURIComponent(room.code)}">Buka ringkasan</a>` : ""}
       ${room.outcome ? '<button type="button" class="sg-main" data-nav="catalog">Pilih Papan Lagi</button>' : ""}`;
   }
 

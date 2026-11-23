@@ -463,3 +463,4 @@ export type MapUsageSummary = {
 export type * from "./rulebook.js";
 export type * from "./rulebook-seek.js";
 export type * from "./rulebook-claim.js";
+export type * from "./rulebook-recap.js";

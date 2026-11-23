@@ -34,6 +34,18 @@ async function showRoute(focusCatalog = false) {
   if (practice.open) practice.close();
   const url = new URL(location.href);
   const params = url.searchParams;
+  if (params.has("recap") || params.has("recaps")) {
+    setup.hidden = true;
+    play.hidden = false;
+    play.innerHTML = '<p role="status">Membuka riwayat…</p>';
+    try {
+      const { mountRulebookRecap } = await import("./rulebook-recap");
+      if (currentNavigation === navigation) mountRulebookRecap(play, params.get("recap"), routeEvents.signal);
+    } catch {
+      if (currentNavigation === navigation) play.innerHTML = '<p role="alert">Riwayat belum bisa dibuka. Muat ulang untuk mencoba lagi.</p><a href="/">Kembali ke katalog</a>';
+    }
+    return;
+  }
   const requestedSeek = params.get("play") === "hide-and-seek";
   const rawBoard = params.get("board");
   const validBoard = rawBoard === null || rawBoard === "compact" || rawBoard === "jakarta-wide";

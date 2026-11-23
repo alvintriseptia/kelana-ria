@@ -1,0 +1,11 @@
+.recap-shell { display: grid; gap: 12px; max-width: 580px; margin-inline: auto; overflow-wrap: anywhere; }
+.recap-back { display: inline-flex; align-items: center; justify-self: start; min-height: 44px; color: #104a40; font-weight: 750; }
+.recap-panel, .recap-history a { display: grid; gap: 8px; padding: 10px; border: 1px solid #87aa9b; border-radius: 10px; background: #e5f2e5; }
+.recap-panel h2 { font-size: 1.55rem; }
+.recap-list { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.recap-list li { display: grid; gap: 2px; }
+.recap-list small { color: #406354; font-size: .8rem; }
+.recap-history a { color: #104a40; text-decoration: none; }
+.recap-history a:hover { border-color: #104a40; }
+.recap-targets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
+.recap-targets dd { margin: 0; font-weight: 800; }
