@@ -9,3 +9,31 @@
   text-align: start; overflow-wrap: anywhere; border-color: #83a995;
 }
 .studio-draft small { font-size: .79rem; }
+.studio-map-editor { gap: 8px; padding: 8px; }
+.studio-map-editor #st-map-host .board-map-canvas { height: clamp(330px, 57dvh, 576px); }
+.studio-map-caption { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 4px 8px; }
+.studio-map-caption p { font-size: .84rem; }
+.studio-map-tools, .studio-map-layers { margin: 6px 0; }
+.studio-map-editor :is(.studio-point-list, .studio-point-inspector) { padding: 9px; border: 1px solid #83a995; border-radius: 9px; }
+.studio-map-editor .studio-point-item { width: 100%; display: grid; justify-items: start; text-align: start; overflow-wrap: anywhere; }
+.studio-map-editor fieldset { display: grid; gap: 8px; min-inline-size: 0; padding: 0; margin: 0; border: 0; }
+.studio-map-editor fieldset > button { justify-self: start; }
+.studio-map-editor .st-transit-list { max-height: none; }
+.rb-shell:has(.studio-map-editor) .studio-heading h2 { font-size: 1.55rem; }
+.studio-heading [data-map-validation] summary { color: #6f391a; cursor: pointer; font-weight: 750; }
+.studio-map-editor [data-studio-kind]:not(.board-map-pin-selected):not(:focus-visible) {
+  display: grid; place-items: center; width: 44px; height: 44px; min-width: 44px; min-height: 44px;
+  padding: 0; font-size: 0; border: 0; background: transparent; box-shadow: none;
+}
+.studio-map-editor [data-studio-kind]:not(.board-map-pin-selected):not(:focus-visible)::before {
+  content: ""; width: 17px; height: 17px; border: 2px solid #fff; border-radius: 50%;
+  background: #126158; box-shadow: 0 1px 4px #153f3780;
+}
+.studio-map-editor [data-studio-kind="landmark"]:not(.board-map-pin-selected):not(:focus-visible)::before {
+  border-radius: 4px; background: #b66a25; rotate: 45deg;
+}
+.studio-map-editor [data-studio-kind="poi"]:not(.board-map-pin-selected):not(:focus-visible)::before { border-radius: 4px; }
+.studio-map-editor [data-studio-kind="start"]:not(.board-map-pin-selected):not(:focus-visible)::before {
+  content: "A"; display: grid; place-items: center; color: #fff; font-size: 10px; font-weight: 800;
+}
+.studio-map-editor :is(.board-map-pin-selected, [data-studio-kind]:focus-visible) { z-index: 2; }

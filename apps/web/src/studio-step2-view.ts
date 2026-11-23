@@ -46,6 +46,13 @@ export type Step2State = {
   enabledTransitModes: Record<StudioTransitMode, boolean>;
   excludedTransitIds: Set<string>;
   transitQuery: string;
+  transitFilter: StudioTransitMode | "all";
+  drawer: "points" | "transit" | null;
+  pointQuery: string;
+  pointPage: number;
+  zoneId: string | null;
+  vertex: number | null;
+  saved: boolean;
 };
 
 const TRANSIT_MODE_META: { mode: StudioTransitMode; label: string }[] = [
@@ -154,7 +161,7 @@ export function buildTransitOverlayPins(
 ): StudioTransitPin[] {
   const stations = state.transitCatalog?.stations ?? [];
   return stations
-    .filter((st) => state.enabledTransitModes[st.mode])
+    .filter(st => state.enabledTransitModes[st.mode] && (state.transitFilter === "all" || st.mode === state.transitFilter))
     .map((st) => {
       const inBoundary = pointInBoundary(
         { latitude: st.lat, longitude: st.lng },
@@ -297,7 +304,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
   if (selected.kind === "start") {
     const sp = record.snapshot.startPoint;
     return `<details class="rb-accordion" open data-testid="step2-inspector">
-      <summary>Titik Terpilih: ${escapeText(sp.name)} (Titik Awal)</summary>
+      <summary data-studio-point-heading>${escapeText(sp.name)} (Titik Awal)</summary>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Titik Awal</span><input id="ed-sp-name" value="${escapeText(sp.name)}" ${dis}></label>
         <label class="rb-field"><span>Catatan Akses</span><input id="ed-sp-notes" value="${escapeText(sp.accessNotes ?? "")}" ${dis}></label>
@@ -314,7 +321,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
     if (!st) return "";
     const nameInputId = idx === 0 ? "ed-station-name" : "ed-point-name";
     return `<details class="rb-accordion" open data-testid="step2-inspector">
-      <summary>Titik Terpilih: ${escapeText(st.name)}</summary>
+      <summary data-studio-point-heading>${escapeText(st.name)}</summary>
       <small>ID: <code>${escapeText(st.id)}</code></small>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Stasiun</span><input id="${nameInputId}" data-field="name" value="${escapeText(st.name)}" ${dis}></label>
@@ -335,7 +342,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
       ${
         editable
           ? `<div class="rb-actions">
-              <button type="button" class="secondary" data-map-action="apply-selected">Terapkan Perubahan</button>
+              <button type="button" class="secondary" data-map-action="apply-selected">Simpan titik</button>
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus Stasiun</button>
             </div>`
           : ""
@@ -347,7 +354,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
     const poi = record.snapshot.pois.find((p) => p.id === selected.id);
     if (!poi) return "";
     return `<details class="rb-accordion" open data-testid="step2-inspector">
-      <summary>Titik Terpilih: ${escapeText(poi.name)} (POI)</summary>
+      <summary data-studio-point-heading>${escapeText(poi.name)} (POI)</summary>
       <small>ID: <code>${escapeText(poi.id)}</code></small>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama POI</span><input id="ed-poi-name" value="${escapeText(poi.name)}" ${dis}></label>
@@ -358,7 +365,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
       ${
         editable
           ? `<div class="rb-actions">
-              <button type="button" class="secondary" data-map-action="apply-selected">Terapkan Perubahan</button>
+              <button type="button" class="secondary" data-map-action="apply-selected">Simpan titik</button>
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus POI</button>
             </div>`
           : ""
@@ -372,7 +379,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
     if (!lm) return "";
     const nameInputId = idx === 0 ? "ed-claim-landmark-name" : "ed-point-name";
     return `<details class="rb-accordion" open data-testid="step2-inspector">
-      <summary>Titik Terpilih: ${escapeText(lm.name)}</summary>
+      <summary data-studio-point-heading>${escapeText(lm.name)}</summary>
       <small>ID: <code>${escapeText(lm.id)}</code></small>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Landmark</span><input id="${nameInputId}" data-field="name" value="${escapeText(lm.name)}" ${dis}></label>
@@ -394,7 +401,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
       ${
         editable
           ? `<div class="rb-actions">
-              <button type="button" class="secondary" data-map-action="apply-selected">Terapkan Perubahan</button>
+              <button type="button" class="secondary" data-map-action="apply-selected">Simpan titik</button>
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus Landmark</button>
             </div>`
           : ""
@@ -405,38 +412,29 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
   return "";
 }
 
-export function renderStep2Top(
-  record: StudioVersionRecord,
-  state: Step2State,
-  editable: boolean,
-): string {
-  const catalogStations = state.transitCatalog?.stations ?? [];
-  const inBoundaryCounts: Record<StudioTransitMode, number> = {
-    mrt: 0,
-    lrt: 0,
-    krl: 0,
-    transjakarta: 0,
-  };
-  for (const st of catalogStations) {
-    if (pointInBoundary({ latitude: st.lat, longitude: st.lng }, record.snapshot.boundaryPolygon)) {
-      inBoundaryCounts[st.mode] += 1;
-    }
-  }
-
-  return `<h3>2. Peta &amp; Lokasi · ${escapeText(record.pack.meta.title)}</h3>
-    <div class="st-transit-chips" role="group" aria-label="Moda transit Jakarta bawaan">
-      ${TRANSIT_MODE_META.map(({ mode, label }) => {
-        const pressed = state.enabledTransitModes[mode];
-        const count = inBoundaryCounts[mode];
-        return `<button type="button" class="st-pill-icon st-transit-chip" data-transit-mode="${mode}" aria-pressed="${pressed}">${mapPinIconSvg(mode)}<span>${label} ${count}</span></button>`;
-      }).join("")}
+export function renderStep2Top(state: Step2State, editable: boolean): string {
+  const mapAction = state.mapMode === "add" ? "Ketuk peta untuk menambah titik."
+    : state.mapMode === "move" ? "Ketuk lokasi baru untuk titik terpilih."
+    : state.mapMode === "boundary" ? "Ketuk peta untuk menambah sudut batas."
+    : "Ketuk pin untuk menyunting titik.";
+  return `<div class="studio-map-caption">
+      <p>${state.mapFailed ? "Pakai daftar lokasi untuk menyunting titik." : mapAction}</p>
+      <span class="rb-badge" data-map-save-state>${state.saved ? "Tersimpan" : "Belum disimpan"}</span>
     </div>
-    <div class="rb-actions" aria-label="Mode interaksi peta">
-      <button type="button" class="${state.mapMode === "select" ? "primary" : "secondary"}" data-map-mode="select">Pilih Titik</button>
-      ${editable ? `<button type="button" class="${state.mapMode === "add" ? "primary" : "secondary"}" data-map-mode="add">+ Tambah di Peta</button>` : ""}
-      ${editable ? `<button type="button" class="${state.mapMode === "move" ? "primary" : "secondary"}" data-map-mode="move">Pindahkan Terpilih</button>` : ""}
-      ${editable ? `<button type="button" class="${state.mapMode === "boundary" ? "primary" : "secondary"}" data-map-mode="boundary">+ Titik Batas</button>` : ""}
-      <button type="button" class="secondary" data-map-action="recenter">Pusatkan Peta</button>
+    <div class="rb-actions studio-map-tools" aria-label="Mode interaksi peta">
+      ${state.mapFailed ? "" : `<button type="button" class="${state.mapMode === "select" ? "primary" : "secondary"}" data-map-mode="select">Pilih Titik</button>
+        ${editable ? `<button type="button" class="${state.mapMode === "add" ? "primary" : "secondary"}" data-map-mode="add">+ Tambah di Peta</button>` : ""}
+        <button type="button" class="secondary" data-map-action="recenter">Pusatkan</button>`}
+      <button type="button" class="secondary" data-map-drawer="points" aria-expanded="${state.drawer === "points"}">Daftar lokasi</button>
+      <button type="button" class="secondary" data-map-drawer="transit" aria-expanded="${state.drawer === "transit"}">Transit Jakarta</button>
+    </div>`;
+}
+
+function renderTransitModes(record: StudioVersionRecord, state: Step2State) {
+  const inArea = state.transitCatalog?.stations.filter(st => pointInBoundary({ latitude: st.lat, longitude: st.lng }, record.snapshot.boundaryPolygon)) ?? [];
+  return `<div class="st-transit-chips" role="group" aria-label="Moda transit dalam draf">
+    ${TRANSIT_MODE_META.map(({ mode, label }) => `<button type="button" class="st-pill-icon st-transit-chip" data-transit-mode="${mode}"
+      aria-pressed="${state.enabledTransitModes[mode]}">${mapPinIconSvg(mode)}<span>${label} ${inArea.filter(item => item.mode === mode).length}</span></button>`).join("")}
     </div>`;
 }
 
@@ -450,6 +448,7 @@ function renderBuiltInTransitPanel(
   const inArea = stations.filter(
     (st) =>
       state.enabledTransitModes[st.mode] &&
+      (state.transitFilter === "all" || st.mode === state.transitFilter) &&
       pointInBoundary({ latitude: st.lat, longitude: st.lng }, record.snapshot.boundaryPolygon),
   );
   const matching = q
@@ -463,12 +462,18 @@ function renderBuiltInTransitPanel(
   const activeCount = inArea.filter(
     (st) => findCatalogStationMatchIndex(record.snapshot.stations, st) >= 0,
   ).length;
+  const page = listPage(state.pointPage, matching.length);
 
   return `<div class="st-transit-panel" data-testid="jakarta-transit-panel">
     <div class="st-transit-panel-head">
       <strong>Transit Jakarta Bawaan · ${activeCount}/${inArea.length} aktif di area</strong>
       <small class="st-attribution">${escapeText(state.transitCatalog?.attribution ?? "© OpenStreetMap · Transjakarta")}</small>
     </div>
+    ${renderTransitModes(record, state)}
+    <label class="rb-field"><span>Filter tampilan transit</span><select id="st-transit-filter">
+      <option value="all">Semua moda</option>
+      ${TRANSIT_MODE_META.map(({ mode, label }) => `<option value="${mode}" ${state.transitFilter === mode ? "selected" : ""}>${label}</option>`).join("")}
+    </select></label>
     ${
       stations.length === 0
         ? `<small role="status">Memuat katalog stasiun MRT/LRT/KRL/Transjakarta…</small>`
@@ -477,7 +482,7 @@ function renderBuiltInTransitPanel(
              ${
                matching.length === 0
                  ? "<li><small>Tidak ada stasiun cocok di dalam batas area.</small></li>"
-                 : matching
+                 : matching.slice(page * pageSize, (page + 1) * pageSize)
                      .map((st) => {
                        const included = findCatalogStationMatchIndex(record.snapshot.stations, st) >= 0;
                        return `<li>
@@ -490,169 +495,133 @@ function renderBuiltInTransitPanel(
                      })
                      .join("")
              }
-           </ul>`
+           </ul>${renderListControls(page, matching.length)}`
     }
+    ${editable && !isClaimStudioPack(record.pack) ? '<button type="button" class="secondary" data-map-action="seed-geo">Seed Ulang Geo</button>' : ""}
   </div>`;
 }
 
-export function renderStep2Bottom(
-  record: StudioVersionRecord,
-  state: Step2State,
-  editable: boolean,
-): string {
-  const selected = ensureStep2Selection(record, state);
-  const claimPack = isClaimStudioPack(record.pack) ? record.pack : null;
-  const claim = Boolean(claimPack);
+const pageSize = 8;
+
+function listPage(requested: number, count: number) {
+  return Math.min(Math.max(0, requested), Math.max(0, Math.ceil(count / pageSize) - 1));
+}
+
+function renderListControls(page: number, count: number) {
+  if (count <= pageSize) return "";
+  return `<div class="rb-actions">
+    <button type="button" class="secondary" data-point-page="${page - 1}" ${page === 0 ? "disabled" : ""}>Sebelumnya</button>
+    <button type="button" class="secondary" data-point-page="${page + 1}" ${(page + 1) * pageSize >= count ? "disabled" : ""}>Berikutnya</button>
+  </div>`;
+}
+
+function renderPointList(record: StudioVersionRecord, state: Step2State) {
+  const pack = isClaimStudioPack(record.pack) ? record.pack : null;
+  const rows = state.subTab === "boundary"
+    ? record.snapshot.boundaryPolygon.map((point, index) => ({ kind: "vertex", id: String(index), name: `Sudut ${index + 1}`, detail: `${point.latitude}, ${point.longitude}` }))
+    : state.subTab === "start" ? [{ kind: "start", id: record.snapshot.startPoint.id, name: record.snapshot.startPoint.name, detail: "" }]
+    : state.subTab === "secondary"
+      ? pack ? pack.geography.zones.map(zone => ({ kind: "zone", id: zone.id, name: zone.name, detail: zone.label }))
+        : record.snapshot.pois.map(poi => ({ kind: "poi", id: poi.id, name: poi.name, detail: poi.category }))
+      : pack ? pack.geography.landmarks.map(point => ({ kind: "landmark", id: point.id, name: point.name, detail: point.zoneId }))
+        : record.snapshot.stations.map(point => ({ kind: "station", id: point.id, name: point.name, detail: point.transitLines.join(", ") }));
+  const q = state.pointQuery.trim().toLocaleLowerCase("id-ID");
+  const matches = rows.filter(row => `${row.name} ${row.detail} ${row.id}`.toLocaleLowerCase("id-ID").includes(q));
+  const page = listPage(state.pointPage, matches.length);
+  return `<section class="studio-point-list" aria-label="Daftar lokasi">
+    <label class="rb-field"><span>Cari lokasi</span><input type="search" id="st-point-search" value="${escapeText(state.pointQuery)}"></label>
+    <ul class="rb-list">
+      ${matches.length ? matches.slice(page * pageSize, (page + 1) * pageSize).map(row =>
+        `<li><button type="button" class="secondary studio-point-item" data-select-kind="${row.kind}" data-select-id="${escapeText(row.id)}">
+          <strong>${escapeText(row.name)}</strong><small>${escapeText(row.detail)}</small>
+        </button></li>`).join("") : "<li>Tidak ada lokasi yang cocok.</li>"}
+    </ul>
+    ${renderListControls(page, matches.length)}
+  </section>`;
+}
+
+function renderZoneEditor(record: StudioVersionRecord, state: Step2State, editable: boolean): string {
+  if (!isClaimStudioPack(record.pack)) return "";
+  const zone = record.pack.geography.zones.find(item => item.id === state.zoneId);
   const dis = editable ? "" : "disabled";
-
-  return `${
-    state.lastClickedCoord
-      ? `<p><small>Koordinat klik terakhir: <code>${state.lastClickedCoord.latitude}, ${state.lastClickedCoord.longitude}</code></small></p>`
-      : ""
-  }
-
-    ${renderBuiltInTransitPanel(record, state, editable)}
-
-    ${renderInspector(record, selected, editable)}
-
-    <div class="rb-actions" aria-label="Layer lokasi">
-      <button type="button" class="st-pill-icon ${state.subTab === "primary" ? "primary" : "secondary"}" data-map-tab="primary">${mapPinIconSvg(claimPack ? "zone" : "mrt")}<span>${claimPack ? `Landmark (${claimPack.geography.landmarks.length})` : `Stasiun (${record.snapshot.stations.length})`}</span></button>
-      <button type="button" class="st-pill-icon ${state.subTab === "secondary" ? "primary" : "secondary"}" data-map-tab="secondary">${mapPinIconSvg(claimPack ? "zone" : "poi")}<span>${claimPack ? `Zona (${claimPack.geography.zones.length})` : `POI (${record.snapshot.pois.length})`}</span></button>
-      <button type="button" class="st-pill-icon ${state.subTab === "start" ? "primary" : "secondary"}" data-map-tab="start">${mapPinIconSvg("start")}<span>Titik Mulai</span></button>
-      <button type="button" class="${state.subTab === "boundary" ? "primary" : "secondary"}" data-map-tab="boundary">Batas (${record.snapshot.boundaryPolygon.length})</button>
-      ${!claim && editable ? `<button type="button" class="secondary" data-map-action="seed-geo">Seed Ulang Geo</button>` : ""}
+  if (zone) return `<section class="studio-point-inspector" aria-label="Editor zona">
+    <h4 tabindex="-1" data-studio-point-heading>${escapeText(zone.name)}</h4>
+    <div class="rb-grid-2">
+      <label class="rb-field"><span>Nama zona</span><input id="ed-zone-name" value="${escapeText(zone.name)}" ${dis}></label>
+      <label class="rb-field"><span>Label zona</span><input id="ed-zone-label" value="${escapeText(zone.label)}" maxlength="3" ${dis}></label>
     </div>
+    ${editable ? `<div class="rb-actions">
+      <button type="button" class="primary" data-map-action="save-zone">Simpan zona</button>
+      <button type="button" class="secondary" data-map-action="delete-zone" data-zone-id="${escapeText(zone.id)}">Hapus zona</button>
+      <button type="button" class="secondary" data-map-action="new-zone">Zona baru</button>
+    </div>` : ""}
+  </section>`;
+  return editable ? `<section class="studio-point-inspector" aria-label="Tambah zona">
+    <h4 tabindex="-1" data-studio-point-heading>Zona baru</h4>
+    <div class="rb-grid-2">
+      <label class="rb-field"><span>ID Zona Baru</span><input id="ed-new-zone-id" placeholder="senopati"></label>
+      <label class="rb-field"><span>Nama Zona</span><input id="ed-new-zone-name" placeholder="Senopati"></label>
+      <label class="rb-field"><span>Label zona</span><input id="ed-new-zone-label" placeholder="SP" maxlength="3"></label>
+      <label class="rb-field"><span>Ikon</span><input id="ed-new-zone-icon" value="pin"></label>
+    </div>
+    <button type="button" class="secondary" data-map-action="add-zone">Tambah Zona</button>
+  </section>` : "";
+}
 
-    ${
-      state.subTab === "start"
-        ? `<p>Titik mulai: <strong>${escapeText(record.snapshot.startPoint.name)}</strong> (${record.snapshot.startPoint.latitude}, ${record.snapshot.startPoint.longitude})</p>
-           <button type="button" class="secondary" data-select-kind="start" data-select-id="${escapeText(record.snapshot.startPoint.id)}">Pilih Titik Mulai di Inspector</button>`
-        : state.subTab === "boundary"
-          ? `<div>
-              ${
-                editable
-                  ? `<div class="rb-grid-2">
-                      <label class="rb-field"><span>Lat Sudut Baru</span><input id="ed-v-lat" type="number" step="0.0001" value="${record.snapshot.startPoint.latitude}"></label>
-                      <label class="rb-field"><span>Lng Sudut Baru</span><input id="ed-v-lng" type="number" step="0.0001" value="${record.snapshot.startPoint.longitude}"></label>
-                    </div>
-                    <div class="rb-actions"><button type="button" class="secondary" data-map-action="add-vertex">+ Tambah Sudut Batas</button></div>`
-                  : ""
-              }
-              <details class="rb-accordion" data-testid="step2-list-accordion">
-                <summary>Daftar Sudut Batas (${record.snapshot.boundaryPolygon.length})</summary>
-                <ul class="rb-list">
-                  ${record.snapshot.boundaryPolygon
-                    .map(
-                      (v, i) => `<li>
-                        <span>Sudut #${i + 1}: <code>${v.latitude}, ${v.longitude}</code></span>
-                        ${editable && record.snapshot.boundaryPolygon.length > 3 ? `<button type="button" class="secondary" data-map-action="remove-vertex" data-vertex-index="${i}">Hapus Sudut</button>` : ""}
-                      </li>`,
-                    )
-                    .join("")}
-                </ul>
-              </details>
-            </div>`
-          : claim && isClaimStudioPack(record.pack)
-            ? state.subTab === "secondary"
-              ? `<div>
-                  ${
-                    editable
-                      ? `<div class="rb-grid-2">
-                          <label class="rb-field"><span>ID Zona Baru</span><input id="ed-new-zone-id" placeholder="senopati"></label>
-                          <label class="rb-field"><span>Nama Zona</span><input id="ed-new-zone-name" placeholder="Senopati"></label>
-                          <label class="rb-field"><span>Label (2 huruf)</span><input id="ed-new-zone-label" placeholder="SP" maxlength="3"></label>
-                          <label class="rb-field"><span>Ikon</span><input id="ed-new-zone-icon" value="pin"></label>
-                        </div>
-                        <div class="rb-actions"><button type="button" class="secondary" data-map-action="add-zone">+ Tambah Zona</button></div>`
-                      : ""
-                  }
-                  <details class="rb-accordion" data-testid="step2-list-accordion">
-                    <summary>Daftar Zona (${record.pack.geography.zones.length})</summary>
-                    <ul class="rb-list">
-                      ${record.pack.geography.zones
-                        .map((z) => {
-                          const count = isClaimStudioPack(record.pack)
-                            ? record.pack.geography.landmarks.filter((l) => l.zoneId === z.id).length
-                            : 0;
-                          return `<li data-zone-id="${escapeText(z.id)}">
-                            <div><strong>${escapeText(z.label)} · ${escapeText(z.name)}</strong> (<code>${escapeText(z.id)}</code> · ${count} landmark)</div>
-                            ${editable ? `<button type="button" class="secondary" data-map-action="delete-zone" data-zone-id="${escapeText(z.id)}">Hapus Zona</button>` : ""}
-                          </li>`;
-                        })
-                        .join("")}
-                    </ul>
-                  </details>
-                </div>`
-              : `<div>
-                  ${editable ? `<div class="rb-actions"><button type="button" class="secondary" data-map-action="add-landmark">+ Tambah Landmark Baru</button></div>` : ""}
-                  <details class="rb-accordion" data-testid="step2-list-accordion">
-                    <summary>Daftar Landmark (${record.pack.geography.landmarks.length})</summary>
-                    <ul class="rb-list">
-                      ${record.pack.geography.landmarks
-                        .map(
-                          (l) => `<li>
-                            <div><strong>${escapeText(l.name)}</strong> <span class="rb-badge">${escapeText(l.zoneId)}</span></div>
-                            <small>${l.latitude.toFixed(5)}, ${l.longitude.toFixed(5)} · ${escapeText(l.transitSummary)}</small>
-                            <button type="button" class="secondary" data-select-kind="landmark" data-select-id="${escapeText(l.id)}">Sunting</button>
-                          </li>`,
-                        )
-                        .join("")}
-                    </ul>
-                  </details>
-                </div>`
-            : state.subTab === "secondary"
-              ? `<div>
-                  ${editable ? `<div class="rb-actions"><button type="button" class="secondary" data-map-action="add-poi">+ Tambah POI Baru</button></div>` : ""}
-                  <details class="rb-accordion" data-testid="step2-list-accordion">
-                    <summary>Daftar POI (${record.snapshot.pois.length})</summary>
-                    <ul class="rb-list">
-                      ${record.snapshot.pois
-                        .map(
-                          (p) => `<li>
-                            <div><strong>${escapeText(p.name)}</strong> <span class="rb-badge">${escapeText(p.category)}</span></div>
-                            <small>${p.latitude.toFixed(5)}, ${p.longitude.toFixed(5)}</small>
-                            <button type="button" class="secondary" data-select-kind="poi" data-select-id="${escapeText(p.id)}">Sunting</button>
-                          </li>`,
-                        )
-                        .join("")}
-                    </ul>
-                  </details>
-                </div>`
-              : `<div>
-                  ${editable ? `<div class="rb-actions"><button type="button" class="secondary" data-map-action="add-station">+ Tambah Stasiun Baru</button></div>` : ""}
-                  <details class="rb-accordion" data-testid="step2-list-accordion">
-                    <summary>Daftar Stasiun (${record.snapshot.stations.length})</summary>
-                    <ul class="rb-list">
-                      ${record.snapshot.stations
-                        .map(
-                          (s) => `<li>
-                            <div><strong>${escapeText(s.name)}</strong> ${s.eligibleHidingAnchor ? '<span class="rb-badge">Jangkar</span>' : '<span class="rb-badge rb-badge-warn">Non-jangkar</span>'}</div>
-                            <small>${s.latitude.toFixed(5)}, ${s.longitude.toFixed(5)} · ${escapeText(s.transitLines.join(", "))}</small>
-                            <button type="button" class="secondary" data-select-kind="station" data-select-id="${escapeText(s.id)}">Sunting</button>
-                          </li>`,
-                        )
-                        .join("")}
-                    </ul>
-                  </details>
-                </div>`
-    }
+function renderBoundaryEditor(record: StudioVersionRecord, state: Step2State, editable: boolean): string {
+  const vertex = state.vertex === null ? undefined : record.snapshot.boundaryPolygon[state.vertex];
+  const point = vertex ?? record.snapshot.startPoint;
+  const dis = editable ? "" : "disabled";
+  return `<section class="studio-point-inspector" aria-label="Editor batas">
+    <h4 tabindex="-1" data-studio-point-heading>${vertex ? `Sudut ${state.vertex! + 1}` : "Batas area"}</h4>
+    <div class="rb-grid-2">
+      <label class="rb-field"><span>Lintang</span><input id="ed-v-lat" type="number" step="any" value="${point.latitude}" ${dis}></label>
+      <label class="rb-field"><span>Bujur</span><input id="ed-v-lng" type="number" step="any" value="${point.longitude}" ${dis}></label>
+    </div>
+    ${editable ? `<div class="rb-actions">
+      <button type="button" class="secondary" data-map-action="${vertex ? "save-vertex" : "add-vertex"}">${vertex ? "Simpan sudut" : "Tambah sudut"}</button>
+      ${vertex ? `<button type="button" class="secondary" data-map-action="remove-vertex" data-vertex-index="${state.vertex}" ${record.snapshot.boundaryPolygon.length <= 3 ? "disabled" : ""}>Hapus sudut</button>
+        <button type="button" class="secondary" data-map-action="new-vertex">Sudut baru</button>` : ""}
+      ${state.mapFailed ? "" : `<button type="button" class="secondary" data-map-mode="boundary" aria-pressed="${state.mapMode === "boundary"}">Tambah di peta</button>`}
+    </div>` : ""}
+  </section>`;
+}
 
+export function renderStep2Bottom(record: StudioVersionRecord, state: Step2State, editable: boolean): string {
+  const claim = isClaimStudioPack(record.pack);
+  const selected = ensureStep2Selection(record, state);
+  const currentPoint = state.subTab === "secondary" && !claim && selected?.kind !== "poi" ? null : selected;
+  const zoneView = claim && state.subTab === "secondary";
+  const boundaryView = state.subTab === "boundary";
+  const addPoint = editable && (state.subTab === "primary" || (state.subTab === "secondary" && !claim));
+  return `<div class="rb-actions studio-map-layers" aria-label="Layer lokasi">
+      ${([["primary", claim ? "Landmark" : "Stasiun"], ["secondary", claim ? "Zona" : "POI"],
+        ["start", "Titik mulai"], ["boundary", "Batas"]] as const).map(([tab, label]) =>
+          `<button type="button" class="${state.subTab === tab ? "primary" : "secondary"}" data-map-tab="${tab}" aria-pressed="${state.subTab === tab}">${label}</button>`).join("")}
+    </div>
+    ${state.drawer === "points" ? renderPointList(record, state) : ""}
+    ${state.drawer === "transit" ? renderBuiltInTransitPanel(record, state, editable) : ""}
+    <fieldset data-point-fields aria-label="Editor lokasi">
+      ${zoneView ? renderZoneEditor(record, state, editable) : boundaryView ? renderBoundaryEditor(record, state, editable)
+        : renderInspector(record, currentPoint, editable)}
+      ${editable && currentPoint && !zoneView && !boundaryView && !state.mapFailed
+        ? `<button type="button" class="secondary" data-map-mode="move" aria-pressed="${state.mapMode === "move"}">Pindahkan titik di peta</button>` : ""}
+      ${addPoint ? `<button type="button" class="secondary" data-map-action="${claim ? "add-landmark" : state.subTab === "secondary" ? "add-poi" : "add-station"}">Tambah ${claim ? "landmark" : state.subTab === "secondary" ? "POI" : "stasiun"}</button>` : ""}
+    </fieldset>
     <div class="rb-sticky-footer">
       <button type="button" class="secondary" data-step="1">← Draf</button>
-      ${editable ? `<button type="button" class="secondary" data-action="save-draft" ${dis}>Simpan</button>` : "<span></span>"}
       <button type="button" class="primary" data-step="3">Aturan →</button>
     </div>`;
 }
 
-export function renderStep2View(
-  record: StudioVersionRecord,
-  state: Step2State,
-  editable: boolean,
-): string {
-  return `<div class="rb-card" data-studio-slot="map-editor">
-    <div id="st-step2-top">${renderStep2Top(record, state, editable)}</div>
+export function renderStep2View(record: StudioVersionRecord, state: Step2State, editable: boolean): string {
+  return `<div class="rb-card studio-map-editor" data-studio-slot="map-editor">
     <div id="st-map-host" class="rb-map-host" data-testid="studio-map-host" ${state.mapFailed ? "hidden" : ""}></div>
-    <p id="st-map-fallback" role="status" data-testid="studio-map-fallback" ${state.mapFailed ? "" : "hidden"}>Tile peta tidak tersedia — seluruh daftar dan editor koordinat teks tetap dapat digunakan penuh.</p>
+    <div id="st-map-fallback" data-testid="studio-map-fallback" ${state.mapFailed ? "" : "hidden"}>
+      <p role="status">Peta belum bisa dimuat. Pilih lokasi dari daftar untuk menyuntingnya.</p>
+      <button type="button" class="secondary" data-map-action="retry-map">Coba muat peta</button>
+    </div>
+    <div id="st-step2-top">${renderStep2Top(state, editable)}</div>
     <div id="st-step2-bottom">${renderStep2Bottom(record, state, editable)}</div>
   </div>`;
 }

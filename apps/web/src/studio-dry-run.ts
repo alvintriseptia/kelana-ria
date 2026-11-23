@@ -50,6 +50,10 @@ export function resolveValidationJump(path: string, format: RulebookFormat): Val
   if (p.includes("station")) {
     return { step: 2, label: "Tahap 2 · Stasiun", step2Tab: "primary" };
   }
+  if (p.startsWith("geography.landmarks[")) {
+    return { step: 2, label: "Tahap 2 · Landmark", step2Tab: "primary",
+      ...(p.endsWith(".zoneid") ? { focusSelector: "#ed-lm-zone" } : {}) };
+  }
   if (p.includes("zone")) {
     return { step: 2, label: "Tahap 2 · Zona", step2Tab: "secondary" };
   }

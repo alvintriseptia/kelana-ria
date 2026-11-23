@@ -54,6 +54,7 @@ import {
   toggleCatalogStationInDraft,
   type JakartaTransitCatalog,
   type Step2State,
+  type Step2Target,
 } from "./studio-step2-view";
 import type {
   StudioMapEditorHandle,
@@ -125,6 +126,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let studioMapReq = 0;
   let mapCfgPromise: Promise<MapConfig> | null = null;
   let transitCatalogPromise: Promise<JakartaTransitCatalog | null> | null = null;
+  let savingMap = false;
+  const mapEdits = new Map<string, Map<string, string>>();
   const step2: Step2State = {
     mapMode: "select",
     subTab: "primary",
@@ -140,6 +143,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     },
     excludedTransitIds: new Set<string>(),
     transitQuery: "",
+    transitFilter: "all",
+    drawer: null,
+    pointQuery: "",
+    pointPage: 0,
+    zoneId: null,
+    vertex: null,
+    saved: true,
   };
   const seekStep3: SeekStep3State = {
     subTab: "timers",
@@ -179,6 +189,16 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     step2.mapMode = "select";
     step2.subTab = "primary";
     step2.mapFailed = false;
+    mapCfgPromise = null;
+    step2.drawer = null;
+    step2.pointQuery = "";
+    step2.transitQuery = "";
+    step2.transitFilter = "all";
+    step2.pointPage = 0;
+    step2.zoneId = null;
+    step2.vertex = null;
+    step2.saved = true;
+    mapEdits.clear();
     Object.assign(dryRun, initialDryRun);
     dryRunSummary = "";
     cloneFields = undefined;
@@ -205,31 +225,69 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     updatedPack: StudioPack,
     updatedSnapshot: GeoSnapshot,
     successMessage?: string,
+    savedMapKey?: string,
   ): Promise<boolean> {
-    const res = await apiJson<{
-      ok?: boolean;
-      record?: StudioVersionRecord;
-      validation?: { ok: boolean; errors: RulebookValidationIssue[] };
-      error?: string;
-    }>("/api/rulebooks", {
-      type: "save-draft",
-      pack: updatedPack,
-      snapshot: updatedSnapshot,
-      rehashSnapshot: true,
-    });
-    if (res.ok) {
-      validationErrors = res.validation?.errors ?? [];
-      statusMsg =
-        successMessage ??
-        (res.validation?.ok
+    const mapSave = step === 2;
+    if (mapSave && savingMap) return false;
+    if (mapSave) {
+      savingMap = true;
+      updateMapSaveLabel();
+    }
+    try {
+      const res = await apiJson<{
+        ok?: boolean;
+        record?: StudioVersionRecord;
+        validation?: { ok: boolean; errors: RulebookValidationIssue[] };
+        error?: string;
+      }>("/api/rulebooks", {
+        type: "save-draft",
+        pack: updatedPack,
+        snapshot: updatedSnapshot,
+        rehashSnapshot: true,
+      });
+      if (res.ok) {
+        const saved = res.record;
+        if (saved) versions = versions.map(record => record.packId === saved.packId && record.version === saved.version ? saved : record);
+        if (savedMapKey) mapEdits.delete(savedMapKey);
+        step2.saved = mapEdits.size === 0;
+        validationErrors = res.validation?.errors ?? [];
+        statusMsg = successMessage ?? (res.validation?.ok
           ? "Draf tersimpan dan lolos validator otomatis."
           : "Draf tersimpan dengan kesalahan validasi.");
-      await refresh();
-      return true;
+        await refresh();
+        return true;
+      }
+      errorMsg = res.error ?? "Gagal menyimpan draf.";
+    } catch {
+      errorMsg = "Perubahan belum tersimpan. Periksa koneksi, lalu coba lagi.";
+    } finally {
+      if (mapSave) savingMap = false;
+      updateMapSaveLabel();
     }
-    errorMsg = res.error ?? "Gagal menyimpan draf.";
     render();
     return false;
+  }
+
+  function mapEditKey() {
+    if (step2.subTab === "boundary") return `vertex:${step2.vertex ?? "new"}`;
+    if (step2.subTab === "secondary" && format === "claim-the-city") return `zone:${step2.zoneId ?? "new"}`;
+    return `${step2.selected?.kind}:${step2.selected?.id}`;
+  }
+
+  function updateMapSaveLabel() {
+    if (signal.aborted) return;
+    const label = root.querySelector<HTMLElement>("[data-map-save-state]");
+    if (label) label.textContent = savingMap ? "Menyimpan…" : step2.saved ? "Tersimpan" : "Belum disimpan";
+    const fields = root.querySelector<HTMLFieldSetElement>("fieldset[data-point-fields]");
+    if (fields) fields.disabled = savingMap;
+  }
+
+  function restoreMapFields() {
+    for (const [id, value] of mapEdits.get(mapEditKey()) ?? []) {
+      const field = root.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-point-fields] #${CSS.escape(id)}`);
+      if (field) field.value = value;
+    }
+    updateMapSaveLabel();
   }
 
   function destroyStep2Map() {
@@ -255,6 +313,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }
 
   async function handleToggleTransitStation(stationId: string) {
+    if (savingMap) return;
     const latest = currentDraft();
     if (!latest || !isEditable(latest)) return;
     const pack = structuredClone(latest.pack);
@@ -268,12 +327,17 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     );
   }
 
-  function handleStep2SelectTarget(target: { kind: "start" | "station" | "poi" | "landmark"; id: string }) {
+  function handleStep2SelectTarget(target: Step2Target) {
+    if (savingMap) return;
     step2.selected = target;
+    step2.subTab = target.kind === "start" ? "start" : target.kind === "poi" ? "secondary" : "primary";
+    step2.drawer = null;
     render();
+    root.querySelector<HTMLElement>("[data-studio-point-heading]")?.focus();
   }
 
   function handleStep2MapClick(coord: GeoCoordinate) {
+    if (savingMap) return;
     step2.lastClickedCoord = coord;
     const latest = currentDraft();
     if (!latest || !isEditable(latest) || step2.mapMode === "select") {
@@ -355,6 +419,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   async function mountStep2Map(host: HTMLElement, active: StudioVersionRecord, draftKey: string) {
     const reqId = ++studioMapReq;
+    studioMapKey = draftKey;
     ensureTransitCatalog();
     try {
       if (!mapCfgPromise) mapCfgPromise = apiJson<MapConfig>("/api/map/config");
@@ -365,7 +430,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       if (reqId !== studioMapReq || !host.isConnected) return;
       const latest = currentDraft() ?? active;
       const selected = ensureStep2Selection(latest, step2);
-      studioMapKey = draftKey;
       studioMapHandle = mountStudioMapEditor({
         container: host,
         config: cfg,
@@ -380,6 +444,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         onMapClick: handleStep2MapClick,
         onError: () => {
           step2.mapFailed = true;
+          step2.drawer = "points";
           destroyStep2Map();
           render();
         },
@@ -387,6 +452,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     } catch {
       if (reqId !== studioMapReq) return;
       step2.mapFailed = true;
+      step2.drawer = "points";
       destroyStep2Map();
       render();
     }
@@ -645,6 +711,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       home: "Studio Kreator", format: "Pilih format permainan", template: "Pilih templat", import: "Impor game",
       editor: active?.pack.meta.title ?? "Editor draf", review: "Antrean Tinjauan Editorial",
     }[view];
+    const showingMapIssues = headerSlot.querySelector<HTMLDetailsElement>("[data-map-validation]")?.open;
+    const issues = validationErrors.length ? `<ul class="rb-errors" aria-label="Kesalahan validasi">${validationErrors.map(error => {
+      const target = resolveValidationJump(error.path, format);
+      const zone = error.code === "empty-zone" ? /"([^"]+)"/.exec(error.message)?.[1] ?? "" : "";
+      return `<li><div><code>${escapeText(error.code)}</code> (${escapeText(error.path)}): ${escapeText(error.message)}</div>
+        <button type="button" class="secondary" data-jump-path="${escapeText(error.path)}" data-jump-zone="${escapeText(zone)}">Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button></li>`;
+    }).join("")}</ul>` : "";
 
     headerSlot.innerHTML = `<div class="rb-card studio-heading">
       <div class="rb-actions">
@@ -657,12 +730,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         : view === "template" || view === "import" ? `<p class="studio-context">${escapeText(formatLabels[format])}</p>` : ""}
       ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
       ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
-      ${validationErrors.length > 0
-        ? `<ul class="rb-errors" aria-label="Kesalahan validasi">${validationErrors.map(error => {
-            const target = resolveValidationJump(error.path, format);
-            return `<li><div><code>${escapeText(error.code)}</code> (${escapeText(error.path)}): ${escapeText(error.message)}</div>
-              <button type="button" class="secondary" data-jump-path="${escapeText(error.path)}">Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button></li>`;
-          }).join("")}</ul>` : ""}
+      ${issues && step === 2 ? `<details data-map-validation ${showingMapIssues ? "open" : ""}>
+        <summary>${validationErrors.length} hal perlu diperiksa</summary>${issues}</details>` : issues}
     </div>`;
 
     stepperSlot.innerHTML = active ? renderStepper() : "";
@@ -683,8 +752,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       const bottomSlot = bodySlot.querySelector<HTMLElement>("#st-step2-bottom");
 
       if (topSlot && mapHost && fallbackEl && bottomSlot && studioMapKey === draftKey) {
-        topSlot.innerHTML = renderStep2Top(active, step2, editable);
+        topSlot.innerHTML = renderStep2Top(step2, editable);
         bottomSlot.innerHTML = renderStep2Bottom(active, step2, editable);
+        restoreMapFields();
         mapHost.hidden = step2.mapFailed;
         fallbackEl.hidden = !step2.mapFailed;
         if (step2.mapFailed) {
@@ -707,6 +777,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
       destroyStep2Map();
       bodySlot.innerHTML = renderStep2View(active, step2, editable);
+      restoreMapFields();
       if (!step2.mapFailed) {
         const freshHost = bodySlot.querySelector<HTMLElement>("#st-map-host");
         if (freshHost) void mountStep2Map(freshHost, active, draftKey);
@@ -846,15 +917,26 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLElement | null;
     if (!target || !target.id) return;
-    if (target instanceof HTMLInputElement && target.id === "st-transit-search") {
+    if (target instanceof HTMLInputElement && (target.id === "st-transit-search" || target.id === "st-point-search")) {
       const pos = target.selectionStart ?? target.value.length;
-      step2.transitQuery = target.value;
+      if (target.id === "st-transit-search") step2.transitQuery = target.value;
+      else step2.pointQuery = target.value;
+      step2.pointPage = 0;
       render();
-      const refreshed = root.querySelector<HTMLInputElement>("#st-transit-search");
+      const refreshed = root.querySelector<HTMLInputElement>(`#${target.id}`);
       if (refreshed) {
         refreshed.focus();
         refreshed.setSelectionRange(pos, pos);
       }
+      return;
+    }
+    if ((target instanceof HTMLInputElement || target instanceof HTMLSelectElement) && target.closest("[data-point-fields]")) {
+      const key = mapEditKey();
+      const fields = mapEdits.get(key) ?? new Map<string, string>();
+      fields.set(target.id, target.value);
+      mapEdits.set(key, fields);
+      step2.saved = false;
+      updateMapSaveLabel();
       return;
     }
     if (target.id.startsWith("ed-card-") || target.id.startsWith("ed-curse-") || target.id.startsWith("ed-ccard-")) {
@@ -864,6 +946,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   root.addEventListener("change", (event) => {
     const target = event.target as HTMLElement | null;
+    if (target instanceof HTMLSelectElement && target.id === "st-transit-filter") {
+      step2.transitFilter = target.value as Step2State["transitFilter"];
+      step2.pointPage = 0;
+      render();
+      root.querySelector<HTMLSelectElement>("#st-transit-filter")?.focus({ preventScroll: true });
+      return;
+    }
     if (
       target instanceof HTMLSelectElement &&
       (target.id.startsWith("ed-curse-") || target.id.startsWith("ed-ccard-")) &&
@@ -937,7 +1026,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   root.addEventListener("click", (event) => {
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
-    if (!btn || busy) return;
+    if (!btn || busy || savingMap) return;
     if (btn.dataset.nav === "back") return onBack();
     if (btn.dataset.nav === "catalog") {
       history.pushState(null, "", "/");
@@ -969,12 +1058,29 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (btn.dataset.jumpPath) {
       const target = resolveValidationJump(btn.dataset.jumpPath, format);
       step = target.step;
-      if (target.step2Tab) step2.subTab = target.step2Tab;
+      if (target.step2Tab) {
+        const active = currentDraft();
+        step2.subTab = target.step2Tab;
+        step2.drawer = null;
+        const index = Number(/\[(\d+)\]/.exec(btn.dataset.jumpPath)?.[1] ?? 0);
+        if (active && target.step2Tab === "primary") {
+          const pack = active.pack;
+          const claim = isClaimStudioPack(pack);
+          const point = claim ? pack.geography.landmarks[index] : active.snapshot.stations[index];
+          if (point) step2.selected = { kind: claim ? "landmark" : "station", id: point.id };
+        }
+        if (active && target.step2Tab === "secondary") {
+          if (isClaimStudioPack(active.pack)) step2.zoneId = btn.dataset.jumpZone || active.pack.geography.zones[index]?.id || null;
+          else if (active.snapshot.pois[index]) step2.selected = { kind: "poi", id: active.snapshot.pois[index].id };
+        }
+        if (active && target.step2Tab === "start") step2.selected = { kind: "start", id: active.snapshot.startPoint.id };
+        if (active && target.step2Tab === "boundary") step2.vertex = active.snapshot.boundaryPolygon[index] ? index : null;
+      }
       if (target.seekSubTab) seekStep3.subTab = target.seekSubTab;
       if (target.claimSubTab) claimStep3.subTab = target.claimSubTab;
       render();
-      if (target.focusSelector) {
-        const el = root.querySelector<HTMLElement>(target.focusSelector);
+      if (target.focusSelector || target.step2Tab) {
+        const el = root.querySelector<HTMLElement>(target.focusSelector ?? "[data-studio-point-heading]");
         el?.focus();
       }
       return;
@@ -1038,20 +1144,49 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     if (btn.dataset.mapMode) {
       step2.mapMode = btn.dataset.mapMode as StudioMapMode;
+      if (step2.mapMode === "add" && (step2.subTab === "start" || step2.subTab === "boundary" ||
+          (format === "claim-the-city" && step2.subTab === "secondary"))) step2.subTab = "primary";
       render();
       return;
     }
     if (btn.dataset.mapTab) {
       step2.subTab = btn.dataset.mapTab as Step2State["subTab"];
+      step2.mapMode = "select";
+      step2.pointQuery = "";
+      step2.pointPage = 0;
+      const active = currentDraft();
+      if (active && step2.subTab === "start") step2.selected = { kind: "start", id: active.snapshot.startPoint.id };
+      if (active && step2.subTab === "secondary" && format === "hide-and-seek" && active.snapshot.pois[0]) {
+        step2.selected = { kind: "poi", id: active.snapshot.pois[0].id };
+      }
+      if (step2.subTab === "primary" && step2.selected?.kind !== (format === "claim-the-city" ? "landmark" : "station")) step2.selected = null;
       render();
       return;
     }
-    if (btn.dataset.selectKind && btn.dataset.selectId) {
-      step2.selected = {
-        kind: btn.dataset.selectKind as "start" | "station" | "poi" | "landmark",
-        id: btn.dataset.selectId,
-      };
+    if (btn.dataset.mapDrawer) {
+      const drawer = btn.dataset.mapDrawer as "points" | "transit";
+      step2.drawer = step2.drawer === drawer ? null : drawer;
+      step2.pointPage = 0;
       render();
+      root.querySelector<HTMLInputElement>(drawer === "points" ? "#st-point-search" : "#st-transit-search")?.focus();
+      return;
+    }
+    if (btn.dataset.pointPage !== undefined) {
+      step2.pointPage = Number(btn.dataset.pointPage);
+      render();
+      root.querySelector<HTMLButtonElement>(".studio-point-item, [data-toggle-transit-id]")?.focus();
+      return;
+    }
+    if (btn.dataset.selectKind && btn.dataset.selectId) {
+      if (btn.dataset.selectKind !== "zone" && btn.dataset.selectKind !== "vertex") {
+        handleStep2SelectTarget({ kind: btn.dataset.selectKind as Step2Target["kind"], id: btn.dataset.selectId });
+        return;
+      }
+      if (btn.dataset.selectKind === "zone") step2.zoneId = btn.dataset.selectId;
+      else step2.vertex = Number(btn.dataset.selectId);
+      step2.drawer = null;
+      render();
+      root.querySelector<HTMLElement>("[data-studio-point-heading]")?.focus();
       return;
     }
     if (btn.dataset.s3Tab) {
@@ -1239,8 +1374,21 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
     const mapAction = btn.dataset.mapAction;
     if (mapAction) {
+      if (mapAction === "retry-map") {
+        step2.mapFailed = false;
+        mapCfgPromise = null;
+        render();
+        return;
+      }
       if (mapAction === "recenter") {
         studioMapHandle?.recenter();
+        return;
+      }
+      if (mapAction === "new-zone" || mapAction === "new-vertex") {
+        if (mapAction === "new-zone") step2.zoneId = null;
+        else step2.vertex = null;
+        render();
+        root.querySelector<HTMLElement>("[data-studio-point-heading]")?.focus();
         return;
       }
       void (async () => {
@@ -1250,6 +1398,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         validationErrors = [];
         const pack = structuredClone(active.pack);
         const snap = structuredClone(active.snapshot);
+        const editKey = mapEditKey();
         const centerCoord = step2.lastClickedCoord ?? {
           latitude: Number((snap.startPoint.latitude - 0.002).toFixed(5)),
           longitude: Number((snap.startPoint.longitude + 0.002).toFixed(5)),
@@ -1303,7 +1452,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
               lm.accessNotes = root.querySelector<HTMLInputElement>("#ed-lm-notes")?.value.trim() || lm.accessNotes;
             }
           }
-          await persistDraft(pack, snap);
+          await persistDraft(pack, snap, undefined, editKey);
           return;
         }
         if (mapAction === "delete-selected" && step2.selected) {
@@ -1316,7 +1465,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             delete pack.challenges.landmarkChallenges[step2.selected.id];
           }
           step2.selected = null;
-          await persistDraft(pack, snap, "Titik berhasil dihapus dari draf.");
+          await persistDraft(pack, snap, "Titik berhasil dihapus dari draf.", editKey);
           return;
         }
         if (mapAction === "add-station") {
@@ -1375,7 +1524,22 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             return;
           }
           pack.geography.zones.push(createNewZone(zId, zName, zLabel, zIcon));
-          await persistDraft(pack, snap, `Zona ${zName} ditambahkan.`);
+          step2.zoneId = zId;
+          await persistDraft(pack, snap, `Zona ${zName} ditambahkan.`, editKey);
+          return;
+        }
+        if (mapAction === "save-zone" && isClaimStudioPack(pack)) {
+          const zone = pack.geography.zones.find(item => item.id === step2.zoneId);
+          const name = root.querySelector<HTMLInputElement>("#ed-zone-name")?.value.trim();
+          const label = root.querySelector<HTMLInputElement>("#ed-zone-label")?.value.trim();
+          if (!zone || !name || !label) {
+            errorMsg = "Isi nama dan label zona untuk menyimpan.";
+            render();
+            return;
+          }
+          zone.name = name;
+          zone.label = label;
+          await persistDraft(pack, snap, `Zona ${name} tersimpan.`, editKey);
           return;
         }
         if (mapAction === "delete-zone" && isClaimStudioPack(pack)) {
@@ -1386,23 +1550,31 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             return;
           }
           pack.geography.zones = pack.geography.zones.filter((z) => z.id !== zId);
-          await persistDraft(pack, snap, `Zona ${zId} dihapus.`);
+          step2.zoneId = null;
+          await persistDraft(pack, snap, `Zona ${zId} dihapus.`, editKey);
           return;
         }
-        if (mapAction === "add-vertex") {
-          const lat = Number(root.querySelector<HTMLInputElement>("#ed-v-lat")?.value);
-          const lng = Number(root.querySelector<HTMLInputElement>("#ed-v-lng")?.value);
-          if (Number.isFinite(lat) && Number.isFinite(lng)) {
-            snap.boundaryPolygon.push({ latitude: lat, longitude: lng });
-            syncBoundaryTransitStationsInDraft(pack, snap, step2);
-            await persistDraft(pack, snap, "Sudut batas ditambahkan.");
+        if (mapAction === "add-vertex" || mapAction === "save-vertex") {
+          const lat = root.querySelector<HTMLInputElement>("#ed-v-lat")?.valueAsNumber ?? NaN;
+          const lng = root.querySelector<HTMLInputElement>("#ed-v-lng")?.valueAsNumber ?? NaN;
+          if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+            errorMsg = "Isi lintang dan bujur yang valid untuk sudut batas.";
+            render();
+            return;
           }
+          const point = { latitude: lat, longitude: lng };
+          if (mapAction === "add-vertex") snap.boundaryPolygon.push(point);
+          else if (step2.vertex !== null && snap.boundaryPolygon[step2.vertex]) snap.boundaryPolygon[step2.vertex] = point;
+          syncBoundaryTransitStationsInDraft(pack, snap, step2);
+          await persistDraft(pack, snap, "Sudut batas tersimpan.", editKey);
           return;
         }
         if (mapAction === "remove-vertex") {
           const idx = Number(btn.dataset.vertexIndex ?? -1);
           if (idx >= 0 && snap.boundaryPolygon.length > 3) {
             snap.boundaryPolygon.splice(idx, 1);
+            step2.vertex = null;
+            for (const key of mapEdits.keys()) if (key.startsWith("vertex:")) mapEdits.delete(key);
             syncBoundaryTransitStationsInDraft(pack, snap, step2);
             await persistDraft(pack, snap, "Sudut batas dihapus.");
           }

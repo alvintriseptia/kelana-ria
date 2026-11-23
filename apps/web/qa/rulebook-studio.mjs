@@ -109,9 +109,45 @@ try {
   await assertNoHorizontalOverflow(page, "My drafts");
   await page.screenshot({ path: path.join(results, "studio-my-drafts.png") });
   await startDraft(page, "hide-and-seek");
+  await page.selectOption("#st-template", "official-jakarta-wide-seek");
   await page.fill("#st-pack-id", "pack-seek-beta");
   await page.fill("#st-title", "Beta Seek Draft");
   await clickAndWaitPost(page, 'button[data-action="clone"]');
+
+  // Edit a specific Wide station by keyboard and preserve changes when filtering transit.
+  await page.click('button[data-step="2"]');
+  await page.locator('button[data-map-drawer="points"]').click();
+  await page.fill("#st-point-search", "mrt-senayan");
+  const wideStation = page.locator('button[data-select-kind="station"][data-select-id="mrt-senayan"]');
+  await wideStation.press("Enter");
+  const pointName = page.locator('[data-point-fields] input[data-field="name"]');
+  await pointName.fill("Senayan Wide QA");
+  assert.equal(await page.locator("[data-map-save-state]").innerText(), "Belum disimpan");
+  await page.click('button[data-map-drawer="transit"]');
+  await page.locator("#st-transit-search").waitFor();
+  await page.selectOption("#st-transit-filter", "mrt");
+  assert.equal(await pointName.inputValue(), "Senayan Wide QA");
+  await clickAndWaitStudioSave(page, 'button[data-map-action="apply-selected"]');
+  await page.locator("[data-map-save-state]").filter({ hasText: "Tersimpan" }).waitFor();
+
+  await page.route("**/api/map/config", route => route.fulfill({ json: {
+    mode: "geoapify-vector", styleUrl: "/qa-failed-studio-style", mapLibreLicenseUrl: "/licenses/maplibre-gl.txt",
+  } }));
+  await page.route("**/qa-failed-studio-style", route => route.abort());
+  await page.reload();
+  await page.click('button[data-step="2"]');
+  await page.getByTestId("studio-map-fallback").waitFor();
+  await page.fill("#st-point-search", "Senayan Wide QA");
+  await wideStation.press("Enter");
+  assert.equal(await pointName.inputValue(), "Senayan Wide QA");
+  await pointName.fill("Senayan Wide QA fallback");
+  await clickAndWaitStudioSave(page, 'button[data-map-action="apply-selected"]');
+  assert.equal(await pointName.inputValue(), "Senayan Wide QA fallback");
+  await assertNoHorizontalOverflow(page, "Wide fallback point editor");
+  await page.unroute("**/api/map/config");
+  await page.unroute("**/qa-failed-studio-style");
+  await page.getByRole("button", { name: "Coba muat peta" }).click();
+  await page.locator("#st-map-host .maplibregl-ctrl-zoom-in").waitFor();
 
   // Switch back to Alpha draft
   await openDraft(page, "pack-seek-alpha");
@@ -148,6 +184,11 @@ try {
   await page.click('button[data-step="2"]');
   await page.waitForSelector('[data-testid="studio-map-host"]');
   await page.waitForFunction(() => Boolean(window.document.querySelector("#st-map-host .maplibregl-ctrl-zoom-in")));
+  assert.equal(await page.getByTestId("jakarta-transit-panel").count(), 0);
+  assert.equal(await page.locator(".studio-point-list").count(), 0);
+  assert.ok((await page.locator("#st-map-host .board-map-canvas").boundingBox()).height > 420);
+  await page.screenshot({ path: path.join(results, "studio-map-first.png") });
+  await page.click('button[data-map-drawer="transit"]');
   await page.waitForSelector('[data-testid="jakarta-transit-panel"] button[data-toggle-transit-id]');
   assert.equal(styleFetchCount, 1, "Expected 1 style.json fetch on first Step 2 entry");
   assert.equal(await page.locator('button[data-transit-mode]').count(), 4, "Expected 4 transit mode chips (MRT/LRT/KRL/TJ)");
@@ -250,7 +291,16 @@ try {
   assert.equal(countOnClaimStep2, countBeforeClaimStep2 + 1, "Expected exactly 1 style.json fetch when mounting Claim Step 2");
 
   // Zoom in once to verify camera scale is preserved across Studio interactions
+  const fixedPin = page.locator('#st-map-host button[data-map-point="m-bloc"]');
+  await fixedPin.waitFor({ state: "attached" });
   await page.click("#st-map-host .maplibregl-ctrl-zoom-in");
+  const board = await page.locator("#st-map-host .board-map-canvas").boundingBox();
+  await page.mouse.move(board.x + board.width / 2, board.y + board.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(board.x + board.width / 2 + 24, board.y + board.height / 2 - 14, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForTimeout(450);
+  const pinTransform = await fixedPin.evaluate(pin => pin.style.transform);
   await page.click('button[data-map-mode="add"]');
   await page.click('button[data-map-mode="move"]');
   await page.click('button[data-map-mode="select"]');
@@ -259,11 +309,16 @@ try {
   await page.fill("#ed-new-zone-name", "Kemang");
   await page.fill("#ed-new-zone-label", "KM");
   await clickAndWaitStudioSave(page, 'button[data-map-action="add-zone"]');
+  await page.locator("[data-map-validation] summary").click();
+  await page.locator('button[data-jump-zone="kemang"]').press("Enter");
+  assert.equal(await page.inputValue("#ed-zone-name"), "Kemang");
   await page.click('button[data-map-tab="primary"]');
   await clickAndWaitStudioSave(page, 'button[data-map-action="add-landmark"]');
   await page.waitForSelector('[data-testid="step2-inspector"] input[data-field="name"]');
   await page.fill('[data-testid="step2-inspector"] input[data-field="name"]', "Landmark Kemang QA Persistent");
   await clickAndWaitStudioSave(page, 'button[data-map-action="apply-selected"]');
+  assert.equal(await page.locator('button[data-jump-zone="kemang"]').count(), 0);
+  assert.equal(await fixedPin.evaluate(pin => pin.style.transform), pinTransform, "Editing retains the map camera");
   await page.click('button[data-map-action="recenter"]');
   for (const mapTab of ["primary", "secondary", "start", "boundary"]) {
     await page.click(`button[data-map-tab="${mapTab}"]`);
