@@ -375,9 +375,37 @@ try {
   assert.equal(new URL(pageVisitor.url()).search, "");
   assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
+  const catalogCardTheme = await pageVisitor.locator(".cat-card").first().evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { bg: s.backgroundColor, border: s.borderTopColor };
+  });
+
+  // Bare /?play normalizes cleanly to the home catalog (/)
+  await pageVisitor.goto(`${baseUrl}/?play`, { waitUntil: "networkidle" });
+  await pageVisitor.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+  assert.equal(new URL(pageVisitor.url()).search, "", "Bare /?play should normalize to /");
+  assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+
   for (const route of ["/?recaps=1", "/?play=rulebook-claim", "/?play=rulebook-seek", "/?play=rulebook-studio"]) {
-    await pageVisitor.goto(`${baseUrl}${route}`);
+    await pageVisitor.goto(`${baseUrl}${route}`, { waitUntil: "networkidle" });
     await pageVisitor.waitForFunction(() => !document.getElementById("play")?.hidden);
+    if (route.startsWith("/?play=rulebook-")) {
+      await pageVisitor.locator(".rb-card").first().waitFor();
+      assert.equal(await pageVisitor.locator("#play > h1").count(), 0, `${route} should not render a redundant outer h1 wrapper`);
+      const rbTheme = await pageVisitor.locator(".rb-card").first().evaluate((el) => {
+        const s = getComputedStyle(el);
+        const h2 = el.querySelector("h2");
+        return {
+          bg: s.backgroundColor,
+          border: s.borderTopColor,
+          font: h2 ? getComputedStyle(h2).fontFamily : "",
+        };
+      });
+      assert.equal(rbTheme.bg, catalogCardTheme.bg, `${route} .rb-card background must match catalog theme`);
+      assert.equal(rbTheme.border, catalogCardTheme.border, `${route} .rb-card border must match catalog theme`);
+      assert.match(rbTheme.font, /Barlow Condensed/i, `${route} .rb-card heading must use Barlow Condensed`);
+    }
+    assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await brandLink.click();
     await pageVisitor.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
     assert.equal(new URL(pageVisitor.url()).search, "", `Clicking brand logo from ${route} should navigate to /`);

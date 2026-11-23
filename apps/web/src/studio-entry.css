@@ -1,20 +1,22 @@
 .studio-heading { gap: 6px; }
 .studio-heading .rb-actions { margin: 0; }
-.studio-context { color: #406354; font-size: .88rem; overflow-wrap: anywhere; }
+.studio-context { color: #365649; font-size: .88rem; font-weight: 650; overflow-wrap: anywhere; }
 .studio-home { gap: 12px; }
 .studio-home > button { justify-self: start; }
 .studio-drafts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 215px), 1fr)); gap: 8px; margin: 0; padding: 0; list-style: none; }
 .studio-home .studio-draft {
   width: 100%; min-width: 0; display: grid; justify-items: start; gap: 4px; padding: 10px;
-  text-align: start; overflow-wrap: anywhere; border-color: #83a995;
+  text-align: start; overflow-wrap: anywhere; border-color: #30574b; background: #fbfff6;
 }
-.studio-draft small { font-size: .79rem; }
+.studio-draft small { font-size: .79rem; color: #365649; }
 .studio-map-editor { gap: 8px; padding: 8px; }
 .studio-map-editor #st-map-host .board-map-canvas { height: clamp(330px, 57dvh, 576px); }
 .studio-map-caption { display: flex; flex-wrap: wrap; align-items: start; justify-content: space-between; gap: 4px 8px; }
 .studio-map-caption p { font-size: .84rem; }
 .studio-map-tools, .studio-map-layers { margin: 6px 0; }
-.studio-map-editor :is(.studio-point-list, .studio-point-inspector) { padding: 9px; border: 1px solid #83a995; border-radius: 9px; }
+.studio-map-editor :is(.studio-point-list, .studio-point-inspector) {
+  padding: 9px; border: 1px solid #87aa9b; border-radius: 10px; background: #fbfff6;
+}
 .studio-map-editor .studio-point-item { width: 100%; display: grid; justify-items: start; text-align: start; overflow-wrap: anywhere; }
 .studio-map-editor fieldset { display: grid; gap: 8px; min-inline-size: 0; padding: 0; margin: 0; border: 0; }
 .studio-map-editor fieldset > button { justify-self: start; }
