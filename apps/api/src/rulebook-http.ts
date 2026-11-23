@@ -60,8 +60,28 @@ export function rulebookHandler(
   return async function handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const path = url.pathname;
     if (request.method === "GET" && path === "/api/rulebooks/catalog") {
-      json(response, 200, { editions: store.listPublicListings(undefined, true), allowSandboxCheckout });
+      json(response, 200, {
+        editions: store.listPublicListings(undefined, true),
+        sharedRecaps: store.listPublicRecaps(),
+        allowSandboxCheckout,
+      });
       return;
+    }
+    if (request.method === "GET" && path === "/api/rulebooks/shared") {
+      const edition = url.searchParams.get("edition") ?? undefined;
+      const rawVersion = url.searchParams.get("version");
+      let version: number | undefined;
+      if (rawVersion !== null) {
+        const parsed = Number(rawVersion);
+        if (!Number.isSafeInteger(parsed) || parsed < 1) return json(response, 400, { error: "invalid-request" });
+        version = parsed;
+      }
+      return json(response, 200, { recaps: store.listPublicRecaps(edition, version) });
+    }
+    const sharedRoute = /^\/api\/rulebooks\/shared\/(SR-[\dA-F]{12})$/.exec(path);
+    if (request.method === "GET" && sharedRoute) {
+      const recap = store.readPublicRecap(sharedRoute[1]);
+      return recap ? json(response, 200, { recap }) : json(response, 404, { error: "shared-recap-unavailable" });
     }
     if (request.method === "GET" && path === "/api/rulebooks/recaps") {
       const member = credential(request, cookieName);
@@ -70,8 +90,8 @@ export function rulebookHandler(
     const recapRoute = /^\/api\/rulebooks\/recaps\/((?:RC|RB)-[\dA-F]{6})$/.exec(path);
     if (request.method === "GET" && recapRoute) {
       const member = credential(request, cookieName);
-      const recap = member ? store.readRecap(recapRoute[1], member) : undefined;
-      return recap ? json(response, 200, { recap }) : json(response, 404, { error: "recap-unavailable" });
+      const detail = member ? store.readRecapDetail(recapRoute[1], member) : undefined;
+      return detail ? json(response, 200, detail) : json(response, 404, { error: "recap-unavailable" });
     }
     if (request.method === "GET" && path === "/api/rulebooks") {
       const role = url.searchParams.get("role") ?? "public";
@@ -142,6 +162,36 @@ export function rulebookHandler(
       return json(response, 400, { error: "invalid-request" });
     }
     if (!isObject(body)) return json(response, 400, { error: "invalid-request" });
+
+    const recapShareRoute = /^\/api\/rulebooks\/recaps\/((?:RC|RB)-[\dA-F]{6})\/(share|unshare)$/.exec(path);
+    if (recapShareRoute) {
+      const member = credential(request, cookieName);
+      if (!member) return json(response, 404, { error: "recap-unavailable" });
+      const [, matchId, action] = recapShareRoute;
+      if (action === "unshare") {
+        const result = store.unshareRecap(matchId, member);
+        return result ? json(response, 200, result) : json(response, 404, { error: "recap-unavailable" });
+      }
+      const rawAliases = body.aliases;
+      if (rawAliases !== undefined && !isObject(rawAliases)) {
+        return json(response, 400, { error: "invalid-request" });
+      }
+      const aliases: Record<string, string> | undefined = rawAliases
+        ? Object.fromEntries(
+            Object.entries(rawAliases).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+          )
+        : undefined;
+      if (body.useApprovedRoomNames !== undefined && typeof body.useApprovedRoomNames !== "boolean") {
+        return json(response, 400, { error: "invalid-request" });
+      }
+      const result = store.shareRecap(
+        matchId,
+        member,
+        { aliases, useApprovedRoomNames: body.useApprovedRoomNames === true },
+        now(),
+      );
+      return result ? json(response, 200, result) : json(response, 404, { error: "recap-unavailable" });
+    }
 
     if (path === "/api/rulebooks/seek-photo") {
       const { roomCode, questionId, actionId, photoBase64 } = body;

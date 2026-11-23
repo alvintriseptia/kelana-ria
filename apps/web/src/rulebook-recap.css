@@ -1,11 +1,52 @@
 .recap-shell { display: grid; gap: 12px; max-width: 580px; margin-inline: auto; overflow-wrap: anywhere; }
-.recap-back { display: inline-flex; align-items: center; justify-self: start; min-height: 44px; color: #104a40; font-weight: 750; }
-.recap-panel, .recap-history a { display: grid; gap: 8px; padding: 10px; border: 1px solid #87aa9b; border-radius: 10px; background: #e5f2e5; }
-.recap-panel h2 { font-size: 1.55rem; }
+.recap-back, .recap-edition-link, .recap-public-link {
+  display: inline-flex; align-items: center; justify-self: start; min-height: 44px; color: #104a40; font-weight: 750;
+}
+.recap-panel, .recap-history a { display: grid; gap: 8px; padding: 12px; border: 1px solid #87aa9b; border-radius: 12px; background: #e5f2e5; }
+.recap-panel h2 { font-size: 1.5rem; margin: 0; }
+.recap-preview-title { font-size: 1.05rem; margin: 0; color: #104a40; }
+.recap-head-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; }
+.recap-badge {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px;
+  font-size: .76rem; font-weight: 800; letter-spacing: .01em;
+}
+.recap-badge-private { background: #d6e4da; color: #1f4037; border: 1px solid #87aa9b; }
+.recap-badge-public { background: #104a40; color: #f7fff1; }
 .recap-list { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
 .recap-list li { display: grid; gap: 2px; }
-.recap-list small { color: #406354; font-size: .8rem; }
+.recap-list small, .recap-meta-note, .recap-privacy-note { color: #365649; font-size: .82rem; margin: 0; }
 .recap-history a { color: #104a40; text-decoration: none; }
 .recap-history a:hover { border-color: #104a40; }
 .recap-targets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0; }
 .recap-targets dd { margin: 0; font-weight: 800; }
+.recap-edition-cta {
+  display: inline-flex; align-items: center; justify-content: center; justify-self: start;
+  min-height: 44px; padding: 0 14px; border-radius: 9px; background: #104a40; color: #f7fff1;
+  font-weight: 750; text-decoration: none; box-shadow: inset 0 -3px #0b3029;
+}
+.recap-edition-cta:hover { background: #1b5c50; }
+.recap-share-card { background: #f3f8f1; border-color: #30574b; }
+.recap-shared-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: 9px; background: #d9f1814d; border: 1px solid #6b917c; }
+.recap-alias-group { display: grid; gap: 8px; margin: 0; padding: 10px; border: 1px solid #87aa9b; border-radius: 10px; background: #ffffffb3; }
+.recap-alias-group legend { font-weight: 800; color: #104a40; padding: 0 4px; }
+.recap-alias-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.recap-alias-presets button { min-height: 38px; font-size: .82rem; }
+.recap-alias-fields { display: grid; gap: 8px; }
+.recap-alias-field { display: grid; gap: 4px; font-size: .85rem; font-weight: 700; color: #1b3b32; }
+.recap-alias-field small { font-weight: 500; color: #406354; }
+.recap-alias-field input {
+  width: 100%; min-width: 0; box-sizing: border-box; min-height: 44px; padding: 8px 10px;
+  border: 1px solid #527168; border-radius: 8px; background: #fff; font: inherit;
+}
+.recap-preview-box {
+  display: grid; gap: 8px; padding: 10px; border: 1.5px dashed #30574b; border-radius: 10px; background: #fafdf7;
+}
+.recap-preview-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; }
+.recap-preview-box .recap-panel { background: #eef6ec; padding: 8px 10px; }
+.recap-share-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.recap-share-actions button { flex: 1 1 150px; min-height: 44px; border-radius: 9px; }
+.recap-share-actions .primary { background: #104a40; border-color: #13352c; color: #f7fff1; box-shadow: inset 0 -3px #0b3029; }
+.recap-share-actions .primary:hover { background: #1b5c50; }
+.recap-unshare-btn { border-color: #8f3d2e; color: #6b2419; }
+.recap-status { margin: 0; padding: 8px 10px; border-radius: 8px; background: #d9f18180; color: #12362e; font-size: .86rem; font-weight: 650; }
+.recap-status-error { background: #fae8d9; color: #6b2419; }

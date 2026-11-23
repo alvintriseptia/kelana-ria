@@ -34,15 +34,16 @@ async function showRoute(focusCatalog = false) {
   if (practice.open) practice.close();
   const url = new URL(location.href);
   const params = url.searchParams;
-  if (params.has("recap") || params.has("recaps")) {
+  if (params.has("recap") || params.has("recaps") || params.has("shared")) {
     setup.hidden = true;
     play.hidden = false;
-    play.innerHTML = '<p role="status">Membuka riwayat…</p>';
+    const sharedId = params.get("shared");
+    play.innerHTML = `<p role="status">${sharedId ? "Membuka ringkasan komunitas…" : "Membuka riwayat…"}</p>`;
     try {
       const { mountRulebookRecap } = await import("./rulebook-recap");
-      if (currentNavigation === navigation) mountRulebookRecap(play, params.get("recap"), routeEvents.signal);
+      if (currentNavigation === navigation) mountRulebookRecap(play, params.get("recap"), routeEvents.signal, sharedId);
     } catch {
-      if (currentNavigation === navigation) play.innerHTML = '<p role="alert">Riwayat belum bisa dibuka. Muat ulang untuk mencoba lagi.</p><a href="/">Kembali ke katalog</a>';
+      if (currentNavigation === navigation) play.innerHTML = '<p role="alert">Ringkasan belum bisa dibuka. Muat ulang untuk mencoba lagi.</p><a href="/">Kembali ke katalog</a>';
     }
     return;
   }

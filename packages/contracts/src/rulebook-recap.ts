@@ -33,4 +33,96 @@ export type SeekMatchRecap = RecapEdition & {
 };
 
 export type RulebookMatchRecap = ClaimMatchRecap | SeekMatchRecap;
-export type RulebookRecapSummary = RecapEdition & { format: RulebookMatchRecap["format"] };
+
+export type RecapPublicShareState = {
+  shareId: string;
+  publishedAt: number;
+  aliases: Record<string, string>;
+};
+
+export type RulebookRecapSummary = RecapEdition & {
+  format: RulebookMatchRecap["format"];
+  shared?: { shareId: string; publishedAt: number };
+};
+
+export type PublicRecapPlayer = {
+  alias: string;
+  teamIndex?: number;
+};
+
+export type PublicClaimStanding = {
+  teamLabel: string;
+  zonesControlled: number;
+  lockedLandmarks: number;
+  totalLandmarks: number;
+  isWinner: boolean;
+};
+
+export type PublicRecapMoment = {
+  label: string;
+  detail: string;
+};
+
+type PublicRecapBase = {
+  shareId: string;
+  packId: string;
+  editionVersion: number;
+  title: string;
+  completedAt: number;
+  publishedAt: number;
+  simulated: boolean;
+  editionHref: string;
+  players: PublicRecapPlayer[];
+  moments: PublicRecapMoment[];
+};
+
+export type PublicClaimMatchRecap = PublicRecapBase & {
+  format: "claim-the-city";
+  isSolo: boolean;
+  outcome: {
+    reason: ClaimEngineOutcome["reason"];
+    soloWon?: boolean;
+    winnerLabel: string | null;
+    decidingMetric?: string;
+  };
+  soloProgress?: NonNullable<ClaimEngineRoomView["soloProgress"]>;
+  standings: PublicClaimStanding[];
+};
+
+export type PublicSeekMatchRecap = PublicRecapBase & {
+  format: "hide-and-seek";
+  phase: "finished" | "void" | "incomplete" | "canceled";
+  outcome: {
+    reason: SeekEngineOutcome["reason"];
+    winnerLabel: string | null;
+  };
+  turns: {
+    turnNumber: number;
+    hiderAlias: string;
+    rawHidingMs: number;
+    bonusMs: number;
+    trapBonusMs: number;
+    penaltyMs: number;
+    adjustedMs: number;
+    reason: SeekEngineTurnResult["reason"];
+    answeredQuestions: number;
+  }[];
+};
+
+export type PublicMatchRecap = PublicClaimMatchRecap | PublicSeekMatchRecap;
+
+export type PublicMatchRecapSummary = {
+  shareId: string;
+  packId: string;
+  editionVersion: number;
+  title: string;
+  format: RulebookMatchRecap["format"];
+  completedAt: number;
+  publishedAt: number;
+  simulated: boolean;
+  editionHref: string;
+  outcomeLabel: string;
+  scoreSummary: string;
+  topMoment?: PublicRecapMoment;
+  playerAliases: string[];
+};
