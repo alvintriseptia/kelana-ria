@@ -149,6 +149,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     pointPage: 0,
     zoneId: null,
     vertex: null,
+    editingChallenges: false,
     saved: true,
   };
   const seekStep3: SeekStep3State = {
@@ -225,6 +226,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     step2.pointPage = 0;
     step2.zoneId = null;
     step2.vertex = null;
+    step2.editingChallenges = false;
     step2.saved = true;
     mapEdits.clear();
     Object.assign(dryRun, initialDryRun);
@@ -361,6 +363,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   function handleStep2SelectTarget(target: Step2Target) {
     if (savingMap) return;
     step2.selected = target;
+    step2.editingChallenges = false;
     if (target.kind === "landmark") claimStep3.challengeTarget = target.id;
     step2.subTab = target.kind === "start" ? "start" : target.kind === "poi" ? "secondary" : "primary";
     step2.drawer = null;
@@ -681,9 +684,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     const editable = isEditable(active);
     if (isClaimStudioPack(active.pack)) {
-      return renderClaimStep3(active.pack, claimStep3, editable);
+      return renderClaimStep3(active.pack, claimStep3, editable, statusMsg);
     }
-    return renderSeekStep3(active.pack, seekStep3, editable);
+    return renderSeekStep3(active.pack, seekStep3, editable, statusMsg);
   }
 
   function renderStep4(active?: StudioVersionRecord): string {
@@ -731,7 +734,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (signal.aborted) return;
     const active = currentDraft();
     if (!root.querySelector("#st-header-slot")) {
-      root.innerHTML = `<section class="rb-shell" aria-label="Studio Kreator">
+      root.innerHTML = `<section class="rb-shell studio-shell" aria-label="Studio Kreator">
         <div id="st-header-slot"></div>
         <div id="st-stepper-slot"></div>
         <div id="st-body-slot"></div>
@@ -761,7 +764,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       <h2 id="studio-page-heading" tabindex="-1">${escapeText(heading)}</h2>
       ${active ? `<p class="studio-context">${escapeText(formatLabels[active.format])} · ${escapeText(active.packId)} v${active.version} · ${escapeText(statusLabel(active.status))}</p>`
         : view === "template" || view === "import" ? `<p class="studio-context">${escapeText(formatLabels[format])}</p>` : ""}
-      ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
+      ${statusMsg && !(view === "editor" && step === 3) ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
       ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
       ${issues && step === 2 ? `<details data-map-validation ${showingMapIssues ? "open" : ""}>
         <summary>${validationErrors.length} hal perlu diperiksa</summary>${issues}</details>` : issues}
@@ -1065,8 +1068,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (btn.dataset.step) {
       const nextStep = Number(btn.dataset.step) as StudioStep;
       if (nextStep >= 1 && nextStep <= 4) {
+        if (nextStep !== step) statusMsg = "";
         step = nextStep;
         render();
+        root.querySelector<HTMLButtonElement>(".rb-step-active")?.focus();
       }
       return;
     }
@@ -1074,6 +1079,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       const target = resolveValidationJump(btn.dataset.jumpPath, format);
       step = target.step;
       if (target.step2Tab) {
+        step2.editingChallenges = target.focusSelector === "#ed-chal-target";
         const active = currentDraft();
         step2.subTab = target.step2Tab;
         step2.drawer = null;
@@ -1179,12 +1185,15 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     if (btn.dataset.mapMode) {
       step2.mapMode = btn.dataset.mapMode as StudioMapMode;
+      if (step2.mapMode === "add") step2.editingChallenges = false;
       if (step2.mapMode === "add" && (step2.subTab === "start" || step2.subTab === "boundary" ||
           (format === "claim-the-city" && step2.subTab === "secondary"))) step2.subTab = "primary";
       render();
+      root.querySelector<HTMLButtonElement>(`[data-map-mode="${step2.mapMode}"]`)?.focus({ preventScroll: true });
       return;
     }
     if (btn.dataset.mapTab) {
+      step2.editingChallenges = false;
       step2.subTab = btn.dataset.mapTab as Step2State["subTab"];
       step2.mapMode = "select";
       step2.pointQuery = "";
@@ -1196,6 +1205,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       }
       if (step2.subTab === "primary" && step2.selected?.kind !== (format === "claim-the-city" ? "landmark" : "station")) step2.selected = null;
       render();
+      root.querySelector<HTMLButtonElement>(`[data-map-tab="${step2.subTab}"]`)?.focus({ preventScroll: true });
       return;
     }
     if (btn.dataset.mapDrawer) {
@@ -1225,8 +1235,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       return;
     }
     if (btn.dataset.s3Tab) {
+      if (seekStep3.subTab !== btn.dataset.s3Tab) statusMsg = "";
       seekStep3.subTab = btn.dataset.s3Tab as SeekStep3State["subTab"];
       render();
+      root.querySelector<HTMLButtonElement>(`[data-s3-tab="${seekStep3.subTab}"]`)?.focus({ preventScroll: true });
       return;
     }
     if (btn.dataset.s3Family) {
@@ -1235,8 +1247,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       return;
     }
     if (btn.dataset.c3Tab) {
+      if (claimStep3.subTab !== btn.dataset.c3Tab) statusMsg = "";
       claimStep3.subTab = btn.dataset.c3Tab as ClaimStep3State["subTab"];
       render();
+      root.querySelector<HTMLButtonElement>(`[data-c3-tab="${claimStep3.subTab}"]`)?.focus({ preventScroll: true });
       return;
     }
     if (btn.dataset.c3Prim) {
@@ -1431,8 +1445,15 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (mapAction) {
       if (mapAction === "edit-challenges" && format === "claim-the-city" && step2.selected?.kind === "landmark") {
         claimStep3.challengeTarget = step2.selected.id;
+        step2.editingChallenges = true;
         render();
         root.querySelector<HTMLSelectElement>("#ed-chal-target")?.focus();
+        return;
+      }
+      if (mapAction === "close-challenges") {
+        step2.editingChallenges = false;
+        render();
+        root.querySelector<HTMLButtonElement>('[data-map-action="edit-challenges"]')?.focus();
         return;
       }
       if (mapAction === "retry-map") {

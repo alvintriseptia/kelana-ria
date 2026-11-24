@@ -43,15 +43,16 @@ export function renderClaimStep3(
   pack: ClaimRulebookPack,
   state: ClaimStep3State,
   editable: boolean,
+  status: string,
 ): string {
   const dis = editable ? "" : "disabled";
-  const totalCards = pack.tacticalDeck.cards.reduce((sum, c) => sum + c.copies, 0);
+  const session = state.subTab === "session";
 
   return `<div class="rb-card" data-studio-slot="rules-builder">
-    <h3>3. Aturan Sesi &amp; Kartu Claim</h3>
-    <div class="rb-actions" aria-label="Sub-tab builder Claim the City">
-      <button type="button" class="${state.subTab === "session" ? "primary" : "secondary"}" data-c3-tab="session">Sesi &amp; Skor</button>
-      <button type="button" class="${state.subTab === "deck" ? "primary" : "secondary"}" data-c3-tab="deck">Dek Taktis (${totalCards})</button>
+    <h3>Aturan</h3>
+    <div class="studio-section-tabs" role="group" aria-label="Bagian aturan">
+      <button type="button" data-c3-tab="session" aria-pressed="${state.subTab === "session"}">Sesi &amp; Skor</button>
+      <button type="button" data-c3-tab="deck" aria-pressed="${state.subTab === "deck"}">Kartu</button>
     </div>
 
     ${
@@ -60,17 +61,21 @@ export function renderClaimStep3(
         : renderClaimDeck(pack, state, dis, editable)
     }
 
-    <div class="rb-sticky-footer">
-      <button type="button" class="secondary" data-step="2">← Peta</button>
-      ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan</button>` : "<span></span>"}
-      <button type="button" class="primary" data-step="4">Validasi →</button>
+    <p class="studio-rule-note">Untuk menyunting tantangan, pilih landmark di Peta.</p>
+    ${status ? `<p class="studio-save-feedback" role="status">${escapeText(status)}</p>` : ""}
+    <div class="rb-sticky-footer studio-step-actions">
+      ${editable && session ? `<button type="button" class="primary studio-save" data-action="save-draft">Simpan aturan sesi</button>` : ""}
+      <button type="button" class="studio-tool" data-step="2">← Peta</button>
+      <button type="button" class="studio-tool" data-step="4">Validasi →</button>
     </div>
   </div>`;
 }
 
 function renderClaimSession(pack: ClaimRulebookPack, dis: string): string {
-  return `<div data-testid="claim-session-panel">
-    <div class="rb-grid-2">
+  return `<section class="studio-rule-panel" data-testid="claim-session-panel" aria-label="Sesi &amp; Skor">
+    <h4>Sesi &amp; Skor</h4>
+    <fieldset class="rb-grid-2 studio-field-group">
+      <legend>Pemain dan ronde</legend>
       <label class="rb-field"><span>Min Pemain (1–6)</span><input id="ed-claim-minp" type="number" min="1" max="6" value="${pack.session.minPlayers}" ${dis}></label>
       <label class="rb-field"><span>Maks Pemain (1–6)</span><input id="ed-claim-maxp" type="number" min="1" max="6" value="${pack.session.maxPlayers}" ${dis}></label>
       <label class="rb-field"><span>Mode Tim</span>
@@ -80,6 +85,9 @@ function renderClaimSession(pack: ClaimRulebookPack, dis: string): string {
         </select>
       </label>
       <label class="rb-field"><span>Durasi Sesi (menit)</span><input id="ed-claim-duration" type="number" value="${Math.round(pack.session.durationMs / 60_000)}" ${dis}></label>
+    </fieldset>
+    <fieldset class="rb-grid-2 studio-field-group">
+      <legend>Target dan penalti</legend>
       <label class="rb-field"><span>Target Kunci Solo</span><input id="ed-claim-solo-locks" type="number" value="${pack.session.soloTargets?.lockedLandmarks ?? 4}" ${dis}></label>
       <label class="rb-field"><span>Target Zona Solo</span><input id="ed-claim-solo-zones" type="number" value="${pack.session.soloTargets?.distinctZones ?? 2}" ${dis}></label>
       <label class="rb-field"><span>Kebijakan Gagal Multiplayer</span>
@@ -90,8 +98,8 @@ function renderClaimSession(pack: ClaimRulebookPack, dis: string): string {
       </label>
       <label class="rb-field"><span>Cooldown Gagal (menit)</span><input id="ed-claim-cooldown" type="number" min="0" max="30" value="${Math.round((pack.claiming.failCooldownMs ?? 300_000) / 60_000)}" ${dis}></label>
       <label class="rb-field"><span>Batas Kartu Taktis</span><input id="ed-claim-hand" type="number" min="1" max="4" value="${pack.tacticalDeck.maxHandSize}" ${dis}></label>
-    </div>
-  </div>`;
+    </fieldset>
+  </section>`;
 }
 
 export function renderClaimChallenges(
@@ -246,7 +254,8 @@ function renderClaimDeck(
   editable: boolean,
 ): string {
   const prim = state.cardPrimitive;
-  return `<div data-testid="claim-deck-panel">
+  return `<section class="studio-rule-panel" data-testid="claim-deck-panel" aria-label="Kartu">
+    <h4>Kartu</h4>
     <div class="rb-grid-2">
       <label class="rb-field"><span>Status Dek Taktis</span>
         <select id="ed-cdeck-enabled" ${dis}>
@@ -311,7 +320,7 @@ function renderClaimDeck(
           </div>`
         : ""
     }
-  </div>`;
+  </section>`;
 }
 
 export function buildClaimChallengeFromForm(root: HTMLElement, state: ClaimStep3State): ClaimChallengeItem | null {

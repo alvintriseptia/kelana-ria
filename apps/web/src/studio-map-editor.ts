@@ -248,13 +248,11 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
   container.innerHTML = `<div class="board-map-shell">
     <div class="board-map-canvas" role="region" aria-label="Editor peta interaktif Studio Kreator"></div>
     <p class="board-map-attribution">
-      Mode peta: <strong data-studio-mode-label></strong> · ${config.mode === "geoapify-vector" ? "Peta vektor langsung" : "Peta vektor luring"} · © Geoapify · © OpenStreetMap contributors · Data Halte Transjakarta
+      ${config.mode === "geoapify-vector" ? "Peta vektor langsung" : "Peta vektor luring"} · © Geoapify · © OpenStreetMap contributors · Data Halte Transjakarta
     </p>
   </div>`;
 
   const canvasHost = container.querySelector<HTMLElement>(".board-map-canvas")!;
-  const modeLabelEl = container.querySelector<HTMLElement>("[data-studio-mode-label]")!;
-  modeLabelEl.textContent = current.mode;
 
   let map: maplibregl.Map | undefined;
   let destroyed = false;
@@ -453,7 +451,6 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
     update(next: StudioMapUpdate) {
       if (destroyed) return;
       current = next;
-      modeLabelEl.textContent = current.mode;
       syncSources();
       syncMarkers();
     },

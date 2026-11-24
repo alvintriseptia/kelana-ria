@@ -53,6 +53,7 @@ export type Step2State = {
   pointPage: number;
   zoneId: string | null;
   vertex: number | null;
+  editingChallenges: boolean;
   saved: boolean;
 };
 
@@ -307,7 +308,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
         <label class="rb-field"><span>Latitude</span><input id="ed-sp-lat" type="number" step="0.00001" value="${sp.latitude}" ${dis}></label>
         <label class="rb-field"><span>Longitude</span><input id="ed-sp-lng" type="number" step="0.00001" value="${sp.longitude}" ${dis}></label>
       </div>
-      ${editable ? `<div class="rb-actions"><button type="button" class="secondary" data-map-action="apply-selected">Terapkan Titik Awal</button></div>` : ""}
+      ${editable ? `<div class="rb-actions"><button type="button" class="primary" data-map-action="apply-selected">Terapkan Titik Awal</button></div>` : ""}
     </details>`;
   }
 
@@ -339,7 +340,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
       ${
         editable
           ? `<div class="rb-actions">
-              <button type="button" class="secondary" data-map-action="apply-selected">Simpan titik</button>
+              <button type="button" class="primary" data-map-action="apply-selected">Simpan titik</button>
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus Stasiun</button>
             </div>`
           : ""
@@ -362,7 +363,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
       ${
         editable
           ? `<div class="rb-actions">
-              <button type="button" class="secondary" data-map-action="apply-selected">Simpan titik</button>
+              <button type="button" class="primary" data-map-action="apply-selected">Simpan titik</button>
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus POI</button>
             </div>`
           : ""
@@ -377,6 +378,7 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
     const nameInputId = idx === 0 ? "ed-claim-landmark-name" : "ed-point-name";
     return `<details class="rb-accordion" open data-testid="step2-inspector">
       <summary data-studio-point-heading>${escapeText(lm.name)}</summary>
+      <button type="button" class="studio-tool" data-map-action="edit-challenges">Sunting tantangan landmark</button>
       <small>ID: <code>${escapeText(lm.id)}</code></small>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Landmark</span><input id="${nameInputId}" data-field="name" value="${escapeText(lm.name)}" ${dis}></label>
@@ -398,9 +400,8 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
       ${
         editable
           ? `<div class="rb-actions">
-              <button type="button" class="secondary" data-map-action="apply-selected">Simpan titik</button>
+              <button type="button" class="primary" data-map-action="apply-selected">Simpan titik</button>
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus Landmark</button>
-              <button type="button" class="secondary" data-map-action="edit-challenges">Sunting tantangan</button>
             </div>`
           : ""
       }
@@ -417,15 +418,17 @@ export function renderStep2Top(state: Step2State, editable: boolean): string {
     : "Ketuk pin untuk menyunting titik.";
   return `<div class="studio-map-caption">
       <p>${state.mapFailed ? "Pakai daftar lokasi untuk menyunting titik." : mapAction}</p>
-      <span class="rb-badge" data-map-save-state>${state.saved ? "Tersimpan" : "Belum disimpan"}</span>
+      <span class="rb-badge" data-map-save-state role="status">${state.saved ? "Tersimpan" : "Belum disimpan"}</span>
     </div>
-    <div class="rb-actions studio-map-tools" aria-label="Mode interaksi peta">
-      ${state.mapFailed ? "" : `<button type="button" class="${state.mapMode === "select" ? "primary" : "secondary"}" data-map-mode="select">Pilih Titik</button>
-        ${editable ? `<button type="button" class="${state.mapMode === "add" ? "primary" : "secondary"}" data-map-mode="add">+ Tambah di Peta</button>` : ""}
-        <button type="button" class="secondary" data-map-action="recenter">Pusatkan</button>`}
-      <button type="button" class="secondary" data-map-drawer="points" aria-expanded="${state.drawer === "points"}">Daftar lokasi</button>
-      <button type="button" class="secondary" data-map-drawer="transit" aria-expanded="${state.drawer === "transit"}">Transit Jakarta</button>
-    </div>`;
+    <div class="studio-map-tools" role="group" aria-label="Cari lokasi dan atur tampilan peta">
+      <button type="button" class="studio-tool studio-find-location" data-map-drawer="points" aria-expanded="${state.drawer === "points"}">Cari lokasi</button>
+      <button type="button" class="studio-tool" data-map-drawer="transit" aria-expanded="${state.drawer === "transit"}">Transit Jakarta</button>
+      ${state.mapFailed ? "" : '<button type="button" class="studio-tool" data-map-action="recenter">Pusatkan</button>'}
+    </div>
+    ${!state.mapFailed && editable ? `<div class="studio-section-tabs studio-map-modes" role="group" aria-label="Mode interaksi peta">
+      <button type="button" data-map-mode="select" aria-pressed="${state.mapMode === "select"}">${state.mapMode === "move" || state.mapMode === "boundary" ? "Kembali ke pilih titik" : "Pilih titik"}</button>
+      <button type="button" data-map-mode="add" aria-pressed="${state.mapMode === "add"}">Tambah di peta</button>
+    </div>` : ""}`;
 }
 
 function renderTransitModes(record: StudioVersionRecord, state: Step2State) {
@@ -577,7 +580,7 @@ function renderBoundaryEditor(record: StudioVersionRecord, state: Step2State, ed
       <label class="rb-field"><span>Bujur</span><input id="ed-v-lng" type="number" step="any" value="${point.longitude}" ${dis}></label>
     </div>
     ${editable ? `<div class="rb-actions">
-      <button type="button" class="secondary" data-map-action="${vertex ? "save-vertex" : "add-vertex"}">${vertex ? "Simpan sudut" : "Tambah sudut"}</button>
+      <button type="button" class="primary" data-map-action="${vertex ? "save-vertex" : "add-vertex"}">${vertex ? "Simpan sudut" : "Tambah sudut"}</button>
       ${vertex ? `<button type="button" class="secondary" data-map-action="remove-vertex" data-vertex-index="${state.vertex}" ${record.snapshot.boundaryPolygon.length <= 3 ? "disabled" : ""}>Hapus sudut</button>
         <button type="button" class="secondary" data-map-action="new-vertex">Sudut baru</button>` : ""}
       ${state.mapFailed ? "" : `<button type="button" class="secondary" data-map-mode="boundary" aria-pressed="${state.mapMode === "boundary"}">Tambah di peta</button>`}
@@ -598,6 +601,7 @@ export function renderStep2Bottom(
   const boundaryView = state.subTab === "boundary";
   const addPoint = editable && (state.subTab === "primary" || (state.subTab === "secondary" && !claim));
   const showLandmarkChallenges =
+    state.editingChallenges &&
     claim &&
     isClaimStudioPack(record.pack) &&
     !zoneView &&
@@ -609,26 +613,28 @@ export function renderStep2Bottom(
       claimStep3.challengeTarget = currentPoint.id;
     }
   }
-  return `<div class="rb-actions studio-map-layers" aria-label="Layer lokasi">
+  return `<div class="studio-section-tabs studio-map-layers" role="group" aria-label="Jenis lokasi yang disunting">
       ${([["primary", claim ? "Landmark" : "Stasiun"], ["secondary", claim ? "Zona" : "POI"],
         ["start", "Titik mulai"], ["boundary", "Batas"]] as const).map(([tab, label]) =>
-          `<button type="button" class="${state.subTab === tab ? "primary" : "secondary"}" data-map-tab="${tab}" aria-pressed="${state.subTab === tab}">${label}</button>`).join("")}
+          `<button type="button" data-map-tab="${tab}" aria-pressed="${state.subTab === tab}">${label}</button>`).join("")}
     </div>
     ${state.drawer === "points" ? renderPointList(record, state) : ""}
     ${state.drawer === "transit" ? renderBuiltInTransitPanel(record, state, editable) : ""}
-    <fieldset data-point-fields aria-label="Editor lokasi">
+    ${showLandmarkChallenges && isClaimStudioPack(record.pack) && claimStep3
+      ? `<fieldset class="studio-point-inspector" data-challenge-fields aria-label="Editor tantangan lokasi">
+          <button type="button" class="studio-tool" data-map-action="close-challenges">‹ Kembali ke lokasi</button>
+          ${renderClaimChallenges(record.pack, claimStep3, editable ? "" : "disabled", editable)}
+        </fieldset>`
+      : `<fieldset data-point-fields aria-label="Editor lokasi">
       ${zoneView ? renderZoneEditor(record, state, editable) : boundaryView ? renderBoundaryEditor(record, state, editable)
         : renderInspector(record, currentPoint, editable)}
       ${editable && currentPoint && !zoneView && !boundaryView && !state.mapFailed
-        ? `<button type="button" class="secondary" data-map-mode="move" aria-pressed="${state.mapMode === "move"}">Pindahkan titik di peta</button>` : ""}
-      ${addPoint ? `<button type="button" class="secondary" data-map-action="${claim ? "add-landmark" : state.subTab === "secondary" ? "add-poi" : "add-station"}">Tambah ${claim ? "landmark" : state.subTab === "secondary" ? "POI" : "stasiun"}</button>` : ""}
-    </fieldset>
-    ${showLandmarkChallenges && isClaimStudioPack(record.pack) && claimStep3
-      ? `<fieldset data-challenge-fields aria-label="Editor tantangan lokasi">${renderClaimChallenges(record.pack, claimStep3, editable ? "" : "disabled", editable)}</fieldset>`
-      : ""}
-    <div class="rb-sticky-footer">
-      <button type="button" class="secondary" data-step="1">← Draf</button>
-      <button type="button" class="primary" data-step="3">Aturan →</button>
+        ? `<button type="button" class="studio-tool" data-map-mode="move" aria-pressed="${state.mapMode === "move"}">Pindahkan titik di peta</button>` : ""}
+      ${addPoint ? `<button type="button" class="studio-tool" data-map-action="${claim ? "add-landmark" : state.subTab === "secondary" ? "add-poi" : "add-station"}">Tambah ${claim ? "landmark" : state.subTab === "secondary" ? "POI" : "stasiun"}</button>` : ""}
+    </fieldset>`}
+    <div class="rb-sticky-footer studio-step-actions">
+      <button type="button" class="studio-tool" data-step="1">← Draf</button>
+      <button type="button" class="studio-tool" data-step="3">Aturan →</button>
     </div>`;
 }
 
@@ -639,12 +645,12 @@ export function renderStep2View(
   claimStep3?: ClaimStep3State,
 ): string {
   return `<div class="rb-card studio-map-editor" data-studio-slot="map-editor">
+    <div id="st-step2-top">${renderStep2Top(state, editable)}</div>
     <div id="st-map-host" class="rb-map-host" data-testid="studio-map-host" ${state.mapFailed ? "hidden" : ""}></div>
     <div id="st-map-fallback" data-testid="studio-map-fallback" ${state.mapFailed ? "" : "hidden"}>
       <p role="status">Peta belum bisa dimuat. Pilih lokasi dari daftar untuk menyuntingnya.</p>
       <button type="button" class="secondary" data-map-action="retry-map">Coba muat peta</button>
     </div>
-    <div id="st-step2-top">${renderStep2Top(state, editable)}</div>
     <div id="st-step2-bottom">${renderStep2Bottom(record, state, editable, claimStep3)}</div>
   </div>`;
 }

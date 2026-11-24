@@ -51,40 +51,47 @@ export function renderSeekStep3(
   pack: HideSeekRulebookPack,
   state: SeekStep3State,
   editable: boolean,
+  status: string,
 ): string {
   const dis = editable ? "" : "disabled";
-  const totalDeckCopies = pack.deck.cards.reduce((sum, c) => sum + c.copies, 0);
+  const session = state.subTab === "timers";
 
   return `<div class="rb-card" data-studio-slot="rules-builder">
-    <h3>3. Aturan, Buku Petunjuk &amp; Dek Hide &amp; Seek</h3>
-    <div class="rb-actions" aria-label="Sub-tab builder Hide & Seek">
-      <button type="button" class="${state.subTab === "timers" ? "primary" : "secondary"}" data-s3-tab="timers">Timer &amp; Sesi</button>
-      <button type="button" class="${state.subTab === "book" ? "primary" : "secondary"}" data-s3-tab="book">Buku Petunjuk (6)</button>
-      <button type="button" class="${state.subTab === "deck" ? "primary" : "secondary"}" data-s3-tab="deck">Dek &amp; Kutukan (${totalDeckCopies})</button>
+    <h3>Aturan</h3>
+    <div class="studio-section-tabs" role="group" aria-label="Bagian aturan">
+      <button type="button" data-s3-tab="timers" aria-pressed="${state.subTab === "timers"}">Sesi &amp; Waktu</button>
+      <button type="button" data-s3-tab="book" aria-pressed="${state.subTab === "book"}">Pertanyaan</button>
+      <button type="button" data-s3-tab="deck" aria-pressed="${state.subTab === "deck"}">Kartu</button>
     </div>
 
     ${
       state.subTab === "timers"
-        ? renderSeekTimers(pack, dis, editable)
+        ? renderSeekTimers(pack, dis)
         : state.subTab === "book"
           ? renderSeekBook(pack, state.family, dis, editable)
           : renderSeekDeck(pack, state, dis, editable)
     }
 
-    <div class="rb-sticky-footer">
-      <button type="button" class="secondary" data-step="2">← Peta</button>
-      ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan</button>` : "<span></span>"}
-      <button type="button" class="primary" data-step="4">Validasi →</button>
+    ${status ? `<p class="studio-save-feedback" role="status">${escapeText(status)}</p>` : ""}
+    <div class="rb-sticky-footer studio-step-actions">
+      ${editable && session ? `<button type="button" class="primary studio-save" data-action="save-draft">Simpan aturan sesi</button>` : ""}
+      <button type="button" class="studio-tool" data-step="2">← Peta</button>
+      <button type="button" class="studio-tool" data-step="4">Validasi →</button>
     </div>
   </div>`;
 }
 
-function renderSeekTimers(pack: HideSeekRulebookPack, dis: string, editable: boolean): string {
-  return `<div data-testid="seek-timers-panel">
-    <div class="rb-grid-2">
+function renderSeekTimers(pack: HideSeekRulebookPack, dis: string): string {
+  return `<section class="studio-rule-panel" data-testid="seek-timers-panel" aria-label="Sesi &amp; Waktu">
+    <h4>Sesi &amp; Waktu</h4>
+    <fieldset class="rb-grid-2 studio-field-group">
+      <legend>Pemain dan area</legend>
       <label class="rb-field"><span>Min Pemain (2–6)</span><input id="ed-seek-minp" type="number" min="2" max="6" value="${pack.session.minPlayers}" ${dis}></label>
       <label class="rb-field"><span>Maks Pemain (2–6)</span><input id="ed-seek-maxp" type="number" min="2" max="6" value="${pack.session.maxPlayers}" ${dis}></label>
       <label class="rb-field"><span>Radius Zona Sembunyi (m)</span><input id="ed-zone" type="number" value="${pack.geography.hidingZoneRadiusMeters}" ${dis}></label>
+    </fieldset>
+    <fieldset class="rb-grid-2 studio-field-group">
+      <legend>Waktu dan giliran</legend>
       <label class="rb-field"><span>Head Start (menit)</span><input id="ed-head" type="number" value="${Math.round(pack.timers.headStartMs / 60_000)}" ${dis}></label>
       <label class="rb-field"><span>Batas Cari (menit)</span><input id="ed-search" type="number" value="${Math.round(pack.timers.searchLimitMs / 60_000)}" ${dis}></label>
       <label class="rb-field"><span>Batas Regroup (menit)</span><input id="ed-regroup" type="number" value="${Math.round(pack.timers.regroupLimitMs / 60_000)}" ${dis}></label>
@@ -95,6 +102,9 @@ function renderSeekTimers(pack: HideSeekRulebookPack, dis: string, editable: boo
           <option value="anywhere_ready" ${pack.session.regroupPolicy === "anywhere_ready" ? "selected" : ""}>Siap di Mana Saja</option>
         </select>
       </label>
+    </fieldset>
+    <fieldset class="rb-grid-2 studio-field-group">
+      <legend>Petunjuk dan kartu</legend>
       <label class="rb-field"><span>Mode Biaya Ulang Petunjuk</span>
         <select id="ed-repeat-mode" ${dis}>
           <option value="escalating_multiplier" ${pack.investigationBook.repeatCostMode === "escalating_multiplier" ? "selected" : ""}>Berlipat (1x, 2x, 3x)</option>
@@ -104,13 +114,8 @@ function renderSeekTimers(pack: HideSeekRulebookPack, dis: string, editable: boo
       </label>
       <label class="rb-field"><span>Batas Kartu Tangan</span><input id="ed-hand" type="number" min="3" max="8" value="${pack.deck.baseHandLimit}" ${dis}></label>
       <label class="rb-field"><span>Maks Kutukan Pemblokir Aktif</span><input id="ed-max-curses" type="number" min="1" max="2" value="${pack.deck.maxActiveBlockingCurses}" ${dis}></label>
-    </div>
-    ${
-      editable
-        ? `<div class="rb-badges"><span class="rb-badge">Tab Petunjuk: 6 Keluarga</span><span class="rb-badge">Tab Dek: Kartu &amp; Kutukan</span></div>`
-        : ""
-    }
-  </div>`;
+    </fieldset>
+  </section>`;
 }
 
 function renderSeekBook(
@@ -121,7 +126,8 @@ function renderSeekBook(
 ): string {
   const cfg = pack.investigationBook.families[family];
   const items = cfg?.items ?? [];
-  return `<div data-testid="seek-book-panel">
+  return `<section class="studio-rule-panel" data-testid="seek-book-panel" aria-label="Pertanyaan">
+    <h4>Pertanyaan</h4>
     <div class="st-visual-grid" role="group" aria-label="Pilih keluarga pertanyaan">
       ${FAMILY_LIST.map((f) => {
         const famCfg = pack.investigationBook.families[f.id];
@@ -190,7 +196,7 @@ function renderSeekBook(
           </div>`
         : ""
     }
-  </div>`;
+  </section>`;
 }
 
 function renderSeekDeck(
@@ -200,7 +206,8 @@ function renderSeekDeck(
   editable: boolean,
 ): string {
   const prim = state.cardPrimitive;
-  return `<div data-testid="seek-deck-panel">
+  return `<section class="studio-rule-panel" data-testid="seek-deck-panel" aria-label="Kartu">
+    <h4>Kartu</h4>
     <p><small>Total kartu: <strong>${pack.deck.cards.reduce((s, c) => s + c.copies, 0)}</strong> · Batas tangan: ${pack.deck.baseHandLimit} · Maks kutukan pemblokir aktif: ${pack.deck.maxActiveBlockingCurses}</small></p>
     <details class="rb-accordion">
       <summary>Daftar Kartu di Dek (${pack.deck.cards.length} jenis)</summary>
@@ -279,7 +286,7 @@ function renderSeekDeck(
           </div>`
         : ""
     }
-  </div>`;
+  </section>`;
 }
 
 function seekCardChips(card: HideSeekCardDefinition): CardPreviewChip[] {
