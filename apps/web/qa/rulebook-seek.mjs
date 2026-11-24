@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { openEdition } from "./catalog.mjs";
+import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buyPublishedDraft, openDraft, openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -94,13 +95,13 @@ try {
   // Step 4: run dry-run, submit -> Reviewer requests changes -> verify revision banner -> re-submit -> publish
   await pageCreator.click('button[data-step="4"]');
   await pageCreator.click('button[data-action="dry-run"]');
-  await pageCreator.waitForFunction(() => document.body.textContent.includes("Dry-Run OK"));
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Uji coba lolos"));
   await pageCreator.click('button[data-action="submit-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
 
   await openReview(pageCreator);
   await pageCreator.click('button[data-action="request-changes"]');
-  await pageCreator.waitForFunction(() => document.body.textContent.includes("request-changes"));
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Permintaan revisi dikirim"));
 
   await openDraft(pageCreator, "pack-senopati-seek");
   await pageCreator.waitForSelector('[data-testid="revision-note-banner"]');
@@ -127,7 +128,7 @@ try {
   await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
   await openReview(pageCreator);
   await pageCreator.click('button[data-action="publish"]');
-  await pageCreator.waitForFunction(() => document.body.textContent.includes("publish-version"));
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Paket diterbitkan ke katalog"));
 
   // Verify v2 clone from published pack works without mutating v1
   await openDraft(pageCreator, "pack-senopati-seek");
@@ -141,6 +142,7 @@ try {
   await pageCreator.click('button[data-nav="back"]');
   await buyPublishedDraft(pageCreator, "pack-senopati-seek");
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+  await assertCleanUiCopy(pageCreator, "seek paid lobby");
 
   const codeMatch = (await pageCreator.textContent("body")).match(/Kode:\s*(RB-[A-F0-9]+)/);
   assert.ok(codeMatch, "Paid room code should be displayed after Midtrans settlement");
@@ -151,6 +153,7 @@ try {
   const pageG2 = await ctxG2.newPage();
   pageG2.setDefaultTimeout(20_000);
   await pageG2.goto(`${baseUrl}/?play=rulebook-seek`, { waitUntil: "networkidle" });
+  await assertCleanUiCopy(pageG2, "seek catalog");
   await pageG2.fill("#rb-join-code", roomCode);
   await pageG2.fill("#rb-join-name", "Pencari 1");
   await pageG2.click('button[data-action="join-room"]');
@@ -200,6 +203,7 @@ try {
   await clickAndWaitPost(pageCreator, 'button[data-action="start-match"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Waktu Sembunyi"));
   await pageCreator.locator("[data-map-ready=true]").waitFor();
+  await assertCleanUiCopy(pageCreator, "seek head start hider");
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-head-start.png") });
 
   // Hider locks mrt-blok-m; Seeker DOM must NOT contain Hider's private anchor or Found Code!
@@ -211,7 +215,8 @@ try {
   await clickAndWaitPost(pageCreator, 'button[data-action="lock-anchor"]');
   now += 26 * 60_000;
   await refreshSeekRoom(pageG2);
-  await pageG2.waitForFunction(() => document.body.textContent.includes("Perburuan Makro"));
+  await pageG2.waitForFunction(() => document.body.textContent.includes("Fase Cari"));
+  await assertCleanUiCopy(pageG2, "seek seeking phase seeker");
   const seekerBodyBeforeEndgame = await pageG2.textContent("body");
   assert.equal(seekerBodyBeforeEndgame.includes("hider-found-code"), false);
 
@@ -299,6 +304,7 @@ try {
   assert.doesNotMatch(JSON.stringify(answerFeed), /"overlay"|"answerCode"|"photoId"/);
   await pageG2.locator('button[data-panel="history"]').click();
   await pageCreator.waitForSelector('button[data-action="choose-draw"]');
+  await assertCleanUiCopy(pageCreator, "seek reward card draw offer");
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-reward-draw.png"), animations: "disabled" });
   assert.equal(await pageG2.locator('button[data-action="choose-draw"]').count(), 0);
   // Reload keeps the same offer and deadline without replaying the deal.
@@ -313,7 +319,8 @@ try {
   assert.equal(await cardChoice.getAttribute("aria-pressed"), "true");
   assert.deepEqual(await activeOffer(), offered);
   await clickAndWaitPost(pageCreator, 'button[data-action="confirm-draw"]');
-  await pageCreator.waitForFunction(() => document.body.textContent.includes("Tangan Penyembunyi (1/"));
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Kartu di Tangan (1/"));
+  await assertCleanUiCopy(pageCreator, "seek hider hand");
 
   const snapshot = () => pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
   const initialRadar = (await snapshot()).room.questions[0].overlay;
@@ -376,7 +383,8 @@ try {
   await pageG2.locator('[data-action="retry-map"]').waitFor();
   await pageG2.click('button[data-action="select-station"][data-station="mrt-blok-m"]');
   await clickAndWaitPost(pageG2, 'button[data-action="trigger-endgame"]');
-  await pageG2.waitForFunction(() => document.body.textContent.includes("ENDGAME"));
+  await pageG2.waitForFunction(() => document.body.textContent.includes("Endgame"));
+  await assertCleanUiCopy(pageG2, "seek endgame");
   await refreshSeekRoom(pageCreator);
   const foundCode = (await pageCreator.textContent('[data-testid="hider-found-code"]')).trim();
   assert.match(foundCode, /^\d{4}$/);
@@ -438,6 +446,7 @@ try {
   await pageG2.getByRole("link", { name: "Buka ringkasan" }).click();
   await pageG2.getByRole("heading", { name: "Giliran sembunyi" }).waitFor();
   assert.match(await pageG2.locator(".recap-shell").innerText(), /Giliran 1 · Ditemukan · 3 pertanyaan dijawab/);
+  await assertCleanUiCopy(pageG2, "seek recap");
   assert.ok(await pageG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageG2.screenshot({ path: path.join(results, "rulebook-seek-recap.png") });
   await pageG2.locator('header.mast a.brand[href="/"]').click();

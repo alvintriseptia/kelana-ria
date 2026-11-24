@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { openEdition } from "./catalog.mjs";
+import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -66,12 +67,13 @@ try {
   await openEdition(pageSolo, "claim-the-city");
   await pageSolo.getByRole("button", { name: "Main Solo", exact: true }).click();
   await pageSolo.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+  await assertCleanUiCopy(pageSolo, "claim solo lobby");
 
   const soloRoomCode = new URL(pageSolo.url()).searchParams.get("room");
   assert.equal(await pageSolo.getByTestId("invite-link").count(), 0);
   const outsider = await browser.newContext();
   const soloJoin = await outsider.request.post(`${baseUrl}/api/rulebooks`, {
-    data: { type: "join-room", roomCode: soloRoomCode, name: "Penantang" },
+    data: { type: "join-room", roomCode: soloRoomCode, name: "Raka" },
   });
   assert.equal((await soloJoin.json()).error, "room-full");
   await outsider.close();
@@ -97,9 +99,11 @@ try {
   // Lock m-bloc via observation_input ("2")
   await checkIn(pageSolo, "m-bloc");
   await pageSolo.waitForSelector("#claim-input-answer");
+  await assertCleanUiCopy(pageSolo, "claim active challenge modal (m-bloc)");
   await pageSolo.fill("#claim-input-answer", "2");
   await clickAndWaitPost(pageSolo, 'button[data-action="submit-input"]');
   await pageSolo.waitForFunction(() => document.body.textContent.includes("1/4 terkunci"));
+  await assertCleanUiCopy(pageSolo, "claim active board after lock");
   await pageSolo.locator('[data-map-point="m-bloc"][data-game-motion^="lock:"]').waitFor();
   await pageSolo.locator('[data-panel="cards"][data-game-motion^="update:"]').waitFor();
   assert.equal(
@@ -205,7 +209,7 @@ try {
   await pageP2.goto(inviteHref, { waitUntil: "networkidle" });
   await pageP2.waitForSelector("#rb-claim-join-code");
   assert.equal(await pageP2.inputValue("#rb-claim-join-code"), roomCode, "Invite URL should prefill room code");
-  await pageP2.fill("#rb-claim-join-name", "Penantang 2");
+  await pageP2.fill("#rb-claim-join-name", "Dina");
   await clickAndWaitPost(pageP2, 'button[data-action="join-room"]');
   await pageP2.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
 
@@ -213,7 +217,7 @@ try {
   const pageP3 = await ctxP3.newPage();
   await pageP3.goto(`${baseUrl}/?play=rulebook-claim`, { waitUntil: "networkidle" });
   await pageP3.fill("#rb-claim-join-code", roomCode);
-  await pageP3.fill("#rb-claim-join-name", "Penantang 3");
+  await pageP3.fill("#rb-claim-join-name", "Sari");
   await clickAndWaitPost(pageP3, 'button[data-action="join-room"]');
   await pageP3.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (3/4)"));
 
@@ -288,9 +292,9 @@ try {
   assert.equal((await ctxP2.request.get(new URL(proofPath, baseUrl).href)).status(), 404);
   now += 3 * 60 * 60 * 1000;
   await pageP2.getByTestId("claim-outcome").waitFor();
-  assert.match(await pageP2.getByTestId("claim-outcome").innerText(), /Pemenang · Penantang 2.*Landmark yang terkunci/s);
+  assert.match(await pageP2.getByTestId("claim-outcome").innerText(), /Pemenang · Dina.*Landmark yang terkunci/s);
   await pageP2.getByRole("link", { name: "Buka ringkasan" }).click();
-  await pageP2.getByRole("heading", { name: "Pemenang · Penantang 2" }).waitFor();
+  await pageP2.getByRole("heading", { name: "Pemenang · Dina" }).waitFor();
   assert.match(await pageP2.locator(".recap-shell").innerText(), /Penentu kemenangan · Landmark yang terkunci/);
   assert.ok(await pageP2.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageP2.getByRole("link", { name: "‹ Riwayat" }).click();
@@ -303,7 +307,7 @@ try {
   assert.equal(await pageP2.getByTestId("resume-room-banner").count(), 0, "Completed room must not appear in resume banner");
   await pageP2.getByRole("link", { name: "Riwayat pertandingan" }).click();
   await recapLink.click();
-  await pageP2.getByRole("heading", { name: "Pemenang · Penantang 2" }).waitFor();
+  await pageP2.getByRole("heading", { name: "Pemenang · Dina" }).waitFor();
 
   // 2b. Community recap sharing: private by default -> visitor denied -> preview & publish with alias -> visitor views public recap & edition list -> unshare keeps private recap intact
   const claimVideo = pageP1.video();
@@ -323,9 +327,10 @@ try {
   await communitySection.getByText(/Belum ada hasil pertandingan yang dibagikan/).waitFor();
 
   assert.match(await pageP2.getByTestId("recap-visibility-badge").innerText(), /Privat/);
+  await assertCleanUiCopy(pageP2, "claim private recap");
   const previewBefore = await pageP2.getByTestId("public-recap-preview").innerText();
   assert.match(previewBefore, /Pemain 2/);
-  assert.doesNotMatch(previewBefore, /Penantang 2/);
+  assert.doesNotMatch(previewBefore, /Dina/);
   await pageP2.locator('input[data-alias-seat]').nth(1).fill("Juara Blok M");
   assert.match(await pageP2.getByTestId("public-recap-preview").innerText(), /Pemenang · Juara Blok M/);
   await pageP2.screenshot({ path: path.join(results, "recap-share-composer.png"), fullPage: true });
@@ -341,8 +346,9 @@ try {
   // Separate visitor session opens the public link and navigates to the exact edition & rules version page.
   await pageVisitor.goto(new URL(publicHref, baseUrl).href);
   await pageVisitor.getByRole("heading", { name: "Pemenang · Juara Blok M" }).waitFor();
+  await assertCleanUiCopy(pageVisitor, "claim public recap");
   const publicBody = await pageVisitor.locator(".recap-shell").innerText();
-  assert.doesNotMatch(publicBody, /Penantang 2/);
+  assert.doesNotMatch(publicBody, /Dina/);
   assert.equal(publicBody.includes(roomCode), false, "Public recap view must not expose room code");
   assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageVisitor.screenshot({ path: path.join(results, "recap-public-shared.png"), fullPage: true });
@@ -359,7 +365,7 @@ try {
     pageP2.getByRole("button", { name: "Tarik dari komunitas", exact: true }).click(),
   ]);
   assert.match(await pageP2.getByTestId("recap-visibility-badge").innerText(), /Privat/);
-  await pageP2.getByRole("heading", { name: "Pemenang · Penantang 2" }).waitFor();
+  await pageP2.getByRole("heading", { name: "Pemenang · Dina" }).waitFor();
   await pageVisitor.goto(new URL(publicHref, baseUrl).href);
   await pageVisitor.locator(".recap-shell").getByText(/tidak tersedia|ditarik/i).waitFor();
   await pageVisitor.goto(`${baseUrl}/?edition=official-jakarta-compact-claim&version=1`);
@@ -389,6 +395,7 @@ try {
   for (const route of ["/?recaps=1", "/?play=rulebook-claim", "/?play=rulebook-seek", "/?play=rulebook-studio"]) {
     await pageVisitor.goto(`${baseUrl}${route}`, { waitUntil: "networkidle" });
     await pageVisitor.waitForFunction(() => !document.getElementById("play")?.hidden);
+    await assertCleanUiCopy(pageVisitor, `route ${route}`);
     if (route.startsWith("/?play=rulebook-")) {
       await pageVisitor.locator(".rb-card").first().waitFor();
       assert.equal(await pageVisitor.locator("#play > h1").count(), 0, `${route} should not render a redundant outer h1 wrapper`);
@@ -464,12 +471,12 @@ try {
   // Step 4: dry-run & submit -> Reviewer publish
   await pageCreator.click('button[data-step="4"]');
   await pageCreator.click('button[data-action="dry-run"]');
-  await pageCreator.waitForFunction(() => document.body.textContent.includes("Dry-Run OK"));
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Uji coba lolos"));
   await clickAndWaitPost(pageCreator, 'button[data-action="submit-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
   await openReview(pageCreator);
   await clickAndWaitPost(pageCreator, 'button[data-action="publish"]');
-  await pageCreator.waitForFunction(() => document.body.textContent.includes("publish-version"));
+  await pageCreator.waitForFunction(() => document.body.textContent.includes("Paket diterbitkan ke katalog"));
 
   // Confirm private answer keys NEVER leak on public /api/rulebooks listing
   const publicListingText = await pageCreator.evaluate(() =>

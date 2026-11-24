@@ -220,7 +220,7 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
     if (step === finalStep) {
       const text = offersChoice ? "Kartu pilihanmu masuk ke tangan. Buka menu Kartu untuk melihatnya."
         : `${deck!.source} Buka menu Kartu saat bermain untuk melihat kartu di tanganmu.`;
-      return { title: deck!.earns ? "Kartu di tangan" : "Contoh kartu taktis", text, action: "finish", label: "Kembali ke edisi" };
+      return { title: deck!.earns ? "Kartu di tangan" : "Contoh kartu", text, action: "finish", label: "Kembali ke edisi" };
     }
     const limit = deck!.keep > handCount ? ` Batas tangan ${deck!.handLimit}. Dalam latihan ini, pilih langsung kartu yang masuk ke tangan.` : "";
     const deadline = deck!.decisionMs ? ` Saat bermain, kamu punya hingga ${formatTime(deck!.decisionMs)} untuk memilih.` : "";
@@ -235,7 +235,7 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
     const cards = deck!.examples;
     if (step === finalStep) {
       const order = offersChoice ? [...selected].sort((a, b) => a - b) : Array.from({ length: handCount }, (_, index) => index);
-      return `<div class="ep-cards ep-hand" role="region" aria-label="${deck!.earns ? "Tangan latihan" : "Contoh kartu"}">
+      return `<div class="ep-cards ep-hand" role="region" aria-label="${deck!.earns ? "Kartu latihan" : "Contoh kartu"}">
         ${order.map(index => practiceCardFace(cards[index % cards.length])).join("")}
       </div>`;
     }

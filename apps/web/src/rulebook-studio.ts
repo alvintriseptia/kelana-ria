@@ -77,6 +77,15 @@ type CloneFields = { templatePackId: string; packId: string; title: string; byli
 
 const formatLabels = { "claim-the-city": "Claim the City", "hide-and-seek": "Hide & Seek" };
 
+const SEEK_FAMILY_LABELS: Record<HideSeekQuestionFamily, string> = {
+  radar: "Radar",
+  thermometer: "Termometer",
+  matching: "Cocokkan",
+  measuring: "Bandingkan",
+  tentacles: "Tempat Terdekat",
+  photo: "Foto",
+};
+
 const STEP_META: { step: StudioStep; short: string; label: string }[] = [
   { step: 1, short: "1. Draf", label: "Draf & Info" },
   { step: 2, short: "2. Peta", label: "Peta & Lokasi" },
@@ -570,14 +579,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   function renderCloneCard(officialTemplates: StudioTemplate[]): string {
     if (officialTemplates.length === 0) {
-      return `<div class="rb-card" data-testid="clone-template-card"><h3>Kloning dari Templat Resmi</h3><p role="status">Memuat templat resmi…</p></div>`;
+      return `<div class="rb-card" data-testid="clone-template-card"><h3>Mulai dari Templat Resmi</h3><p role="status">Memuat templat resmi…</p></div>`;
     }
     const defaultPackId = format === "claim-the-city" ? "pack-senopati-claim" : "pack-senopati-seek";
     const defaultTitle =
       format === "claim-the-city" ? "Senopati Culinary Claim the City" : "Senopati Coffee Hide & Seek";
     const fields = cloneFields ?? { templatePackId: "", packId: defaultPackId, title: defaultTitle, byline: "Kolektif Selatan", priceIdr: "30000" };
     return `<div class="rb-card" data-testid="clone-template-card">
-      <h3>Kloning dari Templat Resmi</h3>
+      <h3>Mulai dari Templat Resmi</h3>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Templat Resmi</span>
           <select id="st-template">
@@ -695,14 +704,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     const editable = isEditable(active);
     return `<div class="rb-card" data-studio-slot="dry-run-panel">
-      <h3>4. Validasi, Simulasi Dry-Run &amp; Ajukan · ${escapeText(active.pack.meta.title)} (v${active.version})</h3>
+      <h3>4. Validasi, Uji Coba &amp; Ajukan · ${escapeText(active.pack.meta.title)} (v${active.version})</h3>
       <div class="rb-badges">
         <span class="rb-badge">Status: ${escapeText(statusLabel(active.status))}</span>
-        <span class="rb-badge">Hash Geo: ${escapeText(active.snapshot.hash.slice(0, 10))}…</span>
+        <span class="rb-badge">ID Peta: ${escapeText(active.snapshot.hash.slice(0, 10))}…</span>
       </div>
       <div class="rb-actions">
         ${editable ? `<button type="button" class="secondary" data-action="save-draft">Jalankan Validator Otomatis</button>` : ""}
-        <button type="button" class="secondary" data-action="dry-run">Simulasi Dry-Run GPS</button>
+        <button type="button" class="secondary" data-action="dry-run">Uji Coba Cepat</button>
         ${editable ? `<button type="button" class="primary" data-action="submit-draft">Ajukan untuk Tinjauan</button>` : ""}
       </div>
       ${dryRunSummary ? `<p role="status" class="rb-badge">${escapeText(dryRunSummary)}</p>` : ""}
@@ -751,7 +760,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     const issues = validationErrors.length ? `<ul class="rb-errors" aria-label="Kesalahan validasi">${validationErrors.map(error => {
       const target = resolveValidationJump(error.path, format);
       const zone = error.code === "empty-zone" ? /"([^"]+)"/.exec(error.message)?.[1] ?? "" : "";
-      return `<li><div><code>${escapeText(error.code)}</code> (${escapeText(error.path)}): ${escapeText(error.message)}</div>
+      return `<li><div>${escapeText(error.message)}</div>
         <button type="button" class="secondary" data-jump-path="${escapeText(error.path)}" data-jump-zone="${escapeText(zone)}">Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button></li>`;
     }).join("")}</ul>` : "";
 
@@ -1277,7 +1286,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             existing.drawCount = drawCount;
             existing.keepCount = keepCount;
           }
-          await persistDraft(pack, snap, `Pengaturan keluarga ${fam} disimpan.`);
+          await persistDraft(pack, snap, `Pengaturan kategori ${SEEK_FAMILY_LABELS[fam] ?? fam} disimpan.`);
           return;
         }
         if (s3Action === "delete-book-item") {
@@ -1285,14 +1294,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           const existing = pack.investigationBook.families[fam];
           if (existing && idx >= 0) {
             existing.items.splice(idx, 1);
-            await persistDraft(pack, snap, `Item ${fam} dihapus.`);
+            await persistDraft(pack, snap, `Pertanyaan ${SEEK_FAMILY_LABELS[fam] ?? fam} dihapus.`);
           }
           return;
         }
         if (s3Action === "add-book-item") {
           const label = root.querySelector<HTMLInputElement>("#ed-item-label")?.value.trim();
           if (!label) {
-            errorMsg = "Label item petunjuk wajib diisi.";
+            errorMsg = "Nama pertanyaan wajib diisi.";
             render();
             return;
           }
@@ -1318,7 +1327,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             pack.investigationBook.families.photo ??= { enabled: true, drawCount: 1, keepCount: 1, availableInPhases: ["seeking", "endgame"], items: [] };
             pack.investigationBook.families.photo.items.push({ id, label, prompt: extra, phase: "both" });
           }
-          await persistDraft(pack, snap, `Item ${label} ditambahkan ke ${fam}.`);
+          await persistDraft(pack, snap, `Pertanyaan ${label} ditambahkan ke ${SEEK_FAMILY_LABELS[fam] ?? fam}.`);
           return;
         }
         if (s3Action === "add-seek-card") {
@@ -1416,25 +1425,25 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             1,
             Number(root.querySelector<HTMLInputElement>("#ed-cdeck-maxc")?.value ?? 1),
           );
-          await persistDraft(pack, snap, "Pengaturan Dek Taktis disimpan.");
+          await persistDraft(pack, snap, "Pengaturan Dek Kartu disimpan.");
           return;
         }
         if (c3Action === "add-claim-card") {
           const card = buildClaimCardFromForm(root, claimStep3);
           if (!card) {
-            errorMsg = "Judul kartu taktis wajib diisi.";
+            errorMsg = "Judul kartu wajib diisi.";
             render();
             return;
           }
           pack.tacticalDeck.cards.push(card);
-          await persistDraft(pack, snap, `Kartu taktis ${card.title} ditambahkan.`);
+          await persistDraft(pack, snap, `Kartu ${card.title} ditambahkan.`);
           return;
         }
         if (c3Action === "delete-claim-card") {
           const idx = Number(btn.dataset.index ?? -1);
           if (idx >= 0) {
             pack.tacticalDeck.cards.splice(idx, 1);
-            await persistDraft(pack, snap, "Kartu taktis dihapus.");
+            await persistDraft(pack, snap, "Kartu dihapus.");
           }
         }
       })();
@@ -1675,9 +1684,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             },
           );
           if (seeded.ok && seeded.snapshot) {
-            await persistDraft(pack, seeded.snapshot, "GeoSnapshot berhasil di-seed ulang dari fixture.");
+            await persistDraft(pack, seeded.snapshot, "Data peta berhasil dimuat ulang.");
           } else {
-            errorMsg = seeded.error ?? "Gagal seed ulang geo.";
+            errorMsg = seeded.error ?? "Gagal memuat ulang data peta.";
             render();
           }
         }
@@ -1771,7 +1780,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           priceIdr: Number(cloneFields.priceIdr),
         });
         if (res.ok && res.record) {
-          go("editor", res.record, `Draf ${res.record.packId} v${res.record.version} berhasil dikloning.`);
+          go("editor", res.record, `Draf ${res.record.packId} v${res.record.version} siap disunting.`);
         } else {
           errorMsg = res.error === "pack-unavailable" ? "ID paket ini sudah dipakai. Gunakan ID paket lain."
             : res.error === "invalid-metadata" ? "Isi ID paket, judul, dan nama kreator."
@@ -1831,10 +1840,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         if (!active) return;
         if (isClaimStudioPack(active.pack)) {
           const lm = active.pack.geography.landmarks[0];
-          dryRunSummary = `Dry-Run OK: ${active.pack.geography.zones.length} zona, ${active.pack.geography.landmarks.length} landmark (uji ${lm?.name ?? "-"}), ${active.pack.challenges.backupPool.length} tantangan cadangan, siap diajukan.`;
+          dryRunSummary = `Uji coba lolos: ${active.pack.geography.zones.length} zona, ${active.pack.geography.landmarks.length} landmark (${lm?.name ?? "-"}), ${active.pack.challenges.backupPool.length} tantangan cadangan, siap diajukan.`;
         } else {
           const st = active.snapshot.stations[0];
-          dryRunSummary = `Dry-Run OK: ${active.snapshot.stations.length} stasiun aktif, jangkar uji ${st?.name ?? "-"} (radius ${active.pack.geography.hidingZoneRadiusMeters}m), ${active.pack.deck.cards.length} jenis kartu, siap diajukan.`;
+          dryRunSummary = `Uji coba lolos: ${active.snapshot.stations.length} stasiun aktif, titik sembunyi uji ${st?.name ?? "-"} (radius ${active.pack.geography.hidingZoneRadiusMeters} m), ${active.pack.deck.cards.length} jenis kartu, siap diajukan.`;
         }
         render();
         return;
@@ -1875,7 +1884,12 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           reason: "Lokasi sedang perawatan.",
         }, reviewerKey);
         if (res.ok) {
-          statusMsg = `Status diperbarui (${type}).`;
+          statusMsg =
+            type === "publish-version"
+              ? "Paket diterbitkan ke katalog."
+              : type === "pause-version"
+                ? "Penjualan paket dijeda."
+                : "Permintaan revisi dikirim ke kreator.";
           await refresh();
         } else {
           errorMsg = res.error ?? "Gagal memproses tinjauan.";

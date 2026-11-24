@@ -14,7 +14,7 @@ function seatMarkup(state: DuoRoom, seat: DuoSeat) {
   const member = state.seats[seat];
   const status = !member.joined ? "Menunggu teman" : member.ready ? "Siap" : "Belum siap";
   return `<li>
-    <div><strong>${player[seat]}</strong><small>${seat === "host" ? "Tuan rumah" : "Tamu"}${seat === state.seat ? " · Kamu" : ""}</small></div>
+    <div><strong>${player[seat]}</strong><small>${seat === "host" ? "Host" : "Tamu"}${seat === state.seat ? " · Kamu" : ""}</small></div>
     <span class="duo-seat-status" data-ready="${member.ready}">${status}</span>
   </li>`;
 }
@@ -56,7 +56,7 @@ export function lobby(
             ? "Hitung mundur dimulai setelah kamu siap dan menekan Mulai."
             : state.seat === "host"
               ? "Hitung mundur dimulai setelah kedua pemain siap dan kamu menekan Mulai."
-              : "Tuan rumah memulai ronde setelah kedua pemain siap."}</p>
+              : "Host memulai ronde setelah kedua pemain siap."}</p>
         ${feedbackMarkup(feedback)}
         <div class="solo-actions">
           ${allReady && state.seat === "host" ? action("Mulai", "start", "primary", busy || !verified) : ""}
@@ -163,7 +163,7 @@ export function result(state: DuoRoom, busy: boolean) {
   const title = canceled ? "Ruang dibatalkan" : winner ? `Pemenang: ${player[winner]}` : "Seri";
   const ending = reason === "forfeit" ? `${winner === "host" ? player.guest : player.host} keluar dari ronde.`
     : reason === "all-claimed" ? "Semua landmark sudah diklaim."
-      : reason === "time" ? "Waktu habis." : "Tuan rumah menutup ruang sebelum ronde dimulai.";
+      : reason === "time" ? "Waktu habis." : "Host menutup ruang sebelum ronde dimulai.";
   const tiebreak = canceled || reason === "forfeit" ? "" : !winner
     ? " Jumlah zona dan landmark kedua pemain sama."
     : controls("host") === controls("guest")

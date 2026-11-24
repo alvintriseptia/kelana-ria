@@ -330,9 +330,9 @@ export function mountRulebookRecap(
           <span class="recap-badge ${isShared ? "recap-badge-public" : "recap-badge-private"}">${isShared ? "Publik" : "Privat"}</span>
         </div>
         <p>${isShared
-          ? `Ringkasan ini tampil di halaman edisi v${recap.editionVersion} dan bisa dibuka lewat tautan publik. Jika ditarik, salinan privatmu tetap tersimpan.`
-          : `Ringkasan ini privat secara bawaan. Periksa pratinjau publik dan pilih alias sebelum membagikannya ke halaman edisi v${recap.editionVersion}.`}</p>
-        <p class="recap-privacy-note">Foto bukti, titik sembunyi, detail petunjuk, kode ruang, dan kredensial tidak pernah dibagikan.</p>
+          ? `Ringkasan ini tampil di halaman edisi v${recap.editionVersion} dan bisa dibuka lewat tautan publik. Jika ditarik, salinan privat tetap aman di Riwayat.`
+          : `Ringkasan ini privat. Cek pratinjau dan atur nama alias dulu sebelum dibagikan ke halaman edisi v${recap.editionVersion}.`}</p>
+        <p class="recap-privacy-note">Foto bukti, titik sembunyi, detail petunjuk, kode ruang, dan data akun tidak pernah ikut dibagikan.</p>
         ${isShared ? `<div class="recap-shared-bar">
           <a class="recap-public-link" href="${escapeText(publicPath)}" data-testid="public-recap-link">Buka ringkasan publik ›</a>
           <button type="button" class="secondary" data-recap-action="copy-share" ${busy ? "disabled" : ""}>Salin tautan</button>

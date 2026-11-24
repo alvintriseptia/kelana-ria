@@ -209,13 +209,13 @@ try {
       await clickAndWaitPost(host.page, 'button[data-action="lock-anchor"]');
       now += (board === "jakarta-wide" ? 46 : 26) * 60_000;
       await refreshSeekRoom(guest.page);
-      await guest.page.waitForFunction(() => document.body.textContent.includes("Perburuan Makro"));
+      await guest.page.waitForFunction(() => document.body.textContent.includes("Fase Cari"));
 
       await Promise.all([
         host.page.reload({ waitUntil: "networkidle" }),
         guest.page.reload({ waitUntil: "networkidle" }),
       ]);
-      await guest.page.waitForFunction(() => document.body.textContent.includes("Perburuan Makro"));
+      await guest.page.waitForFunction(() => document.body.textContent.includes("Fase Cari"));
 
       await guest.page.locator("[data-map-ready=true]").waitFor();
       await guest.page.screenshot({ path: join(results, `release-${board}-seek-map.png`) });

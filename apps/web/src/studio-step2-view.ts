@@ -329,9 +329,9 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
         <label class="rb-field"><span>Koridor / Area</span><input id="ed-st-attr-corridor" value="${escapeText(st.attributes?.corridor ?? "")}" placeholder="Mis. Selatan" ${dis}></label>
         <label class="rb-field"><span>Jam Publik</span><input id="ed-st-hours" value="${escapeText(st.publicHours ?? "05:00-23:00")}" ${dis}></label>
         <label class="rb-field"><span>Estimasi Tempuh (menit)</span><input id="ed-st-travel" type="number" value="${Math.round((st.estimatedTravelFromStartMs ?? 600_000) / 60_000)}" ${dis}></label>
-        <label class="rb-field"><span>Layak Jangkar Sembunyi</span>
+        <label class="rb-field"><span>Bisa Jadi Titik Sembunyi</span>
           <select id="ed-st-anchor" ${dis}>
-            <option value="true" ${st.eligibleHidingAnchor ? "selected" : ""}>Ya (Jangkar)</option>
+            <option value="true" ${st.eligibleHidingAnchor ? "selected" : ""}>Ya</option>
             <option value="false" ${!st.eligibleHidingAnchor ? "selected" : ""}>Tidak</option>
           </select>
         </label>
@@ -498,7 +498,7 @@ function renderBuiltInTransitPanel(
              }
            </ul>${renderListControls(page, matching.length)}`
     }
-    ${editable && !isClaimStudioPack(record.pack) ? '<button type="button" class="secondary" data-map-action="seed-geo">Seed Ulang Geo</button>' : ""}
+    ${editable && !isClaimStudioPack(record.pack) ? '<button type="button" class="secondary" data-map-action="seed-geo">Muat Ulang Data Peta</button>' : ""}
   </div>`;
 }
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { assertCleanUiCopy } from './copy-guard.mjs';
 import { checkChooserTraffic, guardChooser } from './profile.mjs';
 
 async function tabTo(page, locator) {
@@ -38,6 +39,7 @@ async function verifySeekPractice(page, results, family, timing, responseTime) {
   assert.match(await dialog.innerText(), timing);
   const noOverflow = () => dialog.evaluate(el => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= innerWidth);
   assert.ok(await noOverflow());
+  await assertCleanUiCopy(page, `seek practice hide (${family})`);
   await dialog.getByRole('button', { name: 'Mulai pencarian latihan' }).click();
   const preview = dialog.getByRole('button', { name: 'Pratinjau ' + family });
   await preview.click();
@@ -76,15 +78,16 @@ async function verifySeekPractice(page, results, family, timing, responseTime) {
     assert.ok(await noOverflow());
     await page.screenshot({ path: join(results, 'practice-card-choice.png') });
     await confirm.click();
-    const hand = dialog.getByRole('region', { name: 'Tangan latihan' });
+    const hand = dialog.getByRole('region', { name: 'Kartu latihan' });
     assert.deepEqual(await hand.locator('strong').allTextContents(), [title]);
   } else {
-    const hand = dialog.getByRole('region', { name: 'Tangan latihan' });
+    const hand = dialog.getByRole('region', { name: 'Kartu latihan' });
     await hand.waitFor();
     assert.equal(await dialog.getByRole('button', { name: /Simpan.*kartu/ }).count(), 0);
     assert.equal(await hand.locator('strong').count(), 1);
     assert.equal(await hand.locator('.ep-card-face').evaluate(el => getComputedStyle(el).animationName), 'none');
   }
+  await assertCleanUiCopy(page, `seek practice card (${family})`);
   await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'hidden' });
   assert.ok(await practice.evaluate(el => el === document.activeElement), 'Practice should restore keyboard focus');
@@ -99,6 +102,7 @@ async function verifyClaimPractice(page, results, mode, hasDeck = true) {
   assert.match(await dialog.innerText(), /90 menit/);
   await dialog.getByRole('button', { name: 'Pilih landmark latihan' }).click();
   assert.match(await dialog.innerText(), /radius 100 meter/);
+  await assertCleanUiCopy(page, `claim practice checkin (${mode})`);
   const check = dialog.getByRole('button', { name: 'Check-in latihan' });
   await check.click();
   const toast = dialog.getByRole('alert');
@@ -120,9 +124,10 @@ async function verifyClaimPractice(page, results, mode, hasDeck = true) {
   if (hasDeck) {
     await cardLesson.click();
     await dialog.getByRole('heading', { name: 'Kartu di tangan' }).waitFor();
-    assert.match(await dialog.innerText(), /Kamu mengunci landmark dan mendapat satu kartu taktis/);
-    const hand = dialog.getByRole('region', { name: 'Tangan latihan' });
+    assert.match(await dialog.innerText(), /Kamu mengunci landmark dan dapat 1 kartu/);
+    const hand = dialog.getByRole('region', { name: 'Kartu latihan' });
     assert.deepEqual(await hand.locator('strong').allTextContents(), ['Intip Tantangan']);
+    await assertCleanUiCopy(page, `claim practice card (${mode})`);
     assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth));
     if (mode === 'solo') await page.screenshot({ path: join(results, 'practice-claim-card.png') });
   } else assert.equal(await cardLesson.count(), 0);
@@ -183,6 +188,7 @@ export async function exerciseChooser(context, origin, dist, results) {
     assert.ok(await page.getByRole('button', { name: 'Studio Kreator', exact: true }).isVisible());
     await writeFile(join(results, 'chooser.aria.txt'), await page.locator('body').ariaSnapshot());
     await confirmCredits(page, results);
+    await assertCleanUiCopy(page, 'home catalog chooser');
 
     await tabTo(page, seekEdition);
     await page.keyboard.press('Enter');

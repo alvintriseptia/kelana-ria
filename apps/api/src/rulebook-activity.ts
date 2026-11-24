@@ -102,7 +102,7 @@ export function createRoomActivity() {
     for (const seat of seats) {
       const count = match.deck.handsBySeat[seat.seatId]?.length ?? 0;
       if (phase === "active" && count > (claimHands.get(seat.seatId) ?? 0)) {
-        publish([seat], { kind: "draw", text: "Kartu taktis masuk ke tanganmu.", panel: "cards", at: now });
+        publish([seat], { kind: "draw", text: "Kartu baru masuk ke tanganmu.", panel: "cards", at: now });
       }
       claimHands.set(seat.seatId, count);
     }

@@ -78,7 +78,7 @@ export function resolveValidationJump(path: string, format: RulebookFormat): Val
     return { step: 2, label: "Tahap 2 · Tantangan Lokasi", step2Tab: "primary", focusSelector: "#ed-chal-target" };
   }
   if (p.includes("deck") || p.includes("card")) {
-    return { step: 3, label: "Tahap 3 · Dek Taktis", claimSubTab: "deck" };
+    return { step: 3, label: "Tahap 3 · Dek Kartu", claimSubTab: "deck" };
   }
   return { step: 3, label: "Tahap 3 · Sesi & Skor", claimSubTab: "session", focusSelector: "#ed-claim-duration" };
 }
@@ -101,7 +101,7 @@ export function evaluateSeekDryRunClue(
 ): string {
   const anchors = record.snapshot.stations.filter((s) => s.eligibleHidingAnchor);
   const hiderSt = anchors.find((s) => s.id === state.seekAnchorId) ?? anchors[0];
-  if (!hiderSt) return "Tidak ada stasiun jangkar yang valid.";
+  if (!hiderSt) return "Belum ada stasiun yang bisa jadi titik sembunyi.";
 
   const seekerCoord: GeoCoordinate =
     state.seekSeekerPosId === "start"
@@ -132,25 +132,25 @@ export function evaluateSeekDryRunClue(
     const key = item?.attributeKey ?? "kecamatan";
     const hVal = hiderSt.attributes[key] ?? "-";
     const sVal = seekerSt.attributes[key] ?? "-";
-    return `Hasil Uji Matching (${item?.label ?? key}): ${hVal === sVal ? "COCOK (Ya)" : "BERBEDA (Tidak)"} — Penyembunyi: ${hVal}, Pencari: ${sVal}.`;
+    return `Hasil Uji Cocokkan (${item?.label ?? key}): ${hVal === sVal ? "COCOK (Ya)" : "BERBEDA (Tidak)"} — Penyembunyi: ${hVal}, Pencari: ${sVal}.`;
   }
   if (family === "measuring") {
     const item = pack.investigationBook.families.measuring?.items.find((i) => i.id === itemId);
     const pois = record.snapshot.pois.filter((p) => !item?.poiCategory || p.category === item.poiCategory);
-    if (pois.length === 0) return `Hasil Uji Measuring: Belum ada POI kategori ${item?.poiCategory ?? "-"}.`;
+    if (pois.length === 0) return `Hasil Uji Bandingkan: Belum ada lokasi kategori ${item?.poiCategory ?? "-"}.`;
     const hDist = Math.min(...pois.map((p) => haversineMeters(hiderSt, p)));
     const sDist = Math.min(...pois.map((p) => haversineMeters(seekerCoord, p)));
-    return `Hasil Uji Measuring (${item?.label ?? "POI"}): Penyembunyi ${hDist < sDist ? "LEBIH DEKAT" : "LEBIH JAUH"} ke POI (${hDist} m vs ${sDist} m).`;
+    return `Hasil Uji Bandingkan (${item?.label ?? "Lokasi"}): Penyembunyi ${hDist < sDist ? "LEBIH DEKAT" : "LEBIH JAUH"} ke lokasi (${hDist} m vs ${sDist} m).`;
   }
   if (family === "tentacles") {
     const item = pack.investigationBook.families.tentacles?.items.find((i) => i.id === itemId);
     const r = item?.radiusMeters ?? 1500;
     const pois = record.snapshot.pois.filter((p) => p.category === item?.poiCategory && haversineMeters(seekerCoord, p) <= r);
-    if (dist > r || pois.length === 0) return `Hasil Uji Tentacles (${item?.label ?? "POI"}): Di luar jangkauan ${r} m (${dist} m).`;
+    if (dist > r || pois.length === 0) return `Hasil Uji Tempat Terdekat (${item?.label ?? "Lokasi"}): Di luar jangkauan ${r} m (${dist} m).`;
     const nearest = pois.reduce((best, p) =>
       haversineMeters(hiderSt, p) < haversineMeters(hiderSt, best) ? p : best,
     );
-    return `Hasil Uji Tentacles: POI terdekat dari penyembunyi adalah ${nearest.name} (${haversineMeters(hiderSt, nearest)} m).`;
+    return `Hasil Uji Tempat Terdekat: Lokasi terdekat dari penyembunyi adalah ${nearest.name} (${haversineMeters(hiderSt, nearest)} m).`;
   }
   return `Hasil Uji Foto: Penyembunyi mengirim foto dari sekitar ${hiderSt.name}.`;
 }
@@ -221,7 +221,7 @@ function renderDryClaimLeaf(leaf: ClaimLeafChallengePayload, state: DryRunState)
   if (leaf.primitive === "observation_mcq") return `<p>${escapeText(leaf.prompt)}</p>
     <div class="rb-list" role="radiogroup" aria-label="Pilihan jawaban">${leaf.choices.map((choice, index) =>
       `<label><input type="radio" name="dry-mcq" value="${escapeText(choice.id)}" ${index === 0 ? "checked" : ""}> ${escapeText(choice.label)}</label>`
-    ).join("")}</div><button type="button" class="primary" data-dry-action="submit-claim-test">Uji Jawaban MCQ</button>`;
+    ).join("")}</div><button type="button" class="primary" data-dry-action="submit-claim-test">Uji Jawaban</button>`;
   if (leaf.primitive === "observation_input" || (leaf.primitive === "timed_micro_task" && leaf.taskType === "observation_input")) {
     return `<p>${escapeText(leaf.prompt)}</p>
       <label class="rb-field"><span>Jawaban uji</span><input id="dry-input-val" placeholder="Masukkan jawaban uji"></label>
@@ -267,7 +267,7 @@ export function renderInteractiveDryRunPanel(
                 (l) => `<option value="${escapeText(l.id)}" ${state.claimLandmarkId === l.id ? "selected" : ""}>${escapeText(l.name)}</option>`,
               )
               .join("")}
-            <option value="backup" ${state.claimLandmarkId === "backup" ? "selected" : ""}>Backup Pool</option>
+            <option value="backup" ${state.claimLandmarkId === "backup" ? "selected" : ""}>Tantangan Cadangan</option>
           </select>
         </label>
         <label class="rb-field"><span>Varian untuk diuji</span><select id="dry-claim-variant">
@@ -291,7 +291,7 @@ export function renderInteractiveDryRunPanel(
                   ? `<p>Tema: ${escapeText(chal.payload.theme)}</p>
                      <div class="rb-actions">
                        <button type="button" class="secondary" data-dry-action="dry-shot-tier" data-tier="standard">Uji Standar</button>
-                       <button type="button" class="primary" data-dry-action="dry-shot-tier" data-tier="bold">Uji Bold</button>
+                       <button type="button" class="primary" data-dry-action="dry-shot-tier" data-tier="bold">Uji Ekstra</button>
                      </div>`
                   : leaf && !state.claimTestDone ? renderDryClaimLeaf(leaf, state) : ""
               }
@@ -311,11 +311,19 @@ export function renderInteractiveDryRunPanel(
   if (!state.seekAnchorId && anchors[0]) state.seekAnchorId = anchors[0].id;
   if (!state.seekSeekerPosId) state.seekSeekerPosId = "start";
 
+  const familyLabels: Record<string, string> = {
+    radar: "Radar",
+    thermometer: "Termometer",
+    matching: "Cocokkan",
+    measuring: "Bandingkan",
+    tentacles: "Tempat Terdekat",
+    photo: "Foto",
+  };
   const clueOptions: { key: string; label: string }[] = [];
   for (const [fam, cfg] of Object.entries(pack.investigationBook.families)) {
     if (!cfg?.enabled) continue;
     for (const item of cfg.items) {
-      clueOptions.push({ key: `${fam}:${item.id}`, label: `${fam.toUpperCase()} · ${item.label}` });
+      clueOptions.push({ key: `${fam}:${item.id}`, label: `${familyLabels[fam] ?? fam} · ${item.label}` });
     }
   }
   if (!state.seekClueKey && clueOptions[0]) state.seekClueKey = clueOptions[0].key;
@@ -324,19 +332,19 @@ export function renderInteractiveDryRunPanel(
   const curseCount = pack.deck.cards.filter((c) => c.category === "curse").reduce((s, c) => s + c.copies, 0);
 
   return `<div class="rb-card" data-testid="interactive-dry-run">
-    <h4>Simulasi Dry-Run Interaktif (Hide &amp; Seek)</h4>
+    <h4>Uji Petunjuk (Hide &amp; Seek)</h4>
     <div class="rb-badges">
-      <span class="rb-badge">${anchors.length} jangkar aktif</span>
+      <span class="rb-badge">${anchors.length} titik sembunyi aktif</span>
       <span class="rb-badge">${totalCards} total kartu (${curseCount} kutukan)</span>
       <span class="rb-badge">${clueOptions.length} petunjuk aktif</span>
     </div>
     <div class="rb-grid-2">
-      <label class="rb-field"><span>Jangkar Sembunyi Uji (Hider)</span>
+      <label class="rb-field"><span>Titik Sembunyi Uji</span>
         <select id="dry-seek-anchor">
           ${anchors.map((s) => `<option value="${escapeText(s.id)}" ${state.seekAnchorId === s.id ? "selected" : ""}>${escapeText(s.name)}</option>`).join("")}
         </select>
       </label>
-      <label class="rb-field"><span>Posisi Pencari Uji (Seeker)</span>
+      <label class="rb-field"><span>Posisi Pencari Uji</span>
         <select id="dry-seek-pos">
           <option value="start" ${state.seekSeekerPosId === "start" ? "selected" : ""}>${escapeText(record.snapshot.startPoint.name)} (Titik Awal)</option>
           ${record.snapshot.stations.map((s) => `<option value="${escapeText(s.id)}" ${state.seekSeekerPosId === s.id ? "selected" : ""}>${escapeText(s.name)}</option>`).join("")}
