@@ -16,7 +16,7 @@ const errors: Record<string, string> = {
   "room-full": "Ruang ini sudah penuh atau ronde telah ditutup. Minta undangan baru.",
   "room-required": "Kursi untuk perangkat ini belum tersedia. Gabung dengan kode undangan.",
   "room-phase-changed": "Status ronde berubah. Periksa status terbaru sebelum memilih keluar lagi.",
-  "host-only": "Hanya tuan rumah yang bisa memulai ronde.",
+  "host-only": "Hanya Host yang bisa memulai ronde.",
   "players-not-ready": "Kedua pemain harus siap sebelum ronde dimulai.",
   "start-unverified": "Verifikasi titik awal belum berlaku. Check-in di titik awal lalu nyatakan siap.",
   "round-finished": "Ronde sudah selesai. Hasil terakhir sudah dimuat.",
@@ -32,7 +32,7 @@ const errors: Record<string, string> = {
   "inaccurate-fix": "Lokasi kurang akurat. Cari area terbuka lalu coba lagi.",
   "outside-radius": "Kamu masih terlalu jauh dari titik ini. Dekati titiknya, lalu coba lagi.",
   "invalid-request": "Permintaan belum berhasil. Periksa pilihanmu dan coba lagi.",
-  "pass-required": "Ruang berbayar ini menunggu tuan rumah membuka sesi dengan pass yang lunas.",
+  "pass-required": "Ruang berbayar ini menunggu Host membuka sesi dengan pass yang lunas.",
   "pass-already-bound": "Pass sesi ini sudah terikat ke ruang lain dan tidak dapat digunakan ulang.",
   "invalid-pass": "Pass sesi tidak valid atau belum lunas.",
 };

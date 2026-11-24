@@ -15,9 +15,9 @@ export type CardPreviewChip = {
 
 const VARIANT_META: Record<CardPreviewVariant, { tag: string }> = {
   time_bonus: { tag: "BONUS" },
-  powerup: { tag: "POWER UP" },
+  powerup: { tag: "POWERUP" },
   curse: { tag: "KUTUKAN" },
-  tactical: { tag: "TAKTIS" },
+  tactical: { tag: "KARTU" },
 };
 
 const QUESTION_META: Record<
@@ -33,15 +33,15 @@ const QUESTION_META: Record<
     svg: `<svg viewBox="0 0 64 40" aria-hidden="true"><rect width="64" height="40" rx="6" fill="#fdf4f6"/><line x1="14" y1="22" x2="50" y2="22" stroke="#9f214b" stroke-width="2.5" stroke-dasharray="4 2"/><circle cx="14" cy="22" r="5" fill="#153d34"/><circle cx="50" cy="22" r="5" fill="#9f214b"/></svg>`,
   },
   matching: {
-    short: "Matching",
+    short: "Cocokkan",
     svg: `<svg viewBox="0 0 64 40" aria-hidden="true"><rect width="64" height="40" rx="6" fill="#eef4fa"/><rect x="8" y="11" width="18" height="18" rx="4" fill="#fff" stroke="#255d9f" stroke-width="1.8"/><rect x="38" y="11" width="18" height="18" rx="4" fill="#fff" stroke="#0f766e" stroke-width="1.8"/><path d="M26 20h12" stroke="#153d34" stroke-width="2"/></svg>`,
   },
   measuring: {
-    short: "Ukur POI",
+    short: "Bandingkan",
     svg: `<svg viewBox="0 0 64 40" aria-hidden="true"><rect width="64" height="40" rx="6" fill="#fef9ed"/><rect x="10" y="23" width="44" height="8" rx="2" fill="#ffce55" stroke="#153d34" stroke-width="1.4"/><path d="M20 23v4M32 23v5M44 23v4" stroke="#153d34" stroke-width="1.4"/><circle cx="32" cy="12" r="5" fill="#153d34"/></svg>`,
   },
   tentacles: {
-    short: "Tentacles",
+    short: "Tempat Terdekat",
     svg: `<svg viewBox="0 0 64 40" aria-hidden="true"><rect width="64" height="40" rx="6" fill="#f4f0fa"/><circle cx="32" cy="20" r="14" fill="#6745a8" fill-opacity=".12" stroke="#6745a8" stroke-dasharray="2 2"/><path d="M32 20L19 12M32 20L46 13M32 20L43 30" stroke="#6745a8" stroke-width="1.6"/><circle cx="32" cy="20" r="3.5" fill="#6745a8"/></svg>`,
   },
   photo: {
@@ -75,8 +75,8 @@ const PRIMITIVE_META: Record<
     svg: `<svg viewBox="0 0 48 32" aria-hidden="true"><rect width="48" height="32" rx="6" fill="#fdf4f6"/><circle cx="24" cy="17" r="9.5" fill="#fff" stroke="#9f214b" stroke-width="1.8"/><path d="M24 12v5l3.5 2M20 5h8" stroke="#9f214b" stroke-width="1.8" stroke-linecap="round"/></svg>`,
   },
   call_your_shot: {
-    short: "Call Your Shot",
-    badge: "Bold +1",
+    short: "Standar / Ekstra",
+    badge: "Ekstra +1",
     svg: `<svg viewBox="0 0 48 32" aria-hidden="true"><rect width="48" height="32" rx="6" fill="#fef4d6"/><path d="M26 5L14 18h8l-2 9 14-14h-8z" fill="#ffce55" stroke="#153d34" stroke-width="1.5" stroke-linejoin="round"/></svg>`,
   },
   multi_step: {

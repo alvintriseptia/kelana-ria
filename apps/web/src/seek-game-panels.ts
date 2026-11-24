@@ -135,7 +135,7 @@ export function incomingQuestion(
 
 const categories: Record<SeekCardInstance["category"], string> = {
   time_bonus: "Bonus waktu",
-  powerup: "Kemampuan",
+  powerup: "Powerup",
   curse: "Kutukan",
 };
 

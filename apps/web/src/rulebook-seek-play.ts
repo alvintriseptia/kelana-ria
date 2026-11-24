@@ -98,9 +98,9 @@ type PendingSeekAction = {
 
 const phaseLabels: Record<SeekEngineRoomView["phase"], string> = {
   lobby: "Ruang Tunggu",
-  head_start: "Waktu Sembunyi (Head Start)",
-  seeking: "Perburuan Makro",
-  endgame: "ENDGAME (Zona Terkunci)",
+  head_start: "Waktu Sembunyi",
+  seeking: "Fase Cari",
+  endgame: "Endgame (Zona Terkunci)",
   regroup: "Berkumpul Kembali",
   finished: "Selesai",
   void: "Batal",
@@ -111,11 +111,49 @@ const phaseLabels: Record<SeekEngineRoomView["phase"], string> = {
 const familyLabels: Record<HideSeekQuestionFamily, string> = {
   radar: "Radar",
   thermometer: "Termometer",
-  matching: "Kecocokan (Matching)",
-  measuring: "Pengukuran (Measuring)",
-  tentacles: "Tentacles (POI Terdekat)",
+  matching: "Cocokkan",
+  measuring: "Bandingkan",
+  tentacles: "Tempat Terdekat",
   photo: "Foto",
 };
+
+const questionStatusLabels: Record<string, string> = {
+  pending: "Menunggu jawaban",
+  answered: "Dijawab",
+  cannot_answer_endgame: "Tidak bisa dijawab",
+  timeout: "Waktu habis",
+  vetoed: "Dibatalkan (Veto)",
+  closed: "Ditutup",
+};
+
+function questionStatusLabel(status: string): string {
+  return questionStatusLabels[status] ?? status;
+}
+
+const curseBlockerLabels: Record<string, string> = {
+  block_questions: "Blokir pertanyaan",
+  block_transit: "Blokir transit",
+  block_both: "Blokir pertanyaan & transit",
+  block_steals: "Blokir rebut",
+  block_claims: "Blokir klaim",
+  none: "Tanpa blokir",
+};
+
+function curseBlockerLabel(blockerType: string): string {
+  return curseBlockerLabels[blockerType] ?? blockerType;
+}
+
+const curseClearLabels: Record<string, string> = {
+  timer: "Tunggu timer",
+  next_n_questions: "Jawab beberapa pertanyaan",
+  gps_detour: "Check-in lokasi",
+  photo_challenge: "Bukti foto",
+  honor_task: "Tugas langsung",
+};
+
+function curseClearLabel(clearType: string): string {
+  return curseClearLabels[clearType] ?? clearType;
+}
 
 function distanceMeters(start: GeoCoordinate, end: GeoCoordinate): number {
   const radians = Math.PI / 180;
@@ -495,7 +533,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             type: "create-free-room",
             packId: target.packId,
             version: target.version,
-            hostName: "Tuan Rumah",
+            hostName: "Host",
             requestId: pending.id,
           },
         });
@@ -836,10 +874,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   }
 
   function renderCatalog(): string {
-    return `<section class="rb-shell" aria-label="Katalog Rulebook Hide & Seek">
+    return `<section class="rb-shell" aria-label="Katalog Hide & Seek">
       <div class="rb-card">
-        <h2>Hide &amp; Seek · Rulebook Packs (2–6 Pemain)</h2>
-        <p>Pilih edisi resmi gratis atau paket kreator komunitas berbasis RulebookPack. Semua aturan, zona sembunyi, buku petunjuk, dan dek kartu dimuat dari data paket.</p>
+        <h2>Hide &amp; Seek (2–6 Pemain)</h2>
+        <p>Pilih edisi resmi gratis atau paket buatan komunitas. Sembunyi di stasiun, kumpulkan petunjuk, dan mainkan kartu.</p>
         <div class="rb-actions">
           <button type="button" class="secondary" data-nav="studio">Buka Studio Kreator</button>
           <button type="button" class="secondary" data-nav="back">Kembali ke Beranda</button>
@@ -872,17 +910,17 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             </div>
             <h3>${escapeText(item.title)} <small>v${item.version}</small></h3>
             <p>${escapeText(item.summary)}</p>
-            <p><small>Oleh ${escapeText(item.byline)} · Mulai: ${escapeText(item.startName)} · Head start ${item.headStartMinutes}m / Cari ${item.searchLimitMinutes}m / Regroup ${item.regroupMinutes}m</small></p>
+            <p><small>Oleh ${escapeText(item.byline)} · Mulai: ${escapeText(item.startName)} · Sembunyi ${item.headStartMinutes} mnt · Cari ${item.searchLimitMinutes} mnt · Kumpul ${item.regroupMinutes} mnt</small></p>
             <p><small>Dek: ${item.deckSummary.totalCards} kartu (${item.deckSummary.timeBonuses} bonus, ${item.deckSummary.powerups} powerup, ${item.deckSummary.curses} kutukan · batas tangan ${item.deckSummary.baseHandLimit})</small></p>
             <div class="rb-badges">
-              ${item.questionFamilies.map((f) => `<span class="rb-badge">${escapeText(f.family)} (${f.itemCount} · ${f.drawCount}/${f.keepCount})</span>`).join("")}
+              ${item.questionFamilies.map((f) => `<span class="rb-badge">${escapeText(questionNames[f.family as HideSeekQuestionFamily] ?? f.family)} (${f.itemCount} · Ambil ${f.drawCount}/${f.keepCount})</span>`).join("")}
             </div>
             <div class="rb-actions">
               ${
                 item.priceIdr === 0
                   ? `<button type="button" class="primary" data-action="start-free" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Buat Ruang Gratis</button>`
                   : allowSandboxCheckout
-                    ? `<button type="button" class="primary" data-action="buy-pack" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Beli Pass Sesi (${escapeText(idr(item.priceIdr))} · Test Payment)</button>`
+                    ? `<button type="button" class="primary" data-action="buy-pack" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Beli Pass Sesi (${escapeText(idr(item.priceIdr))} · Uji Pembayaran)</button>`
                     : "<p>Edisi berbayar belum tersedia pada uji publik ini.</p>"
               }
             </div>
@@ -895,7 +933,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       ${
         activeOrderId
           ? `<div class="rb-card">
-              <h3>Pelunasan Midtrans Sandbox (Test Payment)</h3>
+              <h3>Pembayaran Uji Midtrans</h3>
               <p>Order <code>${escapeText(activeOrderId)}</code> menunggu verifikasi pelunasan.</p>
               <button type="button" class="primary" data-action="settle-order" data-order="${escapeText(activeOrderId)}" ${busy ? "disabled" : ""}>Simulasikan Pelunasan Midtrans</button>
             </div>`
@@ -949,7 +987,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             <span class="rb-badge">Kode: ${escapeText(room.code)}</span>
             <span class="rb-badge">${escapeText(phaseLabels[room.phase])}</span>
             <span class="rb-badge">Giliran ${room.turnNumber}/${room.totalPlannedTurns}</span>
-            <span class="rb-badge">Peran: ${escapeText(isHider ? "Penyembunyi (Hider)" : room.role === "seeker" ? "Pencari (Seeker)" : "Lobi")}</span>
+            <span class="rb-badge">Peran: ${escapeText(isHider ? "Penyembunyi" : room.role === "seeker" ? "Pencari" : "Lobi")}</span>
             ${payload.qa ? '<span class="rb-badge sg-qa-badge" data-testid="seek-qa-badge">Ruang QA</span>' : ""}
             ${pass.paid ? '<span class="rb-badge rb-badge-paid">Pass Berbayar</span>' : '<span class="rb-badge">Resmi Gratis</span>'}
           </div>
@@ -975,7 +1013,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               <ul class="rb-list">
                 ${room.seats
                   .map(
-                    (s) => `<li><strong>${escapeText(s.name)}</strong> (${escapeText(s.seatId)}${s.isHost ? " · Host" : ""}) · ${s.ready ? "Siap" : "Belum siap"}</li>`,
+                    (s) => `<li><strong>${escapeText(s.name)}</strong>${s.isHost ? " · Host" : ""} · ${s.ready ? "Siap" : "Belum siap"}</li>`,
                   )
                   .join("")}
               </ul>
@@ -1016,7 +1054,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
                   .map(
                     (q) => `<li>
                       <strong>${escapeText(familyLabels[q.family])} · ${escapeText(q.label)}</strong>
-                      <small>Status: ${escapeText(q.status)}${q.answerLabel ? ` · Jawaban: ${escapeText(q.answerLabel)}` : ""}</small>
+                      <small>${escapeText(questionStatusLabel(q.status))}${q.answerLabel ? ` · ${escapeText(answerText(q.answerLabel))}` : ""}</small>
                     </li>`,
                   )
                   .join("")
@@ -1041,17 +1079,17 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
                     return `<li>
                       <span class="rb-badge rb-badge-danger">${escapeText(c.title)}</span>
                       <p>${escapeText(c.description)}</p>
-                      <small>Blokir: ${escapeText(c.blockerType)} · Kondisi hapus: ${escapeText(c.clearCondition.type)}</small>
+                      <small>${escapeText(curseBlockerLabel(c.blockerType))} · Cara lepas: ${escapeText(curseClearLabel(c.clearCondition.type))}</small>
                       ${
                         c.pendingPhoto
-                          ? `<p><small>Foto bukti terkirim · Auto-setuju dalam ${autoApproveSec} dtk</small></p>`
+                          ? `<p><small>Foto bukti terkirim · Otomatis disetujui dalam ${autoApproveSec} dtk</small></p>`
                           : ""
                       }
                       ${slotAlert("curse-action", c.curseInstanceId)}
                       <div class="rb-actions">
                         ${
                           !isHider && c.clearCondition.type === "gps_detour"
-                            ? `<button type="button" class="primary" data-action="clear-curse-gps" data-curse="${escapeText(c.curseInstanceId)}">Check-in Detour GPS</button>`
+                            ? `<button type="button" class="primary" data-action="clear-curse-gps" data-curse="${escapeText(c.curseInstanceId)}">Check-in Lokasi</button>`
                             : ""
                         }
                         ${
@@ -1066,7 +1104,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
                         }
                         ${
                           !isHider && penalty && penalty.type === "skip_penalty_minutes"
-                            ? `<button type="button" class="secondary" data-action="buyout-curse" data-curse="${escapeText(c.curseInstanceId)}">Buyout (+${penalty.penaltyMinutes} m)</button>`
+                            ? `<button type="button" class="secondary" data-action="buyout-curse" data-curse="${escapeText(c.curseInstanceId)}">Lewati (+${penalty.penaltyMinutes} mnt)</button>`
                             : ""
                         }
                         ${
@@ -1196,7 +1234,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         + slotAlert("answer-field")
         + `<p>Jawab dalam <span data-deadline="${pending.deadline}"></span></p>`;
     }
-    return `<h2 id="sg-panel-title" tabindex="-1">Tangan Penyembunyi (${hand.length}/${currentHandLimit})</h2>
+    return `<h2 id="sg-panel-title" tabindex="-1">Kartu di Tangan (${hand.length}/${currentHandLimit})</h2>
       ${hand.length === 0 ? "<p>Jawab pertanyaan untuk mengambil kartu.</p>" : `<div class="sg-reward-grid" data-count="${hand.length}">
         ${hand.map(card => {
           const primitive = card.effect.primitive;
@@ -1637,7 +1675,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               type: "create-free-room",
               packId,
               version,
-              hostName: "Tuan Rumah",
+              hostName: "Host",
               requestId: pending.id,
               ...(isQa ? { qa: true } : {}),
             },
@@ -1682,7 +1720,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           clearPendingAction(persistKey);
           if (ok && res.ok && res.order) {
             activeOrderId = res.order.orderId;
-            statusMsg = `Order ${activeOrderId} dibuat (Test Payment).`;
+            statusMsg = `Order ${activeOrderId} dibuat (Uji Pembayaran).`;
             toast.clear();
             toast.resetDedupe();
           } else {
@@ -1710,7 +1748,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               transactionStatus: "settlement",
               statusCode: "200",
               currency: "IDR",
-              hostName: "Tuan Rumah",
+              hostName: "Host",
             },
           });
           if (ok && res.ok && res.pass) {

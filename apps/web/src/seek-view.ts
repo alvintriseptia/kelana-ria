@@ -60,7 +60,7 @@ function seatList(room: SeekRoom, regroup: boolean) {
     const status = !member.joined ? "Menunggu teman" : regroup
       ? (ready ? "Sudah kembali" : "Belum kembali") : (ready ? "Siap" : "Belum siap");
     return `<li>
-      <div><strong>${player[seat]}</strong><small>${seat === "host" ? "Tuan rumah" : "Tamu"}${seat === room.seat ? " · Kamu" : ""}</small></div>
+      <div><strong>${player[seat]}</strong><small>${seat === "host" ? "Host" : "Tamu"}${seat === room.seat ? " · Kamu" : ""}</small></div>
       <span class="duo-seat-status" data-ready="${ready}">${status}</span>
     </li>`;
   }).join("")}</ul>`;
@@ -69,7 +69,7 @@ function seatList(room: SeekRoom, regroup: boolean) {
 function roleAssignment(room: SeekRoom, busy: boolean) {
   if (room.seat !== "host") return room.firstHider
     ? `<p>${player[room.firstHider]} bersembunyi dulu. ${player[otherSeat(room.firstHider)]} mencari.</p>`
-    : "<p>Menunggu tuan rumah memilih siapa yang bersembunyi dulu.</p>";
+    : "<p>Menunggu Host memilih siapa yang bersembunyi dulu.</p>";
   return `<fieldset class="seek-role-options" ${busy ? "disabled" : ""}>
     <legend>Siapa yang bersembunyi dulu?</legend>
     ${seats.map(seat => `<label class="solo-choice"><input type="radio" name="first-hider" value="${seat}" data-focus="role-${seat}" ${room.firstHider === seat ? "checked" : ""}>
@@ -115,7 +115,7 @@ function lobby(room: SeekRoom, controls: Controls) {
       <span class="solo-start-label">Titik awal</span>
       <h2 id="seek-action-heading" tabindex="-1">${escapeText(room.edition.start.name)}</h2>
       <p>${verified ? "Check-in titik awal terverifikasi." : "Check-in di titik awal sebelum menyatakan siap."}
-        ${room.firstHider ? "Tuan rumah memulai setelah kedua pemain siap." : "Peran dipilih sebelum kedua pemain menyatakan siap."}</p>
+        ${room.firstHider ? "Host memulai setelah kedua pemain siap." : "Peran dipilih sebelum kedua pemain menyatakan siap."}</p>
       ${feedbackMarkup(feedback)}
       <div class="solo-actions">
         ${allReady && room.seat === "host" ? action("Mulai", "start", "primary", busy || !verified) : ""}
@@ -280,7 +280,7 @@ function result(room: SeekRoom, controls: Controls) {
     "missed-lock": "Waktu sembunyi habis sebelum titik sembunyi dikunci.",
     "regroup-timeout": "Batas berkumpul habis sebelum kedua pemain kembali ke titik awal.",
     forfeit: winner ? `${player[otherSeat(winner)]} keluar dari pertandingan. ${player[winner]} menang.` : "Seorang pemain keluar dari pertandingan.",
-    canceled: "Tuan rumah menutup ruang sebelum pertandingan dimulai.",
+    canceled: "Host menutup ruang sebelum pertandingan dimulai.",
   };
   return `<div class="solo-result">
     <section class="solo-ticket" aria-labelledby="seek-result-heading">

@@ -250,7 +250,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "warn",
   },
   "room-full": {
-    message: "Ruang sudah penuh. Minta tuan rumah membuat ruang baru atau pilih edisi lain.",
+    message: "Ruang sudah penuh. Minta Host membuat ruang baru atau pilih edisi lain.",
     placement: "inline-screen",
     tone: "warn",
   },
@@ -275,7 +275,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "warn",
   },
   "host-only": {
-    message: "Hanya tuan rumah ruang yang bisa melakukan aksi ini.",
+    message: "Hanya Host yang bisa melakukan aksi ini.",
     placement: "inline-screen",
     tone: "info",
   },
@@ -473,7 +473,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     staleTarget: true,
   },
   "shot-tier-required": {
-    message: "Pilih tingkat tantangan Standar atau Berani terlebih dahulu sebelum melanjutkan.",
+    message: "Pilih tantangan Standar atau Ekstra dulu sebelum lanjut.",
     placement: "toast",
     tone: "info",
   },
@@ -483,7 +483,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "info",
   },
   "not-call-your-shot": {
-    message: "Tantangan ini tidak memakai pilihan tingkat risiko. Lanjutkan sesuai instruksi di kartu.",
+    message: "Tantangan ini tidak memakai pilihan Standar/Ekstra. Langsung ikuti instruksi di kartu.",
     placement: "toast",
     tone: "info",
   },
@@ -567,7 +567,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "info",
   },
   "seeking-only": {
-    message: "Aksi ini hanya tersedia saat fase perburuan berlangsung.",
+    message: "Aksi ini hanya bisa dipakai saat Fase Cari berlangsung.",
     placement: "toast",
     tone: "info",
   },
@@ -693,7 +693,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "warn",
   },
   "hand-limit-discard-required": {
-    message: "Tangan kartu sudah penuh. Buang kartu sesuai batas sebelum menyimpan kartu baru.",
+    message: "Kartu di tangan sudah penuh. Buang kartu sesuai batas sebelum simpan kartu baru.",
     placement: "toast",
     tone: "warn",
   },
@@ -782,7 +782,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "info",
   },
   "qa-host-only": {
-    message: "Hanya tuan rumah yang dapat memajukan waktu di ruang QA.",
+    message: "Hanya Host yang bisa memajukan waktu di ruang QA.",
     placement: "toast",
     tone: "info",
   },
