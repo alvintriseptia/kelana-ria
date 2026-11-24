@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createSoloServer } from "../../api/dist/index.js";
+import { assertCleanUiCopy } from "./copy-guard.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const results = join(root, "qa-results");
@@ -149,7 +150,8 @@ try {
   assert.equal(seeking.now, seeking.releaseAt);
   const staleDeadline = await post(host, { ...jumpToRelease, actionId: "stale-phase" });
   assert.equal((await staleDeadline.json()).error, "qa-deadline-changed");
-  await guest.getByText("Perburuan Makro", { exact: false }).first().waitFor();
+  await guest.getByText("Fase Cari", { exact: false }).first().waitFor();
+  await assertCleanUiCopy(guest, "seek-mode QA room");
   await guest.getByRole("button", { name: "Mode QA" }).click();
   assert.equal(await guest.locator('[data-action="qa-advance"]').count(), 0);
   assert.equal(await guest.getByLabel("Lokasi simulasi kamu").inputValue(), "csw-asean");
@@ -191,7 +193,8 @@ try {
   assert.equal(next.releaseAt - next.now, 25 * 60_000);
   await guest.locator('summary[aria-label="Menu permainan"]').click();
   await guest.getByRole("button", { name: "Keluar ke katalog" }).click();
-  await guest.getByRole("heading", { name: "Hide & Seek · Rulebook Packs (2–6 Pemain)" }).waitFor();
+  await guest.getByRole("heading", { name: "Hide & Seek (2–6 Pemain)" }).waitFor();
+  await assertCleanUiCopy(guest, "seek-mode catalog");
   assert.equal(new URL(guest.url()).searchParams.has("room"), false);
   console.log("Hide & Seek QA passed location changes, time jumps, Thermometer, role swap, and the More menu.");
 } finally {

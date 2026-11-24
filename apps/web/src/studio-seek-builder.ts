@@ -29,22 +29,22 @@ export type SeekStep3State = {
 const FAMILY_LIST: { id: HideSeekQuestionFamily; label: string }[] = [
   { id: "radar", label: "Radar" },
   { id: "thermometer", label: "Termometer" },
-  { id: "matching", label: "Matching" },
-  { id: "measuring", label: "Measuring" },
-  { id: "tentacles", label: "Tentacles" },
+  { id: "matching", label: "Cocokkan" },
+  { id: "measuring", label: "Bandingkan" },
+  { id: "tentacles", label: "Tempat Terdekat" },
   { id: "photo", label: "Foto" },
 ];
 
 const CARD_PRIMITIVES: { id: HideSeekCardEffect["primitive"]; label: string; cat: HideSeekCardCategory }[] = [
   { id: "time_bonus", label: "Bonus Waktu (+menit)", cat: "time_bonus" },
   { id: "veto", label: "Veto (Batalkan Pertanyaan)", cat: "powerup" },
-  { id: "randomize", label: "Randomize (Acak Pertanyaan)", cat: "powerup" },
-  { id: "discard_draw", label: "Buang & Tarik Kartu", cat: "powerup" },
-  { id: "expand_hand", label: "Perluas Batas Tangan (+1)", cat: "powerup" },
+  { id: "randomize", label: "Acak Pertanyaan", cat: "powerup" },
+  { id: "discard_draw", label: "Buang & Ambil Kartu", cat: "powerup" },
+  { id: "expand_hand", label: "Tambah Slot Kartu (+1)", cat: "powerup" },
   { id: "duplicate", label: "Duplikasi Kartu", cat: "powerup" },
-  { id: "time_trap", label: "Perangkap Waktu (Time Trap)", cat: "powerup" },
-  { id: "move_zone", label: "Pindah Zona (Move)", cat: "powerup" },
-  { id: "curse", label: "Kutukan Komposabel (Curse)", cat: "curse" },
+  { id: "time_trap", label: "Perangkap Waktu", cat: "powerup" },
+  { id: "move_zone", label: "Pindah Zona", cat: "powerup" },
+  { id: "curse", label: "Kutukan (Curse)", cat: "curse" },
 ];
 
 export function renderSeekStep3(
@@ -112,8 +112,8 @@ function renderSeekTimers(pack: HideSeekRulebookPack, dis: string): string {
           <option value="flat" ${pack.investigationBook.repeatCostMode === "flat" ? "selected" : ""}>Tetap (1x)</option>
         </select>
       </label>
-      <label class="rb-field"><span>Batas Kartu Tangan</span><input id="ed-hand" type="number" min="3" max="8" value="${pack.deck.baseHandLimit}" ${dis}></label>
-      <label class="rb-field"><span>Maks Kutukan Pemblokir Aktif</span><input id="ed-max-curses" type="number" min="1" max="2" value="${pack.deck.maxActiveBlockingCurses}" ${dis}></label>
+      <label class="rb-field"><span>Batas Kartu di Tangan</span><input id="ed-hand" type="number" min="3" max="8" value="${pack.deck.baseHandLimit}" ${dis}></label>
+      <label class="rb-field"><span>Maks. Kutukan Pemblokir Aktif</span><input id="ed-max-curses" type="number" min="1" max="2" value="${pack.deck.maxActiveBlockingCurses}" ${dis}></label>
     </fieldset>
   </section>`;
 }
@@ -126,9 +126,10 @@ function renderSeekBook(
 ): string {
   const cfg = pack.investigationBook.families[family];
   const items = cfg?.items ?? [];
+  const familyLabel = FAMILY_LIST.find((f) => f.id === family)?.label ?? family;
   return `<section class="studio-rule-panel" data-testid="seek-book-panel" aria-label="Pertanyaan">
     <h4>Pertanyaan</h4>
-    <div class="st-visual-grid" role="group" aria-label="Pilih keluarga pertanyaan">
+    <div class="st-visual-grid" role="group" aria-label="Pilih kategori pertanyaan">
       ${FAMILY_LIST.map((f) => {
         const famCfg = pack.investigationBook.families[f.id];
         const meta = questionFamilyTileMeta(f.id);
@@ -137,32 +138,32 @@ function renderSeekBook(
         return `<button type="button" class="st-visual-tile" data-s3-family="${f.id}" aria-pressed="${family === f.id}">
           ${meta.svg}
           <strong>${escapeText(f.label)}</strong>
-          <span class="st-tile-meta">Tarik ${dk} · ${count} item</span>
+          <span class="st-tile-meta">Ambil ${dk} · ${count} soal</span>
         </button>`;
       }).join("")}
     </div>
     <div class="rb-grid-2">
-      <label class="rb-field"><span>Status Keluarga (${escapeText(family)})</span>
+      <label class="rb-field"><span>Status Kategori (${escapeText(familyLabel)})</span>
         <select id="ed-fam-enabled" ${dis}>
           <option value="true" ${cfg?.enabled ? "selected" : ""}>Aktif</option>
           <option value="false" ${!cfg?.enabled ? "selected" : ""}>Nonaktif</option>
         </select>
       </label>
-      <label class="rb-field"><span>Tarik Kartu (drawCount)</span><input id="ed-fam-draw" type="number" min="1" max="5" value="${cfg?.drawCount ?? 2}" ${dis}></label>
-      <label class="rb-field"><span>Simpan Kartu (keepCount)</span><input id="ed-fam-keep" type="number" min="1" max="5" value="${cfg?.keepCount ?? 1}" ${dis}></label>
+      <label class="rb-field"><span>Ambil Kartu</span><input id="ed-fam-draw" type="number" min="1" max="5" value="${cfg?.drawCount ?? 2}" ${dis}></label>
+      <label class="rb-field"><span>Simpan Kartu</span><input id="ed-fam-keep" type="number" min="1" max="5" value="${cfg?.keepCount ?? 1}" ${dis}></label>
     </div>
-    ${editable ? `<button type="button" class="secondary" data-s3-action="save-family-cfg">Simpan Pengaturan Keluarga</button>` : ""}
+    ${editable ? `<button type="button" class="secondary" data-s3-action="save-family-cfg">Simpan Pengaturan Kategori</button>` : ""}
 
     <details class="rb-accordion">
-      <summary>Daftar Item ${escapeText(family)} (${items.length})</summary>
+      <summary>Daftar Pertanyaan ${escapeText(familyLabel)} (${items.length})</summary>
       <ul class="rb-list">
         ${
           items.length === 0
-            ? "<li>Belum ada item pada keluarga ini.</li>"
+            ? "<li>Belum ada pertanyaan di kategori ini.</li>"
             : items
                 .map(
                   (item, idx) => `<li>
-                    <div><strong>${escapeText(item.label)}</strong> <code>${escapeText(item.id)}</code></div>
+                    <div><strong>${escapeText(item.label)}</strong></div>
                     ${editable ? `<button type="button" class="secondary" data-s3-action="delete-book-item" data-index="${idx}">Hapus</button>` : ""}
                   </li>`,
                 )
@@ -174,25 +175,25 @@ function renderSeekBook(
     ${
       editable
         ? `<div class="rb-card">
-            <h4>+ Tambah Item ${escapeText(family)}</h4>
+            <h4>+ Tambah Pertanyaan ${escapeText(familyLabel)}</h4>
             <div class="rb-grid-2">
-              <label class="rb-field"><span>Label Item</span><input id="ed-item-label" placeholder="Mis. Radar 750 m"></label>
+              <label class="rb-field"><span>Nama Pertanyaan</span><input id="ed-item-label" placeholder="Mis. Radar 750 m"></label>
               ${
                 family === "radar"
                   ? `<label class="rb-field"><span>Radius (meter)</span><input id="ed-item-num" type="number" value="750" min="100"></label>`
                   : family === "thermometer"
                     ? `<label class="rb-field"><span>Jarak Tempuh Min (meter)</span><input id="ed-item-num" type="number" value="500" min="100"></label>`
                     : family === "matching"
-                      ? `<label class="rb-field"><span>Atribut Stasiun (attributeKey)</span><input id="ed-item-extra" value="kecamatan"></label>`
+                      ? `<label class="rb-field"><span>Atribut Stasiun</span><input id="ed-item-extra" value="kecamatan"></label>`
                       : family === "measuring"
-                        ? `<label class="rb-field"><span>Kategori POI</span><input id="ed-item-extra" value="taman"></label>`
+                        ? `<label class="rb-field"><span>Kategori Lokasi</span><input id="ed-item-extra" value="taman"></label>`
                         : family === "tentacles"
                           ? `<label class="rb-field"><span>Radius (meter)</span><input id="ed-item-num" type="number" value="1500" min="200"></label>
-                             <label class="rb-field"><span>Kategori POI</span><input id="ed-item-extra" value="taman"></label>`
+                             <label class="rb-field"><span>Kategori Lokasi</span><input id="ed-item-extra" value="taman"></label>`
                           : `<label class="rb-field"><span>Instruksi Foto</span><input id="ed-item-extra" value="Foto papan nama jalan terdekat."></label>`
               }
             </div>
-            <button type="button" class="primary" data-s3-action="add-book-item">+ Tambah Item Petunjuk</button>
+            <button type="button" class="primary" data-s3-action="add-book-item">+ Tambah Pertanyaan</button>
           </div>`
         : ""
     }
@@ -208,7 +209,7 @@ function renderSeekDeck(
   const prim = state.cardPrimitive;
   return `<section class="studio-rule-panel" data-testid="seek-deck-panel" aria-label="Kartu">
     <h4>Kartu</h4>
-    <p><small>Total kartu: <strong>${pack.deck.cards.reduce((s, c) => s + c.copies, 0)}</strong> · Batas tangan: ${pack.deck.baseHandLimit} · Maks kutukan pemblokir aktif: ${pack.deck.maxActiveBlockingCurses}</small></p>
+    <p><small>Total kartu: <strong>${pack.deck.cards.reduce((s, c) => s + c.copies, 0)}</strong> · Batas di tangan: ${pack.deck.baseHandLimit} · Maks. kutukan pemblokir aktif: ${pack.deck.maxActiveBlockingCurses}</small></p>
     <details class="rb-accordion">
       <summary>Daftar Kartu di Dek (${pack.deck.cards.length} jenis)</summary>
       <div class="st-card-stack">
@@ -229,10 +230,10 @@ function renderSeekDeck(
     ${
       editable
         ? `<div class="rb-card" data-testid="seek-card-composer">
-            <h4>+ Komposer Kartu &amp; Kutukan</h4>
+            <h4>+ Buat Kartu Baru</h4>
             <div data-testid="live-card-preview">${renderSeekCardTile(previewSeekCardFromState(state))}</div>
             <div class="rb-grid-2">
-              <label class="rb-field"><span>Primitif Kartu</span>
+              <label class="rb-field"><span>Jenis Kartu</span>
                 <select id="ed-card-prim" ${dis}>
                   ${CARD_PRIMITIVES.map(
                     (p) => `<option value="${p.id}" ${prim === p.id ? "selected" : ""}>${p.label}</option>`,
@@ -241,7 +242,7 @@ function renderSeekDeck(
               </label>
               <label class="rb-field"><span>Jumlah Salinan</span><input id="ed-card-copies" type="number" min="1" max="10" value="1"></label>
               <label class="rb-field"><span>Judul Kartu</span><input id="ed-card-title" placeholder="Mis. Kutukan Kopi Senopati"></label>
-              <label class="rb-field"><span>Deskripsi Singkat</span><input id="ed-card-desc" value="Kartu kustom kreator."></label>
+              <label class="rb-field"><span>Deskripsi Singkat</span><input id="ed-card-desc" value="Kartu buatan kreator."></label>
             </div>
 
             ${
@@ -253,32 +254,32 @@ function renderSeekDeck(
                     ? `<label class="rb-field"><span>Slot Tambahan</span><input id="ed-card-val" type="number" min="1" max="2" value="1"></label>`
                     : prim === "curse"
                       ? `<div class="rb-grid-2">
-                          <label class="rb-field"><span>Biaya Lempar (Casting Cost)</span>
+                          <label class="rb-field"><span>Syarat Main</span>
                             <select id="ed-curse-cost">
-                              <option value="none">Gratis (none)</option>
-                              <option value="discard_cards">Buang 1 Kartu (discard_cards)</option>
-                              <option value="seeker_min_distance">Pencari min. 500 m (seeker_min_distance)</option>
+                              <option value="none">Gratis</option>
+                              <option value="discard_cards">Buang 1 Kartu</option>
+                              <option value="seeker_min_distance">Pencari min. 500 m</option>
                             </select>
                           </label>
-                          <label class="rb-field"><span>Tipe Blokir</span>
+                          <label class="rb-field"><span>Efek Blokir</span>
                             <select id="ed-curse-blocker">
-                              <option value="block_questions">Blokir Pertanyaan (block_questions)</option>
-                              <option value="block_transit">Blokir Transit (block_transit)</option>
-                              <option value="none">Tanpa Blokir (none)</option>
+                              <option value="block_questions">Blokir Pertanyaan</option>
+                              <option value="block_transit">Blokir Transit</option>
+                              <option value="none">Tanpa Blokir</option>
                             </select>
                           </label>
-                          <label class="rb-field"><span>Syarat Hapus (Clear Condition)</span>
+                          <label class="rb-field"><span>Cara Lepas Kutukan</span>
                             <select id="ed-curse-clear">
-                              <option value="photo_challenge" ${state.curseClearType === "photo_challenge" ? "selected" : ""}>Tantangan Foto (photo_challenge)</option>
-                              <option value="timer" ${state.curseClearType === "timer" ? "selected" : ""}>Timer (timer)</option>
-                              <option value="next_n_questions" ${state.curseClearType === "next_n_questions" ? "selected" : ""}>N Pertanyaan Berikutnya</option>
-                              <option value="gps_detour" ${state.curseClearType === "gps_detour" ? "selected" : ""}>Detour GPS POI</option>
-                              <option value="honor_task" ${state.curseClearType === "honor_task" ? "selected" : ""}>Tugas Honor (honor_task)</option>
+                              <option value="photo_challenge" ${state.curseClearType === "photo_challenge" ? "selected" : ""}>Bukti Foto</option>
+                              <option value="timer" ${state.curseClearType === "timer" ? "selected" : ""}>Tunggu Timer</option>
+                              <option value="next_n_questions" ${state.curseClearType === "next_n_questions" ? "selected" : ""}>Jawab Beberapa Pertanyaan</option>
+                              <option value="gps_detour" ${state.curseClearType === "gps_detour" ? "selected" : ""}>Check-in Lokasi (GPS)</option>
+                              <option value="honor_task" ${state.curseClearType === "honor_task" ? "selected" : ""}>Tugas Langsung</option>
                             </select>
                           </label>
-                          <label class="rb-field"><span>Penalti Buyout (menit, 0 = tanpa buyout)</span><input id="ed-curse-buyout" type="number" min="0" max="20" value="5"></label>
-                          <label class="rb-field"><span>Prompt / Instruksi / Kategori POI</span><input id="ed-curse-detail" value="Kirim foto ruang publik terdekat."></label>
-                          <label class="rb-field"><span>Durasi / Auto-Approve (menit, maks 5)</span><input id="ed-curse-mins" type="number" min="1" max="10" value="3"></label>
+                          <label class="rb-field"><span>Penalti Lewati (menit, 0 = tidak bisa dilewati)</span><input id="ed-curse-buyout" type="number" min="0" max="20" value="5"></label>
+                          <label class="rb-field"><span>Instruksi / Kategori Lokasi</span><input id="ed-curse-detail" value="Kirim foto ruang publik terdekat."></label>
+                          <label class="rb-field"><span>Durasi / Setuju Otomatis (menit, maks. 5)</span><input id="ed-curse-mins" type="number" min="1" max="10" value="3"></label>
                         </div>`
                       : ""
             }
@@ -289,18 +290,34 @@ function renderSeekDeck(
   </section>`;
 }
 
+const SEEK_CLEAR_LABELS: Record<string, string> = {
+  timer: "Tunggu Timer",
+  next_n_questions: "Jawab Pertanyaan",
+  gps_detour: "Check-in Lokasi",
+  photo_challenge: "Bukti Foto",
+  honor_task: "Tugas Langsung",
+};
+
+const SEEK_CARD_LABELS: Record<string, string> = {
+  veto: "Veto",
+  randomize: "Acak",
+  discard_draw: "Tukar Kartu",
+  duplicate: "Duplikasi",
+  move_zone: "Pindah Zona",
+};
+
 function seekCardChips(card: HideSeekCardDefinition): CardPreviewChip[] {
   const ef = card.effect;
   if (ef.primitive === "time_bonus") return [{ label: `+${ef.minutes} menit`, tone: "ok" }];
-  if (ef.primitive === "time_trap") return [{ label: `Perangkap +${ef.bonusMinutes}m`, tone: "warn" }];
+  if (ef.primitive === "time_trap") return [{ label: `Perangkap +${ef.bonusMinutes} mnt`, tone: "warn" }];
   if (ef.primitive === "expand_hand") return [{ label: `+${ef.extraSlots} Slot`, tone: "ok" }];
-  if (ef.primitive !== "curse") return [{ label: ef.primitive }];
+  if (ef.primitive !== "curse") return [{ label: SEEK_CARD_LABELS[ef.primitive] ?? ef.primitive }];
   const cost = ef.curse.castingCosts[0];
   const costLabel =
     cost?.type === "discard_cards"
-      ? `Biaya: Buang ${cost.count}`
+      ? `Syarat: Buang ${cost.count}`
       : cost?.type === "seeker_min_distance"
-        ? `Min ${cost.meters}m`
+        ? `Min. ${cost.meters} m`
         : "Gratis";
   const blockerLabel =
     ef.curse.blockerType === "block_questions"
@@ -308,7 +325,7 @@ function seekCardChips(card: HideSeekCardDefinition): CardPreviewChip[] {
       : ef.curse.blockerType === "block_transit"
         ? "Blokir Transit"
         : "Tanpa Blokir";
-  const clearLabel = `Hapus: ${ef.curse.clearCondition.type}`;
+  const clearLabel = `Lepas: ${SEEK_CLEAR_LABELS[ef.curse.clearCondition.type] ?? ef.curse.clearCondition.type}`;
   const mod = (ef.curse.effectModifiers ?? []).find((m) => m.type === "skip_penalty_minutes");
   const chips: CardPreviewChip[] = [
     { label: costLabel },
@@ -316,7 +333,7 @@ function seekCardChips(card: HideSeekCardDefinition): CardPreviewChip[] {
     { label: clearLabel, tone: "warn" },
   ];
   if (mod && mod.type === "skip_penalty_minutes") {
-    chips.push({ label: `Buyout +${mod.penaltyMinutes}m` });
+    chips.push({ label: `Lewati +${mod.penaltyMinutes} mnt` });
   }
   return chips;
 }
@@ -385,7 +402,7 @@ export function buildSeekCardFromForm(
 ): HideSeekCardDefinition | null {
   const title = root.querySelector<HTMLInputElement>("#ed-card-title")?.value.trim() || fallbackTitle;
   if (!title) return null;
-  const description = root.querySelector<HTMLInputElement>("#ed-card-desc")?.value.trim() || "Kartu kustom kreator.";
+  const description = root.querySelector<HTMLInputElement>("#ed-card-desc")?.value.trim() || "Kartu buatan kreator.";
   const copies = Math.max(1, Number(root.querySelector<HTMLInputElement>("#ed-card-copies")?.value ?? 1));
   const prim = state.cardPrimitive;
   const meta = CARD_PRIMITIVES.find((p) => p.id === prim) ?? CARD_PRIMITIVES[0];

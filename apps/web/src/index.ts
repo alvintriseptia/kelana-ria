@@ -115,7 +115,7 @@ async function showRoute(focusCatalog = false) {
     mode === "creator-packs"
       ? "Paket Kreator · Kelana Ria"
       : rulebookStudio
-        ? "Studio Rulebook · Kelana Ria"
+        ? "Studio Kreator · Kelana Ria"
         : `${format} · Kelana Ria`;
   const hasOwnShell = rulebookStudio || rulebookSeek || rulebookClaim;
   const heading = mode === "creator-packs"
@@ -139,7 +139,7 @@ async function showRoute(focusCatalog = false) {
     play.innerHTML = `${fallbackHeading}
       <p class="intro" role="alert">Permainan belum bisa dibuka. Periksa koneksi lalu coba lagi.</p>
       <button id="play-reload" class="secondary" type="button">Coba lagi</button>
-      <button id="play-back" class="secondary" type="button">Kembali ke pilihan</button>`;
+      <button id="play-back" class="secondary" type="button">Kembali ke katalog</button>`;
     const { signal } = routeEvents;
     const retry = () => location.reload();
     play.querySelector<HTMLButtonElement>("#play-reload")!.addEventListener("click", retry, { signal });

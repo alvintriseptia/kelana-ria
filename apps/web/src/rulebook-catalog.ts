@@ -27,7 +27,7 @@ const resumePhaseLabels: Record<ActiveRulebookRoomPhase, string> = {
   lobby: "Ruang Tunggu",
   active: "Ronde Aktif",
   head_start: "Waktu Sembunyi",
-  seeking: "Fase Pencarian",
+  seeking: "Fase Cari",
   endgame: "Endgame",
   regroup: "Berkumpul Kembali",
 };
@@ -37,12 +37,12 @@ const gameOverviews = {
   "hide-and-seek": "Bergantian jadi penyembunyi dan pencari. Ajukan pertanyaan untuk mempersempit area pencarian.",
 } satisfies Record<RulebookFormat, string>;
 export const clueNames: Record<HideSeekQuestionFamily, string> = {
-  radar: "Radar", thermometer: "Termometer", matching: "Pencocokan", measuring: "Pengukuran", tentacles: "Tentakel", photo: "Foto",
+  radar: "Radar", thermometer: "Termometer", matching: "Cocokkan", measuring: "Bandingkan", tentacles: "Tempat Terdekat", photo: "Foto",
 };
 
 export type PracticeCardExample = { title: string; description: string; kind: HideSeekCardCategory | "tactical" };
 export const cardKindNames: Record<PracticeCardExample["kind"], string> = {
-  time_bonus: "Bonus Waktu", powerup: "Powerup", curse: "Kutukan", tactical: "Kartu Taktis",
+  time_bonus: "Bonus Waktu", powerup: "Powerup", curse: "Kutukan", tactical: "Kartu",
 };
 
 export type CatalogEdition = {
@@ -253,7 +253,7 @@ function communityResults(item: Edition, sharedRecaps: PublicMatchRecapSummary[]
             ${entry.topMoment ? `<p class="cat-recap-moment">${escapeText(entry.topMoment.label)} · ${escapeText(entry.topMoment.detail)}</p>` : ""}
           </a>
         </li>`).join("")}</ul>`
-      : `<p class="cat-community-empty">Belum ada hasil pertandingan yang dibagikan untuk edisi v${item.version}. Selesaikan pertandingan lalu bagikan ringkasanmu dari Riwayat.</p>`}
+      : `<p class="cat-community-empty">Belum ada hasil pertandingan yang dibagikan untuk edisi v${item.version}. Selesaikan ronde, lalu bagikan dari Riwayat.</p>`}
   </section>`;
 }
 
