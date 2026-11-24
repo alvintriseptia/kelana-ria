@@ -109,6 +109,27 @@ async function checkCompactForm(page, scope, label, saveSelector) {
   }
 }
 
+async function checkValidationSpacing(page, format) {
+  const originalViewport = page.viewportSize();
+  try {
+    for (const viewport of [{ width: 320, height: 640 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      const bounds = await page.locator("#st-body-slot > .rb-card").evaluateAll(cards =>
+        cards.map(card => {
+          const { top, bottom } = card.getBoundingClientRect();
+          return { top, bottom };
+        }));
+      assert.equal(bounds.length, 3, `Expected three Validasi cards for ${format}`);
+      assert.ok(bounds.slice(1).every((card, index) => card.top - bounds[index].bottom >= 16),
+        `Validasi cards should have a 16px gap for ${format} at ${viewport.width}px`);
+      await assertNoHorizontalOverflow(page, `Validasi for ${format} at ${viewport.width}px`);
+    }
+    await page.screenshot({ path: path.join(results, `studio-validasi-${format}.png`), fullPage: true });
+  } finally {
+    await page.setViewportSize(originalViewport);
+  }
+}
+
 try {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await ctx.newPage();
@@ -320,6 +341,7 @@ try {
   await page.waitForSelector('button[data-dry-action="run-seek-clue"]');
   await page.click('button[data-dry-action="run-seek-clue"]');
   await page.waitForSelector('[data-testid="dry-seek-result"]');
+  await checkValidationSpacing(page, "hide-and-seek");
   await assertNoHorizontalOverflow(page, "Hide & Seek Step 4 dry-run");
   await assertCleanUiCopy(page, "Hide & Seek Step 4 dry-run");
   const seekDryText = await page.textContent('[data-testid="dry-seek-result"]');
@@ -443,6 +465,7 @@ try {
   await page.fill("#dry-input-val", "2");
   await page.click('button[data-dry-action="submit-claim-test"]');
   await page.waitForSelector('[data-testid="dry-claim-result"]');
+  await checkValidationSpacing(page, "claim-the-city");
   await assertNoHorizontalOverflow(page, "Claim Step 4 interactive modal");
   await assertCleanUiCopy(page, "Claim Step 4 interactive modal");
   const claimDryText = await page.textContent('[data-testid="dry-claim-result"]');
