@@ -442,6 +442,7 @@ try {
   await pageCreator.click('button[data-map-tab="primary"]');
   await clickAndWaitPost(pageCreator, 'button[data-map-action="add-landmark"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Landmark Baru"));
+  await pageCreator.click('button[data-map-action="edit-challenges"]');
   await pageCreator.fill("#ed-chal-title", "Tantangan Call Your Shot Senopati");
   await pageCreator.fill("#ed-chal-answer", "rahasia-jawaban-senopati");
   await pageCreator.fill("#ed-chal-notes", "Contoh rubrik Studio QA. Foto papan nama dari trotoar.");

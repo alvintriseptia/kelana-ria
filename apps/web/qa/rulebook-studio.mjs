@@ -74,6 +74,40 @@ async function assertNoHorizontalOverflow(page, label) {
   );
 }
 
+async function checkCompactForm(page, scope, label, saveSelector) {
+  const originalViewport = page.viewportSize();
+  try {
+    await page.setViewportSize({ width: 320, height: 640 });
+    await assertNoHorizontalOverflow(page, `${label} on a narrow phone`);
+    const forms = await page.locator(`${scope} .rb-grid-2`).evaluateAll(grids => grids
+      .filter(grid => grid.getClientRects().length)
+      .map(grid => Array.from(grid.children)
+        .filter(field => field.classList.contains("rb-field") && field.getClientRects().length)
+        .map(field => field.getBoundingClientRect().top)));
+    assert.ok(forms.some(rows => rows.length > 1) && forms.every(rows => rows.every(
+      (top, index) => index === 0 || top > rows[index - 1],
+    )), `${label} should show one field per row`);
+
+    if (saveSelector) {
+      // Leave the final field focused with the vertical space a phone keyboard would take.
+      await page.setViewportSize({ width: 320, height: 360 });
+      const finalField = page.locator(`${scope} .rb-field :is(input, select, textarea)`).filter({ visible: true }).last();
+      await finalField.focus();
+      await finalField.scrollIntoViewIfNeeded();
+      assert.ok(await finalField.evaluate(field => document.activeElement === field &&
+        field.getBoundingClientRect().bottom <= innerHeight), `${label} should reach its last field`);
+      const save = page.locator(saveSelector);
+      await save.scrollIntoViewIfNeeded();
+      assert.ok(await save.evaluate(button => {
+        const { x, y, width, height } = button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+      }), `${label} should reach Save in the reduced viewport`);
+    }
+  } finally {
+    await page.setViewportSize(originalViewport);
+  }
+}
+
 try {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await ctx.newPage();
@@ -89,6 +123,7 @@ try {
   await page.click('button[data-format="hide-and-seek"]');
   await page.waitForSelector('button[data-action="clone"]');
   await assertNoHorizontalOverflow(page, "Template setup");
+  await checkCompactForm(page, '[data-testid="clone-template-card"]', "Hide & Seek template");
 
   await page.fill("#st-pack-id", "pack-seek-alpha");
   await page.fill("#st-title", "Alpha Seek Draft Very Long Title For Mobile Select Wrapping Check");
@@ -188,6 +223,9 @@ try {
   assert.equal(await page.locator(".studio-point-list").count(), 0);
   assert.ok((await page.locator("#st-map-host .board-map-canvas").boundingBox()).height > 420);
   await page.screenshot({ path: path.join(results, "studio-map-first.png") });
+  await page.screenshot({ path: path.join(results, "studio-peta-mobile.png"), fullPage: true });
+  await checkCompactForm(page, '[data-testid="step2-inspector"]', "Hide & Seek map inspector", '[data-map-action="apply-selected"]');
+  assert.equal(await page.getAttribute('button[data-map-tab="primary"]', "aria-pressed"), "true");
   await page.click('button[data-map-drawer="transit"]');
   await page.waitForSelector('[data-testid="jakarta-transit-panel"] button[data-toggle-transit-id]');
   assert.equal(styleFetchCount, 1, "Expected 1 style.json fetch on first Step 2 entry");
@@ -233,14 +271,22 @@ try {
   await page.click('button[data-step="3"]');
   await page.waitForSelector("#ed-zone");
   await assertNoHorizontalOverflow(page, "Hide & Seek Step 3 timers");
+  await page.screenshot({ path: path.join(results, "studio-aturan-mobile.png"), fullPage: true });
+  await checkCompactForm(page, '[data-testid="seek-timers-panel"]', "Hide & Seek session rules", '.studio-save');
   await page.fill("#ed-zone", "10");
   await clickAndWaitStudioSave(page, 'button[data-action="save-draft"]');
   await page.waitForSelector('button[data-jump-path]');
   await assertNoHorizontalOverflow(page, "Validator errors banner on 390px");
+  await checkCompactForm(page, '[data-testid="seek-timers-panel"]', "Hide & Seek rule validation");
 
-  await page.click('button[data-s3-tab="book"]');
+  await page.locator('button[data-s3-tab="book"]').press("Enter");
+  assert.equal(await page.getAttribute('button[data-s3-tab="book"]', "aria-pressed"), "true");
+  assert.equal(await page.locator('button[data-s3-tab="book"]:focus').count(), 1);
   assert.equal(await page.locator('button[data-s3-family] svg').count(), 6, "Expected 6 Question Family SVG tiles");
   await assertNoHorizontalOverflow(page, "Hide & Seek Step 3 book");
+  await checkCompactForm(page, '[data-testid="seek-book-panel"]', "Hide & Seek questions");
+  await page.fill("#ed-item-label", "Radar tambahan untuk uji Studio");
+  await clickAndWaitStudioSave(page, '[data-s3-action="add-book-item"]');
   await page.click('button[data-s3-tab="deck"]');
   await page.fill("#ed-card-title", "Kutukan Kopi Studio Live");
   assert.match(
@@ -250,6 +296,7 @@ try {
   );
   await page.screenshot({ path: path.join(results, "studio-step3-seek-cards.png") });
   await assertNoHorizontalOverflow(page, "Hide & Seek Step 3 deck composer");
+  await checkCompactForm(page, '[data-testid="seek-card-composer"]', "Hide & Seek cards");
 
   // Navigate away to Step 1, then click Validator Jump Link -> returns to Step 3 #ed-zone!
   await page.click('button[data-step="1"]');
@@ -272,6 +319,7 @@ try {
   await page.click('button[data-studio-view="home"]');
   await startDraft(page, "claim-the-city");
   await page.waitForSelector('button[data-action="clone"]');
+  await checkCompactForm(page, '[data-testid="clone-template-card"]', "Claim template");
   await page.fill("#st-pack-id", "pack-claim-studio-qa");
   await page.fill("#st-title", "Studio QA Claim Pack");
   await page.fill("#st-price", "25000");
@@ -289,6 +337,7 @@ try {
   await page.waitForFunction(() => Boolean(window.document.querySelector("#st-map-host .maplibregl-ctrl-zoom-in")));
   const countOnClaimStep2 = styleFetchCount;
   assert.equal(countOnClaimStep2, countBeforeClaimStep2 + 1, "Expected exactly 1 style.json fetch when mounting Claim Step 2");
+  await checkCompactForm(page, '[data-testid="step2-inspector"]', "Claim map inspector", '[data-map-action="apply-selected"]');
 
   // Zoom in once to verify camera scale is preserved across Studio interactions
   const fixedPin = page.locator('#st-map-host button[data-map-point="m-bloc"]');
@@ -320,16 +369,22 @@ try {
   assert.equal(await page.locator('button[data-jump-zone="kemang"]').count(), 0);
   assert.equal(await fixedPin.evaluate(pin => pin.style.transform), pinTransform, "Editing retains the map camera");
 
+  assert.equal(await page.getByTestId("claim-challenge-composer").count(), 0);
+  await page.click('button[data-map-action="edit-challenges"]');
+  assert.equal(await page.getByTestId("step2-inspector").count(), 0);
   assert.equal(await page.locator('button[data-c3-prim] svg').count(), 6, "Expected 6 Challenge Primitive SVG tiles on Step 2 Peta");
   await page.click('button[data-c3-prim="call_your_shot"]');
   assert.equal(await page.getAttribute('button[data-c3-prim="call_your_shot"]', "aria-pressed"), "true");
   assert.equal(await page.inputValue("#ed-chal-prim"), "call_your_shot");
   await page.screenshot({ path: path.join(results, "studio-step3-claim-primitives.png") });
   await assertNoHorizontalOverflow(page, "Claim Step 2 challenges");
+  await checkCompactForm(page, '[data-testid="claim-challenge-composer"]', "Claim challenge editor");
   await page.fill("#ed-chal-title", "Uji Call Your Shot Kemang");
   await page.fill("#ed-chal-notes", "Contoh rubrik Studio QA. Foto papan nama dari trotoar.");
   await page.check("#ed-chal-reviewed");
   await clickAndWaitStudioSave(page, 'button[data-c3-action="add-challenge"]');
+  await page.click('button[data-map-action="close-challenges"]');
+  assert.equal(await page.locator('[data-map-action="edit-challenges"]:focus').count(), 1);
 
   await page.click('button[data-map-action="recenter"]');
   for (const mapTab of ["primary", "secondary", "start", "boundary"]) {
@@ -347,9 +402,18 @@ try {
   // Step 3: Sesi & Skor and Sabotage Curse card in Dek Taktis
   await page.click('button[data-step="3"]');
   await assertNoHorizontalOverflow(page, "Claim Step 3 session");
+  await checkCompactForm(page, '[data-testid="claim-session-panel"]', "Claim session rules", '.studio-save');
+  const duration = Number(await page.inputValue("#ed-claim-duration")) + 1;
+  await page.fill("#ed-claim-duration", String(duration));
+  await clickAndWaitStudioSave(page, '.studio-save');
+  await page.locator(".studio-save-feedback", { hasText: /Draf tersimpan/ }).waitFor();
+  await page.reload();
+  await page.click('button[data-step="3"]');
+  assert.equal(await page.inputValue("#ed-claim-duration"), String(duration));
   assert.equal(await page.locator('button[data-c3-tab="challenges"]').count(), 0, "Challenges tab should be on Step 2 Peta, not Step 3 Aturan");
   await page.click('button[data-c3-tab="deck"]');
   await assertNoHorizontalOverflow(page, "Claim Step 3 deck");
+  await checkCompactForm(page, '[data-testid="claim-card-composer"]', "Claim cards");
   await page.fill("#ed-ccard-title", "Sabotase Kemang");
   assert.match(
     await page.textContent('[data-testid="live-card-preview"]'),
