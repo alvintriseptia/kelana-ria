@@ -113,10 +113,9 @@
   gap: .8rem;
 }
 .studio-map-tools {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 4.75rem), 1fr));
   gap: .35rem;
-  margin: 0;
 }
 .studio-point-list,
 .studio-point-inspector { display: grid; gap: .75rem; }
