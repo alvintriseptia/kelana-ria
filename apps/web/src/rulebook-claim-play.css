@@ -6,6 +6,7 @@
 }
 .cg-lobby-head .sg-room-menu { margin-left: auto; }
 .cg-lobby-head .sg-quiet { border: 1px solid #8cab9d; color: #122f29; background: #f6fbf7; }
+.cg-invite a { display: block; overflow-wrap: anywhere; }
 .cg-game [hidden] { display: none; }
 .cg-brand { min-width: 0; }
 .cg-board .board-map-shell { margin: 0; }

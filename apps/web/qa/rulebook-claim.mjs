@@ -198,8 +198,15 @@ try {
     data: { type: "room-action", roomCode: groupRoom, action: { type: "start", actionId: "group-too-small" } },
   });
   assert.equal((await earlyStart.json()).error, "not-enough-players");
-  const inviteHref = await pageP1.getAttribute('[data-testid="invite-link"]', "href");
+  const invite = pageP1.getByTestId("invite-link");
+  const inviteHref = await invite.getAttribute("href");
   assert.ok(inviteHref && inviteHref.includes("room=RC-"), "Shareable invite link should be visible in lobby");
+  assert.equal(await invite.innerText(), inviteHref, "The lobby should display the full invitation URL");
+  for (const width of [320, 390]) {
+    await pageP1.setViewportSize({ width, height: 844 });
+    assert.ok(await invite.evaluate(link => link.scrollWidth <= link.clientWidth && document.documentElement.scrollWidth <= innerWidth));
+  }
+  await pageP1.screenshot({ path: path.join(results, "rulebook-claim-invite.png") });
   const codeMatch = (await pageP1.textContent("body")).match(/Kode:\s*(RC-[A-F0-9]+)/);
   assert.ok(codeMatch, "Claim room code should be visible");
   const roomCode = codeMatch[1];
