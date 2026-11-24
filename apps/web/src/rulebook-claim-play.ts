@@ -951,7 +951,9 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${slotAlert("lobby")}
         <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
-        ${pass.mode !== "solo" ? `<p><a href="${escapeText(invite)}" data-testid="invite-link">Tautan undangan ruang ${escapeText(room.code)}</a></p>` : ""}
+        ${pass.mode !== "solo" ? `<p class="cg-invite"><small>Tautan undangan</small>
+          <a href="${escapeText(invite)}" data-testid="invite-link">${escapeText(invite)}</a>
+        </p>` : ""}
         <ul class="rb-list">
           ${room.seats.map(seat => `<li><strong>${escapeText(seat.name)}</strong>${seat.isHost ? " · Host" : ""} · ${seat.ready ? "Siap" : "Belum siap"}</li>`).join("")}
         </ul>
