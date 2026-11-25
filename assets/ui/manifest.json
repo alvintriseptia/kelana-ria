@@ -1,0 +1,244 @@
+{
+  "version": 3,
+  "capturePixels": {
+    "width": 780,
+    "height": 1688
+  },
+  "basemap": "OpenFreeMap Positron · © OpenMapTiles · OpenStreetMap",
+  "publicOrigin": "https://kelanaria.id",
+  "simulated": true,
+  "archivedStates": {
+    "SARINAH_VULNERABILITY_NOTICE": "SARINAH_OPPORTUNITY_NOTICE",
+    "SARINAH_VULNERABLE": "SARINAH_GREEN_DETAIL",
+    "SARINAH_STEAL_CHALLENGE": "SARINAH_GREEN_CHALLENGE",
+    "SARINAH_STOLEN": "SARINAH_CLAIMED",
+    "SARINAH_CHALLENGE": "SARINAH_YELLOW_CHALLENGE"
+  },
+  "notes": [
+    "The prior SARINAH_CLAIMED screenshot showed pre-completion ownership. The new file shows the successful claim.",
+    "Room codes and sharing tokens are examples. GBK and Sarinah field details remain unverified.",
+    "Component PNGs are crops of the rendered game UI with natural dimensions."
+  ],
+  "assets": [
+    {
+      "state": "TEAM_LOBBY",
+      "file": "screens/KR_UI_TEAM_LOBBY.png",
+      "type": "screen"
+    },
+    {
+      "state": "TEAM_LOBBY",
+      "file": "components/KR_COMPONENT_INVITATION.png",
+      "type": "component"
+    },
+    {
+      "state": "GAME_BOARD",
+      "file": "screens/KR_UI_GAME_BOARD.png",
+      "type": "screen"
+    },
+    {
+      "state": "LANDMARK_DETAIL",
+      "file": "screens/KR_UI_LANDMARK_DETAIL.png",
+      "type": "screen"
+    },
+    {
+      "state": "GBK_CHECKIN",
+      "file": "screens/KR_UI_GBK_CHECKIN.png",
+      "type": "screen"
+    },
+    {
+      "state": "GBK_CHALLENGE",
+      "file": "screens/KR_UI_GBK_CHALLENGE.png",
+      "type": "screen"
+    },
+    {
+      "state": "GBK_SUCCESS",
+      "file": "screens/KR_UI_GBK_SUCCESS.png",
+      "type": "screen"
+    },
+    {
+      "state": "HI_PHOTO_CHALLENGE",
+      "file": "screens/KR_UI_HI_PHOTO_CHALLENGE.png",
+      "type": "screen"
+    },
+    {
+      "state": "HI_PHOTO_PENDING",
+      "file": "screens/KR_UI_HI_PHOTO_PENDING.png",
+      "type": "screen"
+    },
+    {
+      "state": "HI_PHOTO_REVIEW",
+      "file": "screens/KR_UI_HI_PHOTO_REVIEW.png",
+      "type": "screen"
+    },
+    {
+      "state": "HI_PHOTO_APPROVED",
+      "file": "screens/KR_UI_HI_PHOTO_APPROVED.png",
+      "type": "screen"
+    },
+    {
+      "state": "SCORE_YELLOW_LEADING",
+      "file": "screens/KR_UI_SCORE_YELLOW_LEADING.png",
+      "type": "screen"
+    },
+    {
+      "state": "POIN_GANDA_INVENTORY",
+      "file": "screens/KR_UI_POIN_GANDA_INVENTORY.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_UNCLAIMED",
+      "file": "screens/KR_UI_SARINAH_UNCLAIMED.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_YELLOW_CHECKIN",
+      "file": "screens/KR_UI_SARINAH_YELLOW_CHECKIN.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_YELLOW_CHECKIN",
+      "file": "components/KR_COMPONENT_CHECKIN.png",
+      "type": "component"
+    },
+    {
+      "state": "SARINAH_YELLOW_CHALLENGE",
+      "file": "screens/KR_UI_SARINAH_YELLOW_CHALLENGE.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_YELLOW_CHALLENGE",
+      "file": "components/KR_COMPONENT_CHALLENGE.png",
+      "type": "component"
+    },
+    {
+      "state": "SARINAH_FAILED",
+      "file": "screens/KR_UI_SARINAH_FAILED.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_FAILED",
+      "file": "components/KR_COMPONENT_COOLDOWN.png",
+      "type": "component"
+    },
+    {
+      "state": "SARINAH_TEAM_COOLDOWN",
+      "file": "screens/KR_UI_SARINAH_TEAM_COOLDOWN.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_OPPORTUNITY_NOTICE",
+      "file": "screens/KR_UI_SARINAH_OPPORTUNITY_NOTICE.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_OPPORTUNITY_NOTICE",
+      "file": "components/KR_COMPONENT_OPPORTUNITY.png",
+      "type": "component"
+    },
+    {
+      "state": "SARINAH_GREEN_DETAIL",
+      "file": "screens/KR_UI_SARINAH_GREEN_DETAIL.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_GREEN_CHECKIN",
+      "file": "screens/KR_UI_SARINAH_GREEN_CHECKIN.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_GREEN_CHALLENGE",
+      "file": "screens/KR_UI_SARINAH_GREEN_CHALLENGE.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_CLAIMED",
+      "file": "screens/KR_UI_SARINAH_CLAIMED.png",
+      "type": "screen"
+    },
+    {
+      "state": "SARINAH_CLAIMED",
+      "file": "components/KR_COMPONENT_CLAIM_SUCCESS.png",
+      "type": "component"
+    },
+    {
+      "state": "ZONE_NEUTRAL",
+      "file": "screens/KR_UI_ZONE_NEUTRAL.png",
+      "type": "screen"
+    },
+    {
+      "state": "ZONE_NEUTRAL",
+      "file": "components/KR_COMPONENT_ZONE_NEUTRAL.png",
+      "type": "component"
+    },
+    {
+      "state": "POIN_GANDA_CARD",
+      "file": "screens/KR_UI_POIN_GANDA_CARD.png",
+      "type": "screen"
+    },
+    {
+      "state": "POIN_GANDA_CARD",
+      "file": "components/KR_COMPONENT_POIN_GANDA.png",
+      "type": "component"
+    },
+    {
+      "state": "POIN_GANDA_ACTIVATED",
+      "file": "screens/KR_UI_POIN_GANDA_ACTIVATED.png",
+      "type": "screen"
+    },
+    {
+      "state": "ZONE_GREEN",
+      "file": "screens/KR_UI_ZONE_GREEN.png",
+      "type": "screen"
+    },
+    {
+      "state": "ZONE_GREEN",
+      "file": "components/KR_COMPONENT_ZONE_GREEN.png",
+      "type": "component"
+    },
+    {
+      "state": "SCORE_GREEN_LEADING",
+      "file": "screens/KR_UI_SCORE_GREEN_LEADING.png",
+      "type": "screen"
+    },
+    {
+      "state": "SCORE_GREEN_LEADING",
+      "file": "components/KR_COMPONENT_TEAM_STANDINGS.png",
+      "type": "component"
+    },
+    {
+      "state": "MATCH_RESULT",
+      "file": "screens/KR_UI_MATCH_RESULT.png",
+      "type": "screen"
+    },
+    {
+      "state": "MATCH_RESULT",
+      "file": "components/KR_COMPONENT_RESULT.png",
+      "type": "component"
+    },
+    {
+      "state": "MATCH_RECAP_SHARING",
+      "file": "screens/KR_UI_MATCH_RECAP_SHARING.png",
+      "type": "screen"
+    },
+    {
+      "state": "MATCH_RECAP_SHARING",
+      "file": "components/KR_COMPONENT_RECAP_LINK.png",
+      "type": "component"
+    },
+    {
+      "state": "MAP_GBK",
+      "file": "maps/KR_UI_MAP_GBK.png",
+      "type": "map"
+    },
+    {
+      "state": "MAP_BUNDARAN_HI",
+      "file": "maps/KR_UI_MAP_BUNDARAN_HI.png",
+      "type": "map"
+    },
+    {
+      "state": "MAP_SARINAH",
+      "file": "maps/KR_UI_MAP_SARINAH.png",
+      "type": "map"
+    }
+  ]
+}
