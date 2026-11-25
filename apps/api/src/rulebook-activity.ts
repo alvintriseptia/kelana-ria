@@ -18,22 +18,45 @@ const reminderWindowMs = 30_000;
 type EventCopy = Omit<RoomActivityEvent, "id" | "sequence">;
 type Seat = { seatId: string };
 
-export function createRoomActivity() {
-  const feeds = new Map<string, { sequence: number; events: RoomActivityEvent[] }>();
-  let claimEventCount = 0;
-  let claimOwners = new Map<string, string | null>();
-  let zoneControllers = new Map<string, string | null>();
-  let claimHands = new Map<string, number>();
-  let claimProofs = new Map<string, string>();
-  let seekTurn = 0;
-  let seekPhase: SeekEngineMatch["phase"] = "lobby";
-  let completedTurns = 0;
-  let seekDrawKey = "";
-  let seekHandKey = "";
-  let seekCurseKey = "";
-  const questionStates = new Map<string, SeekEngineQuestion["status"]>();
+export type RoomActivitySnapshot = {
+  feeds: [string, { sequence: number; events: RoomActivityEvent[] }][];
+  claimEventCount: number;
+  claimOwners: [string, string | null][];
+  zoneControllers: [string, string | null][];
+  claimHands: [string, number][];
+  claimProofs: [string, string][];
+  seekTurn: number;
+  seekPhase: SeekEngineMatch["phase"];
+  completedTurns: number;
+  seekDrawKey: string;
+  seekHandKey: string;
+  seekCurseKey: string;
+  questionStates: [string, SeekEngineQuestion["status"]][];
+};
+
+export function createRoomActivity(initial?: RoomActivitySnapshot) {
+  const feeds = new Map<string, { sequence: number; events: RoomActivityEvent[] }>(
+    initial?.feeds.map(([seatId, feed]) => [
+      seatId,
+      { sequence: feed.sequence, events: feed.events.map((event) => ({ ...event })) },
+    ]) ?? [],
+  );
+  let claimEventCount = initial?.claimEventCount ?? 0;
+  let claimOwners = new Map<string, string | null>(initial?.claimOwners ?? []);
+  let zoneControllers = new Map<string, string | null>(initial?.zoneControllers ?? []);
+  let claimHands = new Map<string, number>(initial?.claimHands ?? []);
+  let claimProofs = new Map<string, string>(initial?.claimProofs ?? []);
+  let seekTurn = initial?.seekTurn ?? 0;
+  let seekPhase: SeekEngineMatch["phase"] = initial?.seekPhase ?? "lobby";
+  let completedTurns = initial?.completedTurns ?? 0;
+  let seekDrawKey = initial?.seekDrawKey ?? "";
+  let seekHandKey = initial?.seekHandKey ?? "";
+  let seekCurseKey = initial?.seekCurseKey ?? "";
+  const questionStates = new Map<string, SeekEngineQuestion["status"]>(initial?.questionStates ?? []);
+  let publishedSinceCheck = false;
 
   function publish(seats: readonly Seat[], copy: EventCopy, alertFor?: (seatId: string) => boolean) {
+    if (seats.length > 0) publishedSinceCheck = true;
     for (const { seatId } of seats) {
       const feed = feeds.get(seatId) ?? { sequence: 0, events: [] };
       const sequence = ++feed.sequence;
@@ -48,13 +71,17 @@ export function createRoomActivity() {
     return { sequence: feed?.sequence ?? 0, events: feed?.events.slice() ?? [], prompt };
   }
 
-  function observeClaim(match: ClaimEngineMatch, now: number, zones = computeZoneStandings(match).zones) {
+  function observeClaim(match: ClaimEngineMatch, now: number, zones = computeZoneStandings(match).zones): boolean {
+    publishedSinceCheck = false;
+    let dirty = false;
     const { seats, phase } = match;
     const zoneById = new Map(zones.map(zone => [zone.zoneId, zone]));
     const landmarkById = new Map(match.pack.geography.landmarks.map(landmark => [landmark.id, landmark]));
     const changedZones = new Set(zones.filter(zone =>
       zone.controllerTeamId !== (zoneControllers.get(zone.zoneId) ?? null)).map(zone => zone.zoneId));
+    if (changedZones.size > 0) dirty = true;
     const teamOf = (seatId: string) => seats.find(seat => seat.seatId === seatId)?.teamId;
+    if (claimEventCount !== match.events.length) dirty = true;
     for (const event of match.events.slice(claimEventCount)) {
       const { type, at, landmarkId } = event;
       if (type === "started") {
@@ -101,7 +128,9 @@ export function createRoomActivity() {
     }
     for (const seat of seats) {
       const count = match.deck.handsBySeat[seat.seatId]?.length ?? 0;
-      if (phase === "active" && count > (claimHands.get(seat.seatId) ?? 0)) {
+      const prevCount = claimHands.get(seat.seatId) ?? 0;
+      if (count !== prevCount) dirty = true;
+      if (phase === "active" && count > prevCount) {
         publish([seat], { kind: "draw", text: "Kartu baru masuk ke tanganmu.", panel: "cards", at: now });
       }
       claimHands.set(seat.seatId, count);
@@ -109,6 +138,9 @@ export function createRoomActivity() {
     const proofs = new Map(Object.values(match.activeAttemptsBySeat).flatMap(attempt => attempt?.pendingPhoto
       ? [[attempt.seatId, attempt.landmarkId] as const]
       : []));
+    if (proofs.size !== claimProofs.size || [...proofs.entries()].some(([seatId, landmarkId]) => claimProofs.get(seatId) !== landmarkId)) {
+      dirty = true;
+    }
     if (phase === "active") {
       for (const [seatId, landmarkId] of claimProofs) {
         if (!proofs.has(seatId)) {
@@ -119,10 +151,17 @@ export function createRoomActivity() {
         }
       }
     }
+    for (const landmark of Object.values(match.landmarks)) {
+      if ((claimOwners.get(landmark.landmarkId) ?? null) !== landmark.ownerTeamId) {
+        dirty = true;
+        break;
+      }
+    }
     claimProofs = proofs;
     claimEventCount = match.events.length;
     claimOwners = new Map(Object.values(match.landmarks).map(landmark => [landmark.landmarkId, landmark.ownerTeamId]));
     zoneControllers = new Map(zones.map(zone => [zone.zoneId, zone.controllerTeamId]));
+    return dirty || publishedSinceCheck;
   }
 
   function viewClaim(room: ClaimEngineRoomView): RoomActivityFeed {
@@ -142,7 +181,9 @@ export function createRoomActivity() {
     return view(room.seatId, nextPrompt(prompts));
   }
 
-  function observeSeek(match: SeekEngineMatch, deck: SeekDeckEngineState, now: number) {
+  function observeSeek(match: SeekEngineMatch, deck: SeekDeckEngineState, now: number): boolean {
+    publishedSinceCheck = false;
+    let dirty = false;
     const { seats, turnNumber: turn, phase } = match;
     const hiderId = activeHiderSeatId(match);
     const hiders = seats.filter(seat => seat.seatId === hiderId);
@@ -152,6 +193,7 @@ export function createRoomActivity() {
 
     function noteQuestion(question: SeekEngineQuestion, questionTurn: number, formerHiderId: string | null, active: boolean) {
       if (questionStates.get(question.id) === question.status) return;
+      dirty = true;
       questionStates.set(question.id, question.status);
       if (question.status === "pending") {
         publish(hiders, { kind: "question", text: "Ada pertanyaan baru.", panel: "questions", at: question.askedAt, turn: questionTurn });
@@ -168,12 +210,14 @@ export function createRoomActivity() {
       }
     }
 
+    if (completedTurns !== match.turns.length) dirty = true;
     for (const result of match.turns.slice(completedTurns)) {
       for (const clue of result.clues) noteQuestion(clue, result.turnNumber, result.hiderSeatId, false);
       publish(seats, { kind: "turn-complete", text: "Giliran selesai.", panel: "regroup", at: result.completedAt, turn: result.turnNumber });
     }
     completedTurns = match.turns.length;
     if (newTurn) {
+      dirty = true;
       questionStates.clear();
       seekDrawKey = seekHandKey = seekCurseKey = "";
       if (!match.outcome) {
@@ -181,6 +225,7 @@ export function createRoomActivity() {
         publish(seekers, { kind: "role", text: "Giliranmu mencari. Periksa waktu mulai.", panel: "board", at: now, turn }, () => true);
       }
     }
+    if (phase !== seekPhase) dirty = true;
     if (phase === "seeking" && seekPhase !== phase) {
       publish(seekers, { kind: "release", text: "Waktu mencari dimulai.", panel: "board", at: match.releaseAt ?? now, turn }, () => true);
     }
@@ -192,6 +237,7 @@ export function createRoomActivity() {
       const currentDraw = deck.activeDraw?.cards[0]?.instanceId ?? "";
       const currentHand = deck.hand.map(card => card.instanceId).join(":");
       const currentCurses = deck.activeCurses.map(curse => curse.curseInstanceId).join(":");
+      if (currentDraw !== seekDrawKey || currentHand !== seekHandKey || currentCurses !== seekCurseKey) dirty = true;
       if (currentDraw && currentDraw !== seekDrawKey) {
         publish(hiders, { kind: "draw", text: "Pilih kartu untuk disimpan.", panel: "cards", at: now, turn });
       }
@@ -210,6 +256,7 @@ export function createRoomActivity() {
     }
     seekTurn = turn;
     seekPhase = phase;
+    return dirty || publishedSinceCheck;
   }
 
   function viewSeek(room: SeekEngineRoomView, deck: SeekDeckPublicView | SeekDeckHiderView): RoomActivityFeed {
@@ -248,7 +295,28 @@ export function createRoomActivity() {
     return view(room.seatId, nextPrompt(prompts));
   }
 
-  return { observeClaim, observeSeek, viewClaim, viewSeek };
+  function snapshot(): RoomActivitySnapshot {
+    return {
+      feeds: [...feeds.entries()].map(([seatId, feed]) => [
+        seatId,
+        { sequence: feed.sequence, events: feed.events.map((event) => ({ ...event })) },
+      ]),
+      claimEventCount,
+      claimOwners: [...claimOwners.entries()],
+      zoneControllers: [...zoneControllers.entries()],
+      claimHands: [...claimHands.entries()],
+      claimProofs: [...claimProofs.entries()],
+      seekTurn,
+      seekPhase,
+      completedTurns,
+      seekDrawKey,
+      seekHandKey,
+      seekCurseKey,
+      questionStates: [...questionStates.entries()],
+    };
+  }
+
+  return { observeClaim, observeSeek, viewClaim, viewSeek, snapshot };
 }
 
 function nextPrompt(prompts: RoomActivityNotice[]): RoomActivityNotice | null {

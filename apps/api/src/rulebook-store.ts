@@ -46,6 +46,14 @@ import { loadOfficialClaimPacks, loadOfficialSeekPacks } from "./official-packs.
 import { createRoomActivity } from "./rulebook-activity.js";
 import { claimMatchRecap, rulebookRecapStore, seekMatchRecap, type ShareRecapOptions } from "./rulebook-recaps.js";
 import {
+  deserializeLiveSession,
+  serializeLiveSession,
+  type LiveClaimSession,
+  type LiveSeekSession,
+  type LiveSession,
+  type SerializedLiveSession,
+} from "./rulebook-session-codec.js";
+import {
   buyoutSeekCurse,
   chooseSeekDrawCards,
   clearCurseByGpsDetour,
@@ -197,27 +205,6 @@ function supportsMode(pack: AnyRulebookPack, mode?: RulebookPlayMode): boolean {
     : pack.session.maxPlayers >= 2;
 }
 
-type LiveSeekSession = {
-  format: "hide-and-seek";
-  pass: RulebookRoomPass;
-  match: SeekEngineMatch;
-  photos: Map<string, Buffer>;
-  deck: SeekDeckEngineState;
-  appliedDeckActions: Map<string, { ok: boolean; error?: string; [key: string]: unknown }>;
-  activity: ReturnType<typeof createRoomActivity>;
-  qa?: { offsetMs: number; advances: Set<string> };
-};
-
-type LiveClaimSession = {
-  format: "claim-the-city";
-  pass: RulebookRoomPass;
-  match: ClaimEngineMatch;
-  photos: Map<string, Buffer>;
-  activity: ReturnType<typeof createRoomActivity>;
-};
-
-type LiveSession = (LiveSeekSession | LiveClaimSession) & { recapSaved?: boolean };
-
 function isClaimPack(pack: AnyRulebookPack): pack is ClaimRulebookPack {
   return pack.meta.format === "claim-the-city";
 }
@@ -346,10 +333,16 @@ export function toPublicClaimListing(record: StoredRulebookRecord): ClaimPublicL
 
 export function rulebookStore(
   databasePath: string,
-  options: { midtrans?: MidtransAdapter; officialPacksDir?: string } = {},
+  options: { midtrans?: MidtransAdapter; officialPacksDir?: string; now?: () => number } = {},
 ) {
   if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
-  const db = new DatabaseSync(databasePath);
+  const db = new DatabaseSync(databasePath, { timeout: 5000 });
+  db.exec(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA synchronous = NORMAL;
+    PRAGMA secure_delete = ON;
+    PRAGMA foreign_keys = ON;
+  `);
   const recaps = rulebookRecapStore(db);
   const midtrans = options.midtrans ?? createMidtransAdapterFromEnv();
 
@@ -384,18 +377,58 @@ export function rulebookStore(
       room_code TEXT UNIQUE NOT NULL,
       payload TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS rulebook_live_rooms (
+      room_code TEXT PRIMARY KEY,
+      format TEXT NOT NULL,
+      state_rev INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      touch_seq INTEGER NOT NULL,
+      payload TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS rulebook_room_photos (
+      room_code TEXT NOT NULL REFERENCES rulebook_live_rooms(room_code) ON DELETE CASCADE,
+      photo_id TEXT NOT NULL,
+      bytes BLOB NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (room_code, photo_id)
+    );
+    CREATE TABLE IF NOT EXISTS rulebook_catalog_rooms (
+      request_key TEXT PRIMARY KEY,
+      room_code TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS rulebook_pending_orders (
+      order_id TEXT PRIMARY KEY,
+      buyer_hash TEXT NOT NULL,
+      expires_at INTEGER NOT NULL,
+      payload TEXT NOT NULL
+    );
   `);
 
   const officialSeekLoaded = loadOfficialSeekPacks(options.officialPacksDir);
   const officialClaimLoaded = loadOfficialClaimPacks(options.officialPacksDir);
   const upsertVersionStmt = db.prepare(`
-    INSERT OR REPLACE INTO rulebook_versions (pack_id, version, format, is_official, status, owner_hash, payload)
+    INSERT INTO rulebook_versions (pack_id, version, format, is_official, status, owner_hash, payload)
     VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(pack_id, version) DO UPDATE SET
+      format = excluded.format,
+      is_official = excluded.is_official,
+      status = excluded.status,
+      owner_hash = excluded.owner_hash,
+      payload = excluded.payload
   `);
   const getVersionStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE pack_id = ? AND version = ?");
   const listVersionsStmt = db.prepare("SELECT payload FROM rulebook_versions ORDER BY is_official DESC, pack_id ASC, version DESC");
   const latestVersionStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE pack_id = ? ORDER BY version DESC LIMIT 1");
-  const upsertOrderStmt = db.prepare("INSERT OR REPLACE INTO rulebook_orders (order_id, buyer_hash, pack_id, version, payload) VALUES (?, ?, ?, ?, ?)");
+  const upsertOrderStmt = db.prepare(`
+    INSERT INTO rulebook_orders (order_id, buyer_hash, pack_id, version, payload)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(order_id) DO UPDATE SET
+      buyer_hash = excluded.buyer_hash,
+      pack_id = excluded.pack_id,
+      version = excluded.version,
+      payload = excluded.payload
+  `);
   const getOrderStmt = db.prepare("SELECT payload, buyer_hash FROM rulebook_orders WHERE order_id = ?");
   const listOrdersStmt = db.prepare("SELECT payload FROM rulebook_orders ORDER BY order_id DESC");
   const getEarningByOrderStmt = db.prepare("SELECT payload FROM rulebook_earnings WHERE order_id = ?");
@@ -405,7 +438,79 @@ export function rulebookStore(
   const getPassByCodeStmt = db.prepare("SELECT payload FROM rulebook_passes WHERE room_code = ?");
   const insertPassStmt = db.prepare("INSERT OR IGNORE INTO rulebook_passes (pass_id, order_id, room_code, payload) VALUES (?, ?, ?, ?)");
 
-  const nowSeed = Date.now();
+  const getLiveRoomStmt = db.prepare("SELECT 1 FROM rulebook_live_rooms WHERE room_code = ?");
+  const deleteLiveRoomStmt = db.prepare("DELETE FROM rulebook_live_rooms WHERE room_code = ?");
+  const upsertLiveRoomStmt = db.prepare(`
+    INSERT INTO rulebook_live_rooms (room_code, format, state_rev, updated_at, touch_seq, payload)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(room_code) DO UPDATE SET
+      format = excluded.format,
+      state_rev = excluded.state_rev,
+      updated_at = excluded.updated_at,
+      touch_seq = excluded.touch_seq,
+      payload = excluded.payload
+  `);
+  const listLiveRoomsStmt = db.prepare("SELECT room_code, state_rev, touch_seq, payload FROM rulebook_live_rooms ORDER BY touch_seq ASC, updated_at ASC");
+  const listRoomPhotosStmt = db.prepare("SELECT room_code, photo_id, bytes FROM rulebook_room_photos");
+  const upsertRoomPhotoStmt = db.prepare(`
+    INSERT INTO rulebook_room_photos (room_code, photo_id, bytes, created_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(room_code, photo_id) DO UPDATE SET
+      bytes = excluded.bytes,
+      created_at = excluded.created_at
+  `);
+  const deleteRoomPhotoStmt = db.prepare("DELETE FROM rulebook_room_photos WHERE room_code = ? AND photo_id = ?");
+  const deleteAllRoomPhotosStmt = db.prepare("DELETE FROM rulebook_room_photos WHERE room_code = ?");
+  const upsertCatalogRoomStmt = db.prepare(`
+    INSERT INTO rulebook_catalog_rooms (request_key, room_code, created_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(request_key) DO UPDATE SET
+      room_code = excluded.room_code,
+      created_at = excluded.created_at
+  `);
+  const listCatalogRoomsStmt = db.prepare("SELECT request_key, room_code FROM rulebook_catalog_rooms");
+  const upsertPendingOrderStmt = db.prepare(`
+    INSERT INTO rulebook_pending_orders (order_id, buyer_hash, expires_at, payload)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(order_id) DO UPDATE SET
+      buyer_hash = excluded.buyer_hash,
+      expires_at = excluded.expires_at,
+      payload = excluded.payload
+  `);
+  const deletePendingOrderStmt = db.prepare("DELETE FROM rulebook_pending_orders WHERE order_id = ?");
+  const deleteExpiredPendingOrdersStmt = db.prepare("DELETE FROM rulebook_pending_orders WHERE expires_at <= ?");
+  const listPendingOrdersStmt = db.prepare("SELECT order_id, buyer_hash, expires_at, payload FROM rulebook_pending_orders WHERE expires_at > ?");
+
+  let txDepth = 0;
+  let commitCallbacks: (() => void)[] = [];
+
+  function onCommit(callback: () => void) {
+    if (txDepth > 0) commitCallbacks.push(callback);
+    else callback();
+  }
+
+  function transact<T>(fn: () => T): T {
+    if (txDepth > 0) return fn();
+    db.exec("BEGIN IMMEDIATE");
+    txDepth++;
+    commitCallbacks = [];
+    try {
+      const result = fn();
+      db.exec("COMMIT");
+      const callbacks = commitCallbacks;
+      commitCallbacks = [];
+      for (const callback of callbacks) callback();
+      return result;
+    } catch (error) {
+      commitCallbacks = [];
+      db.exec("ROLLBACK");
+      throw error;
+    } finally {
+      txDepth--;
+    }
+  }
+
+  const initNow = (options.now ?? Date.now)();
   const seedOfficial = (pack: AnyRulebookPack, snapshot: GeoSnapshot) => {
     const existing = getVersionStmt.get(pack.meta.packId, pack.meta.version) as { payload: string } | undefined;
     if (!existing) {
@@ -418,24 +523,102 @@ export function rulebookStore(
         ownerHash: "official",
         pack,
         snapshot,
-        updatedAt: nowSeed,
-        publishedAt: nowSeed,
+        updatedAt: initNow,
+        publishedAt: initNow,
         reviewNote: null,
         pausedReason: null,
       };
       upsertVersionStmt.run(rec.packId, rec.version, rec.format, 1, rec.status, rec.ownerHash, JSON.stringify(rec));
     }
   };
-  for (const { pack, snapshot } of officialSeekLoaded) seedOfficial(pack, snapshot);
-  for (const { pack, snapshot } of officialClaimLoaded) seedOfficial(pack, snapshot);
-
-  const liveRooms = new Map<string, LiveSession>();
-  const catalogRooms = new Map<string, string>();
-  const pendingOrders = new Map<string, ReturnType<typeof createOrder>>();
+  transact(() => {
+    for (const { pack, snapshot } of officialSeekLoaded) seedOfficial(pack, snapshot);
+    for (const { pack, snapshot } of officialClaimLoaded) seedOfficial(pack, snapshot);
+  });
 
   function getRecord(packId: string, version: number): StoredRulebookRecord | undefined {
     const row = getVersionStmt.get(packId, version) as { payload: string } | undefined;
     return row ? (JSON.parse(row.payload) as StoredRulebookRecord) : undefined;
+  }
+
+  const liveRooms = new Map<string, LiveSession>();
+  const catalogRooms = new Map<string, string>();
+  const pendingOrders = new Map<string, ReturnType<typeof createOrder>>();
+  const pendingOrderRecords = new Map<string, { buyerHash: string; order: RulebookOrder }>();
+  let touchSeq = 0;
+
+  // Rehydrate photos, active rooms, catalog room idempotency mappings, and unexpired pending orders.
+  const photosByRoom = new Map<string, Map<string, Buffer>>();
+  for (const row of listRoomPhotosStmt.all() as { room_code: string; photo_id: string; bytes: Uint8Array }[]) {
+    let bucket = photosByRoom.get(row.room_code);
+    if (!bucket) {
+      bucket = new Map();
+      photosByRoom.set(row.room_code, bucket);
+    }
+    bucket.set(row.photo_id, Buffer.from(row.bytes));
+  }
+  for (const row of listLiveRoomsStmt.all() as { room_code: string; state_rev: number; touch_seq: number; payload: string }[]) {
+    if (row.touch_seq > touchSeq) touchSeq = row.touch_seq;
+    const parsed = JSON.parse(row.payload) as SerializedLiveSession;
+    const rec = getRecord(parsed.pass.packId, parsed.pass.version);
+    if (!rec) continue;
+    const roomPhotos = photosByRoom.get(row.room_code) ?? new Map<string, Buffer>();
+    const session = deserializeLiveSession(parsed, rec.pack, rec.snapshot, roomPhotos);
+    session.stateRev = Math.max(session.stateRev, row.state_rev);
+    liveRooms.set(row.room_code, session);
+  }
+  for (const row of listCatalogRoomsStmt.all() as { request_key: string; room_code: string }[]) {
+    if (liveRooms.has(row.room_code)) catalogRooms.set(row.request_key, row.room_code);
+  }
+  deleteExpiredPendingOrdersStmt.run(initNow);
+  for (const row of listPendingOrdersStmt.all(initNow) as { order_id: string; buyer_hash: string; expires_at: number; payload: string }[]) {
+    const order = JSON.parse(row.payload) as RulebookOrder;
+    pendingOrderRecords.set(row.order_id, { buyerHash: row.buyer_hash, order });
+    if (isRecordedAdapter(midtrans)) {
+      midtrans.setOrderState(order.orderId, {
+        grossAmountIdr: order.grossAmountIdr,
+        currency: order.currency,
+        transactionStatus: "pending",
+        statusCode: "201",
+        paymentType: "qris",
+      });
+    }
+  }
+
+  function persistLiveSession(session: LiveSession, now: number, bumpRev: boolean) {
+    if (bumpRev) session.stateRev += 1;
+    if (session.match.outcome) {
+      deleteAllRoomPhotos(session);
+      deleteLiveRoomStmt.run(session.pass.roomCode);
+      return;
+    }
+    const seq = ++touchSeq;
+    upsertLiveRoomStmt.run(
+      session.pass.roomCode,
+      session.format,
+      session.stateRev,
+      now,
+      seq,
+      JSON.stringify(serializeLiveSession(session)),
+    );
+  }
+
+  function saveRoomPhoto(session: LiveSession, photoId: string, bytes: Buffer, now: number) {
+    upsertRoomPhotoStmt.run(session.pass.roomCode, photoId, bytes, now);
+    session.photos.set(photoId, bytes);
+  }
+
+  function deleteRoomPhoto(session: LiveSession, photoId: string): boolean {
+    const existed = session.photos.delete(photoId);
+    deleteRoomPhotoStmt.run(session.pass.roomCode, photoId);
+    return existed;
+  }
+
+  function deleteAllRoomPhotos(session: LiveSession): boolean {
+    const existed = session.photos.size > 0;
+    session.photos.clear();
+    deleteAllRoomPhotosStmt.run(session.pass.roomCode);
+    return existed;
   }
 
   function saveRecord(rec: StoredRulebookRecord) {
@@ -643,58 +826,80 @@ export function rulebookStore(
     qa = false,
     mode?: RulebookPlayMode,
   ): LiveSession {
-    const prefix = rec.format === "claim-the-city" ? "RC" : "RB";
-    let roomCode: string;
-    do {
-      roomCode = `${prefix}-${randomBytes(3).toString("hex").toUpperCase()}`;
-    } while (liveRooms.has(roomCode) || getPassByCodeStmt.get(roomCode) || recaps.has(roomCode));
-    const passId = `pass-${randomBytes(5).toString("hex")}`;
-    const pass: RulebookRoomPass = {
-      passId,
-      orderId,
-      roomCode,
-      packId: rec.packId,
-      version: rec.version,
-      format: rec.format,
-      maxPlayers: mode === "solo" ? 1 : rec.pack.session.maxPlayers,
-      ...(mode ? { mode, minPlayers: mode === "group" ? Math.max(2, rec.pack.session.minPlayers) : 1 } : {}),
-      paid: orderId !== null,
-      createdAt: now,
-    };
-
-    let session: LiveSession;
-    if (rec.format === "claim-the-city") {
-      const claimPack = rec.pack as ClaimRulebookPack;
-      const match = createClaimEngineMatch({
-        code: roomCode,
-        mode,
-        pack: claimPack,
-        snapshot: rec.snapshot,
-        hostSeatId: "seat-1",
-        hostName,
-        hostCredentialHash,
-      });
-      session = { format: "claim-the-city", pass, match, photos: new Map(), activity: createRoomActivity() };
-    } else {
-      const seekPack = rec.pack as HideSeekRulebookPack;
-      const match = createSeekEngineMatch({
-        code: roomCode,
-        pack: seekPack,
-        snapshot: rec.snapshot,
-        hostSeatId: "seat-1",
-        hostName,
-        hostCredentialHash,
-      });
-      const deck = createSeekDeckState(seekPack);
-      session = {
-        format: "hide-and-seek", pass, match, deck, photos: new Map(), appliedDeckActions: new Map(), activity: createRoomActivity(),
-        ...(qa ? { qa: { offsetMs: 0, advances: new Set<string>() } } : {}),
+    return transact(() => {
+      const prefix = rec.format === "claim-the-city" ? "RC" : "RB";
+      let roomCode: string;
+      do {
+        roomCode = `${prefix}-${randomBytes(3).toString("hex").toUpperCase()}`;
+      } while (
+        liveRooms.has(roomCode) ||
+        getPassByCodeStmt.get(roomCode) ||
+        getLiveRoomStmt.get(roomCode) ||
+        recaps.has(roomCode)
+      );
+      const passId = `pass-${randomBytes(5).toString("hex")}`;
+      const pass: RulebookRoomPass = {
+        passId,
+        orderId,
+        roomCode,
+        packId: rec.packId,
+        version: rec.version,
+        format: rec.format,
+        maxPlayers: mode === "solo" ? 1 : rec.pack.session.maxPlayers,
+        ...(mode ? { mode, minPlayers: mode === "group" ? Math.max(2, rec.pack.session.minPlayers) : 1 } : {}),
+        paid: orderId !== null,
+        createdAt: now,
       };
-    }
 
-    liveRooms.set(roomCode, session);
-    if (!qa) insertPassStmt.run(pass.passId, pass.orderId, pass.roomCode, JSON.stringify(pass));
-    return session;
+      let session: LiveSession;
+      if (rec.format === "claim-the-city") {
+        const claimPack = rec.pack as ClaimRulebookPack;
+        const match = createClaimEngineMatch({
+          code: roomCode,
+          mode,
+          pack: claimPack,
+          snapshot: rec.snapshot,
+          hostSeatId: "seat-1",
+          hostName,
+          hostCredentialHash,
+        });
+        session = {
+          format: "claim-the-city",
+          pass,
+          match,
+          photos: new Map(),
+          activity: createRoomActivity(),
+          stateRev: 1,
+        };
+      } else {
+        const seekPack = rec.pack as HideSeekRulebookPack;
+        const match = createSeekEngineMatch({
+          code: roomCode,
+          pack: seekPack,
+          snapshot: rec.snapshot,
+          hostSeatId: "seat-1",
+          hostName,
+          hostCredentialHash,
+        });
+        const deck = createSeekDeckState(seekPack);
+        session = {
+          format: "hide-and-seek",
+          pass,
+          match,
+          deck,
+          photos: new Map(),
+          appliedDeckActions: new Map(),
+          activity: createRoomActivity(),
+          ...(qa ? { qa: { offsetMs: 0, advances: new Set<string>() } } : {}),
+          stateRev: 1,
+        };
+      }
+
+      if (!qa) insertPassStmt.run(pass.passId, pass.orderId, pass.roomCode, JSON.stringify(pass));
+      persistLiveSession(session, now, false);
+      onCommit(() => liveRooms.set(roomCode, session));
+      return session;
+    });
   }
 
   function createFreeRoomFromRulebook(
@@ -718,8 +923,14 @@ export function rulebookStore(
     const requestKey = requestId ? JSON.stringify([hostHash, packId, version, mode, qa, requestId]) : undefined;
     const previousCode = requestKey && catalogRooms.get(requestKey);
     const previous = previousCode ? liveRooms.get(previousCode) : undefined;
-    const session = previous ?? instantiateRoom(rec, hostHash, hostName, now, null, qa, mode);
-    if (requestKey && !previous) catalogRooms.set(requestKey, session.pass.roomCode);
+    const session = previous ?? transact(() => {
+      const created = instantiateRoom(rec, hostHash, hostName, now, null, qa, mode);
+      if (requestKey) {
+        upsertCatalogRoomStmt.run(requestKey, created.pass.roomCode, now);
+        onCommit(() => catalogRooms.set(requestKey, created.pass.roomCode));
+      }
+      return created;
+    });
     const room =
       session.format === "claim-the-city"
         ? viewClaimEngineMatch(session.match, "seat-1", now)
@@ -739,6 +950,10 @@ export function rulebookStore(
     const orderId = requestId
       ? catalogOrderId(buyerHash, packId, version, mode, requestId)
       : `KRB-${now}-${randomBytes(3).toString("hex").toUpperCase()}`;
+    const cachedPending = pendingOrderRecords.get(orderId);
+    if (cachedPending && cachedPending.buyerHash === buyerHash && cachedPending.order.expiresAt > now) {
+      return { ok: true, order: cachedPending.order };
+    }
     const existing = getOrderStmt.get(orderId) as { payload: string; buyer_hash: string } | undefined;
     if (existing?.buyer_hash === buyerHash) return { ok: true, order: JSON.parse(existing.payload) as RulebookOrder };
     const pending = pendingOrders.get(orderId);
@@ -806,7 +1021,12 @@ export function rulebookStore(
       snapRedirectUrl: snap.redirectUrl,
       sandbox: true,
     };
-    upsertOrderStmt.run(orderId, buyerHash, rec.packId, rec.version, JSON.stringify(order));
+    const encoded = JSON.stringify(order);
+    transact(() => {
+      upsertOrderStmt.run(orderId, buyerHash, rec.packId, rec.version, encoded);
+      upsertPendingOrderStmt.run(orderId, buyerHash, order.expiresAt, encoded);
+      onCommit(() => pendingOrderRecords.set(orderId, { buyerHash, order }));
+    });
     return { ok: true, order };
   }
 
@@ -841,8 +1061,12 @@ export function rulebookStore(
       };
     }
     if (now >= order.expiresAt) {
-      order.status = "expired";
-      upsertOrderStmt.run(orderId, row.buyer_hash, order.packId, order.version, JSON.stringify(order));
+      transact(() => {
+        order.status = "expired";
+        upsertOrderStmt.run(orderId, row.buyer_hash, order.packId, order.version, JSON.stringify(order));
+        deletePendingOrderStmt.run(orderId);
+        onCommit(() => pendingOrderRecords.delete(orderId));
+      });
       return { ok: false, error: "order-expired" };
     }
 
@@ -873,43 +1097,59 @@ export function rulebookStore(
       error: status.transactionStatus === "capture" ? "payment-review" : `payment-${status.transactionStatus}`,
     };
 
-    const rec = getRecord(order.packId, order.version);
-    if (!rec) return { ok: false, error: "pack-not-found" };
-
-    const existingPassRow = getPassByOrderStmt.get(orderId) as { payload: string } | undefined;
-    const pass = existingPassRow
-      ? (JSON.parse(existingPassRow.payload) as RulebookRoomPass)
-      : instantiateRoom(rec, row.buyer_hash, hostName, now, orderId, false, order.mode).pass;
-
-    const existingEarningRow = getEarningByOrderStmt.get(orderId) as { payload: string } | undefined;
-    const earning: PackEarningsEntry = existingEarningRow
-      ? (JSON.parse(existingEarningRow.payload) as PackEarningsEntry)
-      : {
-          earningsEntryId: `earn-${randomBytes(4).toString("hex")}`,
-          orderId,
-          packId: rec.packId,
-          version: rec.version,
-          title: rec.pack.meta.title,
-          byline: rec.pack.meta.byline,
-          currency: "IDR",
-          grossAmountIdr: order.grossAmountIdr,
-          platformFeeIdr: order.platformFeeIdr,
-          creatorShareIdr: order.creatorShareIdr,
-          settledAt: now,
-          paymentMode: midtrans.mode,
-          sandbox: true,
+    return transact(() => {
+      const freshRow = getOrderStmt.get(orderId) as { payload: string; buyer_hash: string } | undefined;
+      if (!freshRow) return { ok: false as const, error: "order-not-found" };
+      const freshOrder = JSON.parse(freshRow.payload) as RulebookOrder;
+      if (freshOrder.status === "settled") {
+        const passRow = getPassByOrderStmt.get(orderId) as { payload: string } | undefined;
+        return {
+          ok: true as const,
+          duplicate: true,
+          order: freshOrder,
+          pass: passRow ? (JSON.parse(passRow.payload) as RulebookRoomPass) : undefined,
         };
-    if (!existingEarningRow) {
-      insertEarningStmt.run(earning.earningsEntryId, orderId, rec.packId, rec.version, JSON.stringify(earning));
-    }
+      }
+      const rec = getRecord(freshOrder.packId, freshOrder.version);
+      if (!rec) return { ok: false as const, error: "pack-not-found" };
 
-    order.status = "settled";
-    order.settledAt = now;
-    order.passId = pass.passId;
-    order.roomCode = pass.roomCode;
-    order.earningsEntryId = earning.earningsEntryId;
-    upsertOrderStmt.run(orderId, row.buyer_hash, order.packId, order.version, JSON.stringify(order));
-    return { ok: true, duplicate: false, order, pass };
+      const existingPassRow = getPassByOrderStmt.get(orderId) as { payload: string } | undefined;
+      const pass = existingPassRow
+        ? (JSON.parse(existingPassRow.payload) as RulebookRoomPass)
+        : instantiateRoom(rec, freshRow.buyer_hash, hostName, now, orderId, false, freshOrder.mode).pass;
+
+      const existingEarningRow = getEarningByOrderStmt.get(orderId) as { payload: string } | undefined;
+      const earning: PackEarningsEntry = existingEarningRow
+        ? (JSON.parse(existingEarningRow.payload) as PackEarningsEntry)
+        : {
+            earningsEntryId: `earn-${randomBytes(4).toString("hex")}`,
+            orderId,
+            packId: rec.packId,
+            version: rec.version,
+            title: rec.pack.meta.title,
+            byline: rec.pack.meta.byline,
+            currency: "IDR",
+            grossAmountIdr: freshOrder.grossAmountIdr,
+            platformFeeIdr: freshOrder.platformFeeIdr,
+            creatorShareIdr: freshOrder.creatorShareIdr,
+            settledAt: now,
+            paymentMode: midtrans.mode,
+            sandbox: true,
+          };
+      if (!existingEarningRow) {
+        insertEarningStmt.run(earning.earningsEntryId, orderId, rec.packId, rec.version, JSON.stringify(earning));
+      }
+
+      freshOrder.status = "settled";
+      freshOrder.settledAt = now;
+      freshOrder.passId = pass.passId;
+      freshOrder.roomCode = pass.roomCode;
+      freshOrder.earningsEntryId = earning.earningsEntryId;
+      upsertOrderStmt.run(orderId, freshRow.buyer_hash, freshOrder.packId, freshOrder.version, JSON.stringify(freshOrder));
+      deletePendingOrderStmt.run(orderId);
+      onCommit(() => pendingOrderRecords.delete(orderId));
+      return { ok: true as const, duplicate: false, order: freshOrder, pass };
+    });
   }
 
   function joinRoom(
@@ -930,6 +1170,7 @@ export function rulebookStore(
       const nextSeatId = `seat-${session.match.seats.length + 1}`;
       const joined = joinClaimEngineMatch(session.match, { seatId: nextSeatId, name, credentialHash: credHash });
       if (!joined.ok) return joined;
+      transact(() => persistLiveSession(session, now, true));
       touchLiveRoom(roomCode, session);
       return { ok: true, seatId: nextSeatId, room: viewClaimEngineMatch(session.match, nextSeatId, now) };
     }
@@ -941,6 +1182,7 @@ export function rulebookStore(
     const nextSeatId = `seat-${session.match.seats.length + 1}`;
     const joined = joinSeekEngineMatch(session.match, { seatId: nextSeatId, name, credentialHash: credHash });
     if (!joined.ok) return joined;
+    transact(() => persistLiveSession(session, now, true));
     touchLiveRoom(roomCode, session);
     return { ok: true, seatId: nextSeatId, room: viewSeekEngineMatch(session.match, nextSeatId, now) };
   }
@@ -963,40 +1205,67 @@ export function rulebookStore(
         ? claimAction.photoId : undefined;
       const replay = session.match.appliedActions.has(`${seatId}:${claimAction.actionId}`);
       if (!replay && photoId !== undefined && photoId !== photo?.id) return { error: "photo-required" };
-      const reply = applyClaimEngineAction(session.match, seatId, claimAction, now);
-      session.activity.observeClaim(session.match, now);
-      const pending = pendingClaimPhotos(session);
-      if (!replay && !reply.error && photo && pending.has(photo.id)) session.photos.set(photo.id, photo.bytes);
-      pruneClaimPhotos(session, pending);
-      captureCompletedMatch(session);
-      return reply;
+      return transact(() => {
+        const exp = expireClaimEngineMatch(session.match, now);
+        const reply = applyClaimEngineAction(session.match, seatId, claimAction, now);
+        const actChanged = session.activity.observeClaim(session.match, now);
+        const pending = pendingClaimPhotos(session);
+        let photoChanged = false;
+        if (!replay && !reply.error && photo && pending.has(photo.id)) {
+          saveRoomPhoto(session, photo.id, photo.bytes, now);
+          photoChanged = true;
+        }
+        if (pruneClaimPhotos(session, pending)) photoChanged = true;
+        const recapChanged = captureCompletedMatch(session);
+        if ((!replay && !reply.error) || exp.changed || actChanged || photoChanged || recapChanged) {
+          persistLiveSession(session, now, true);
+        }
+        return reply;
+      });
     }
     const seatId = findSeekEngineSeat(session.match, credHash);
     if (!seatId) return { error: "not-a-member" };
-    expireSeekDeckAndCurses(session.deck, session.match, now);
-    const prevTurn = session.match.turnNumber;
     const seekAction = action as SeekEngineAction;
     const replay = session.match.appliedActions.has(`${seatId}:${seekAction.actionId}`);
     if (!replay && seekAction.type === "answer-question" && seekAction.photoId && seekAction.photoId !== photo?.id) {
       return { error: "photo-required" };
     }
-    expireRoomPhotos(session, now);
-    const reply = applySeekEngineAction(session.match, seatId, seekAction, now);
-    if (replay) return reply;
-    for (const id of reply.purgedPhotoIds ?? []) session.photos.delete(id);
-    if (!reply.error && photo) session.photos.set(photo.id, photo.bytes);
-    if (!reply.error && seekAction.type === "ask") {
-      onSeekerQuestionAskedForCurses(session.deck, session.match, now);
-    }
-    if (!reply.error && reply.earnedDrawBatches?.length) {
-      enqueueSeekDrawBatches(session.deck, session.match, reply.earnedDrawBatches, now);
-    }
-    if (session.match.turnNumber !== prevTurn) {
-      session.deck = createSeekDeckState(session.match.pack);
-    }
-    session.activity.observeSeek(session.match, session.deck, now);
-    captureCompletedMatch(session);
-    return reply;
+    return transact(() => {
+      const deckExp = expireSeekDeckAndCurses(session.deck, session.match, now);
+      const prevTurn = session.match.turnNumber;
+      const roomExp = expireRoomPhotos(session, now);
+      const reply = applySeekEngineAction(session.match, seatId, seekAction, now);
+      if (replay) {
+        if (deckExp.changed || roomExp.changed || roomExp.photoChanged || roomExp.recapChanged) {
+          persistLiveSession(session, now, true);
+        }
+        return reply;
+      }
+      let photoChanged = roomExp.photoChanged;
+      for (const id of reply.purgedPhotoIds ?? []) {
+        if (deleteRoomPhoto(session, id)) photoChanged = true;
+      }
+      if (!reply.error && photo) {
+        saveRoomPhoto(session, photo.id, photo.bytes, now);
+        photoChanged = true;
+      }
+      if (session.match.outcome && deleteAllRoomPhotos(session)) photoChanged = true;
+      if (!reply.error && seekAction.type === "ask") {
+        onSeekerQuestionAskedForCurses(session.deck, session.match, now);
+      }
+      if (!reply.error && reply.earnedDrawBatches?.length) {
+        enqueueSeekDrawBatches(session.deck, session.match, reply.earnedDrawBatches, now);
+      }
+      if (session.match.turnNumber !== prevTurn) {
+        session.deck = createSeekDeckState(session.match.pack);
+      }
+      const actChanged = session.activity.observeSeek(session.match, session.deck, now);
+      const recapChanged = captureCompletedMatch(session);
+      if (!reply.error || deckExp.changed || roomExp.changed || photoChanged || actChanged || roomExp.recapChanged || recapChanged) {
+        persistLiveSession(session, now, true);
+      }
+      return reply;
+    });
   }
 
   function previewSeekQuestion(roomCode: string, credential: string, request: SeekMapPreviewRequest, now: number) {
@@ -1038,39 +1307,96 @@ export function rulebookStore(
     if (!match.seats.some(seat => seat.isHost && seat.seatId === seatId)) return { error: "qa-host-only" };
     if (qa.advances.has(actionId)) return { ok: true };
 
-    const current = now + qa.offsetMs;
-    expireRoomPhotos(session, current);
-    expireSeekDeckAndCurses(session.deck, match, current);
-    if (match.phaseEndsAt === null) return { error: "qa-no-active-clock" };
-    if (step === "phase-end" && expectedDeadline !== match.phaseEndsAt) return { error: "qa-deadline-changed" };
-    const delta = step === "phase-end" ? match.phaseEndsAt - current : step === "minute" ? 60_000 : 300_000;
-    qa.offsetMs += delta;
-    qa.advances.add(actionId);
-    const advanced = now + qa.offsetMs;
-    expireRoomPhotos(session, advanced);
-    expireSeekDeckAndCurses(session.deck, match, advanced);
-    return { ok: true };
+    return transact(() => {
+      const current = now + qa.offsetMs;
+      const beforeRoom = expireRoomPhotos(session, current);
+      const beforeDeck = expireSeekDeckAndCurses(session.deck, match, current);
+      if (match.phaseEndsAt === null) {
+        if (beforeRoom.changed || beforeRoom.photoChanged || beforeRoom.recapChanged || beforeDeck.changed) {
+          persistLiveSession(session, current, true);
+        }
+        return { error: "qa-no-active-clock" };
+      }
+      if (step === "phase-end" && expectedDeadline !== match.phaseEndsAt) {
+        if (beforeRoom.changed || beforeRoom.photoChanged || beforeRoom.recapChanged || beforeDeck.changed) {
+          persistLiveSession(session, current, true);
+        }
+        return { error: "qa-deadline-changed" };
+      }
+      const delta = step === "phase-end" ? match.phaseEndsAt - current : step === "minute" ? 60_000 : 300_000;
+      qa.offsetMs += delta;
+      qa.advances.add(actionId);
+      const advanced = now + qa.offsetMs;
+      expireRoomPhotos(session, advanced);
+      expireSeekDeckAndCurses(session.deck, match, advanced);
+      session.activity.observeSeek(match, session.deck, advanced);
+      captureCompletedMatch(session);
+      persistLiveSession(session, advanced, true);
+      return { ok: true };
+    });
   }
 
-  function captureCompletedMatch(session: LiveSession) {
+  function captureCompletedMatch(session: LiveSession): boolean {
     const { match } = session;
-    if (session.recapSaved || !match.outcome || match.startedAt === null) return;
+    if (session.recapSaved || !match.outcome || match.startedAt === null) return false;
     const first = match.seats[0];
-    if (!first) return;
+    if (!first) return false;
     const recap = session.format === "claim-the-city"
       ? claimMatchRecap(viewClaimEngineMatch(session.match, first.seatId, match.outcome.at),
           new Map(session.match.pack.geography.landmarks.map(landmark => [landmark.id, landmark.name])))
       : seekMatchRecap(viewSeekEngineMatch(session.match, first.seatId, match.outcome.at), Boolean(session.qa));
-    if (!recap) return;
+    if (!recap) return false;
     recaps.save(recap, match.seats.map(seat => seat.credentialHash));
     session.recapSaved = true;
+    return true;
   }
 
-  function expireRoomPhotos(session: LiveSeekSession, now: number) {
-    const { purgedPhotoIds } = expireSeekEngineMatch(session.match, now);
-    for (const id of purgedPhotoIds) session.photos.delete(id);
-    session.activity.observeSeek(session.match, session.deck, now);
-    captureCompletedMatch(session);
+  function expireRoomPhotos(
+    session: LiveSeekSession,
+    now: number,
+  ): { changed: boolean; photoChanged: boolean; recapChanged: boolean } {
+    const { changed, purgedPhotoIds } = expireSeekEngineMatch(session.match, now);
+    let photoChanged = false;
+    for (const id of purgedPhotoIds) {
+      if (deleteRoomPhoto(session, id)) photoChanged = true;
+    }
+    if (session.match.outcome && deleteAllRoomPhotos(session)) photoChanged = true;
+    const actChanged = session.activity.observeSeek(session.match, session.deck, now);
+    const recapChanged = captureCompletedMatch(session);
+    return { changed: changed || actChanged, photoChanged, recapChanged };
+  }
+
+  function syncClaimReadState(session: LiveClaimSession, now: number): boolean {
+    const exp = expireClaimEngineMatch(session.match, now);
+    const pending = pendingClaimPhotos(session);
+    const stalePhotos = [...session.photos.keys()].filter((id) => !pending.has(id));
+    const needsRecap = !session.recapSaved && Boolean(session.match.outcome) && session.match.startedAt !== null;
+    const actChanged = session.activity.observeClaim(session.match, now);
+    if (!exp.changed && stalePhotos.length === 0 && !needsRecap && !actChanged) return false;
+    transact(() => {
+      for (const id of stalePhotos) deleteRoomPhoto(session, id);
+      captureCompletedMatch(session);
+      persistLiveSession(session, now, true);
+    });
+    return true;
+  }
+
+  function syncSeekReadState(session: LiveSeekSession, now: number): boolean {
+    const matchExp = expireSeekEngineMatch(session.match, now);
+    const deckExp = expireSeekDeckAndCurses(session.deck, session.match, now);
+    const actChanged = session.activity.observeSeek(session.match, session.deck, now);
+    const shouldPurgeAll = Boolean(session.match.outcome) && session.photos.size > 0;
+    const needsRecap = !session.recapSaved && Boolean(session.match.outcome) && session.match.startedAt !== null;
+    if (!matchExp.changed && matchExp.purgedPhotoIds.length === 0 && !deckExp.changed && !actChanged && !shouldPurgeAll && !needsRecap) {
+      return false;
+    }
+    transact(() => {
+      for (const id of matchExp.purgedPhotoIds) deleteRoomPhoto(session, id);
+      if (shouldPurgeAll) deleteAllRoomPhotos(session);
+      captureCompletedMatch(session);
+      persistLiveSession(session, now, true);
+    });
+    return true;
   }
 
   async function answerSeekPhoto(
@@ -1107,10 +1433,12 @@ export function rulebookStore(
     ]);
   }
 
-  function pruneClaimPhotos(session: LiveClaimSession, pending = pendingClaimPhotos(session)) {
-    for (const id of session.photos.keys()) {
-      if (!pending.has(id)) session.photos.delete(id);
+  function pruneClaimPhotos(session: LiveClaimSession, pending = pendingClaimPhotos(session)): boolean {
+    let changed = false;
+    for (const id of [...session.photos.keys()]) {
+      if (!pending.has(id) && deleteRoomPhoto(session, id)) changed = true;
     }
+    return changed;
   }
 
   async function submitClaimPhoto(
@@ -1141,10 +1469,7 @@ export function rulebookStore(
     if (session.format === "claim-the-city") {
       const seatId = findClaimEngineSeat(session.match, digest(credential));
       if (!seatId) return undefined;
-      expireClaimEngineMatch(session.match, now);
-      pruneClaimPhotos(session);
-      session.activity.observeClaim(session.match, now);
-      captureCompletedMatch(session);
+      syncClaimReadState(session, now);
       if (!session.photos.has(photoId)) return undefined;
       const room = viewClaimEngineMatch(session.match, seatId, now);
       const eligible = room.pendingRivalPhotoReviews.some(review => review.photoId === photoId) ||
@@ -1152,7 +1477,7 @@ export function rulebookStore(
       return eligible ? session.photos.get(photoId) : undefined;
     }
     if (!findSeekEngineSeat(session.match, digest(credential))) return undefined;
-    expireRoomPhotos(session, now);
+    syncSeekReadState(session, now);
     return session.photos.get(photoId);
   }
 
@@ -1176,10 +1501,17 @@ export function rulebookStore(
       const cached = session.appliedDeckActions.get(dedupKey);
       if (cached) return cached;
     }
-    const result = playSeekDeckCard(session.deck, session.match, params, now);
-    session.activity.observeSeek(session.match, session.deck, now);
-    if (dedupKey && result.ok) session.appliedDeckActions.set(dedupKey, result);
-    return result;
+    return transact(() => {
+      const roomExp = expireRoomPhotos(session, now);
+      const deckExp = expireSeekDeckAndCurses(session.deck, session.match, now);
+      const result = playSeekDeckCard(session.deck, session.match, params, now);
+      const actChanged = session.activity.observeSeek(session.match, session.deck, now);
+      if (dedupKey && result.ok) session.appliedDeckActions.set(dedupKey, result);
+      if (result.ok || roomExp.changed || roomExp.photoChanged || roomExp.recapChanged || deckExp.changed || actChanged) {
+        persistLiveSession(session, now, true);
+      }
+      return result;
+    });
   }
 
   function deckActionInRoom(
@@ -1201,20 +1533,26 @@ export function rulebookStore(
       const cached = session.appliedDeckActions.get(dedupKey);
       if (cached) return cached;
     }
-    const remember = (res: { ok: boolean; error?: string; [key: string]: unknown }) => {
-      session.activity.observeSeek(session.match, session.deck, now);
+    const runDeckAction = (fn: () => { ok: boolean; error?: string; [key: string]: unknown }) => transact(() => {
+      const roomExp = expireRoomPhotos(session, now);
+      const deckExp = expireSeekDeckAndCurses(session.deck, session.match, now);
+      const res = fn();
+      const actChanged = session.activity.observeSeek(session.match, session.deck, now);
       if (dedupKey && res.ok) session.appliedDeckActions.set(dedupKey, res);
+      if (res.ok || roomExp.changed || roomExp.photoChanged || roomExp.recapChanged || deckExp.changed || actChanged) {
+        persistLiveSession(session, now, true);
+      }
       return res;
-    };
+    });
     if (kind === "choose-draw") {
       if (!isHider) return { ok: false, error: "hider-only" };
       const keepInstanceIds = Array.isArray(action.keepInstanceIds) ? action.keepInstanceIds.map(String) : [];
       const discardInstanceIds = Array.isArray(action.discardInstanceIds) ? action.discardInstanceIds.map(String) : undefined;
-      return remember(chooseSeekDrawCards(session.deck, session.match, { keepInstanceIds, discardInstanceIds }, now));
+      return runDeckAction(() => chooseSeekDrawCards(session.deck, session.match, { keepInstanceIds, discardInstanceIds }, now));
     }
     if (kind === "review-curse-photo") {
       if (!isHider) return { ok: false, error: "hider-only" };
-      return remember(reviewCursePhotoProof(
+      return runDeckAction(() => reviewCursePhotoProof(
         session.deck,
         session.match,
         { curseInstanceId: String(action.curseInstanceId ?? ""), approve: Boolean(action.approve) },
@@ -1223,7 +1561,7 @@ export function rulebookStore(
     }
     if (kind === "clear-curse-gps") {
       if (isHider) return { ok: false, error: "seeker-only" };
-      return remember(clearCurseByGpsDetour(
+      return runDeckAction(() => clearCurseByGpsDetour(
         session.deck,
         session.match,
         String(action.curseInstanceId ?? ""),
@@ -1233,7 +1571,7 @@ export function rulebookStore(
     }
     if (kind === "submit-curse-photo") {
       if (isHider) return { ok: false, error: "seeker-only" };
-      return remember(submitCursePhotoProof(
+      return runDeckAction(() => submitCursePhotoProof(
         session.deck,
         session.match,
         { curseInstanceId: String(action.curseInstanceId ?? ""), seatId, photoId: String(action.photoId ?? "") },
@@ -1242,11 +1580,11 @@ export function rulebookStore(
     }
     if (kind === "clear-curse-honor") {
       if (isHider) return { ok: false, error: "seeker-only" };
-      return remember(clearCurseByHonorTask(session.deck, session.match, String(action.curseInstanceId ?? ""), now));
+      return runDeckAction(() => clearCurseByHonorTask(session.deck, session.match, String(action.curseInstanceId ?? ""), now));
     }
     if (kind === "buyout-curse") {
       if (isHider) return { ok: false, error: "seeker-only" };
-      return remember(buyoutSeekCurse(session.deck, session.match, String(action.curseInstanceId ?? ""), now));
+      return runDeckAction(() => buyoutSeekCurse(session.deck, session.match, String(action.curseInstanceId ?? ""), now));
     }
     return { ok: false, error: "unknown-deck-action" };
   }
@@ -1264,11 +1602,8 @@ export function rulebookStore(
       const seatId = findClaimEngineSeat(session.match, credHash);
       if (!seatId) return undefined;
       touchLiveRoom(roomCode, session);
-      expireClaimEngineMatch(session.match, now);
-      pruneClaimPhotos(session);
-      captureCompletedMatch(session);
+      syncClaimReadState(session, now);
       const room = viewClaimEngineMatch(session.match, seatId, now);
-      session.activity.observeClaim(session.match, now, room.zones);
       return {
         format: "claim-the-city" as const,
         room,
@@ -1291,9 +1626,7 @@ export function rulebookStore(
     const seatId = findSeekEngineSeat(session.match, credHash);
     if (!seatId) return undefined;
     touchLiveRoom(roomCode, session);
-    expireRoomPhotos(session, now);
-    expireSeekDeckAndCurses(session.deck, session.match, now);
-    session.activity.observeSeek(session.match, session.deck, now);
+    syncSeekReadState(session, now);
     const room = viewSeekEngineMatch(session.match, seatId, now);
     const deck = viewSeekDeck(session.deck, room.role === "hider");
     return {
@@ -1329,9 +1662,7 @@ export function rulebookStore(
       if (session.format === "claim-the-city") {
         const seatId = findClaimEngineSeat(session.match, credHash);
         if (!seatId) continue;
-        expireClaimEngineMatch(session.match, ts);
-        pruneClaimPhotos(session);
-        captureCompletedMatch(session);
+        syncClaimReadState(session, ts);
         const room = viewClaimEngineMatch(session.match, seatId, ts);
         if ((room.phase !== "lobby" && room.phase !== "active") || room.outcome) continue;
         active.push({
@@ -1348,9 +1679,7 @@ export function rulebookStore(
       } else {
         const seatId = findSeekEngineSeat(session.match, credHash);
         if (!seatId) continue;
-        expireRoomPhotos(session, ts);
-        expireSeekDeckAndCurses(session.deck, session.match, ts);
-        session.activity.observeSeek(session.match, session.deck, ts);
+        syncSeekReadState(session, ts);
         const room = viewSeekEngineMatch(session.match, seatId, ts);
         if (
           (room.phase !== "lobby" &&

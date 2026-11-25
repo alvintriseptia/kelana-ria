@@ -185,6 +185,9 @@ function closeMatch(
   match.outcome = { winnerSeatId, reason, at };
   match.foundCode = null;
   match.moveZoneUntil = null;
+  match.hiderLastPosition = null;
+  match.thermometerStart = null;
+  delete match.seekerPosition;
   for (const question of match.questions) {
     if (question.status === "pending") {
       question.status = "closed";
@@ -830,7 +833,7 @@ export function applySeekEngineAction(
       const check = verifyGpsAtPoint(station, action.fix, now, match.pack.geography);
       if (!check.ok) return finish({ error: check.error, distanceMeters: check.distanceMeters });
       match.anchorStationId = station.id;
-      match.hiderLastPosition = { latitude: action.fix.latitude, longitude: action.fix.longitude };
+      match.hiderLastPosition = null;
       match.hiderOutOfZone = false;
       if (relocating) {
         match.moveZoneUntil = null;
@@ -846,7 +849,12 @@ export function applySeekEngineAction(
       if (!isHider) return finish({ error: "hider-only" });
       const fresh = verifyGpsFreshAndAccurate(action.fix, now, match.pack.geography);
       if (!fresh.ok) return finish({ error: fresh.error });
-      match.hiderLastPosition = { latitude: action.fix.latitude, longitude: action.fix.longitude };
+      if (match.phase === "head_start" && match.anchorStationId === null && match.pack.session.missedLockPolicy === "auto_lock_nearest_station") {
+        const nearest = findNearestStation(action.fix, match.snapshot.stations, true);
+        match.hiderLastPosition = nearest ? { latitude: nearest.station.latitude, longitude: nearest.station.longitude } : null;
+      } else {
+        match.hiderLastPosition = null;
+      }
       if (match.phase === "seeking" && match.anchorStationId && match.moveZoneUntil === null) {
         const anchor = findAnchorStation(match, match.anchorStationId);
         if (anchor) {

@@ -360,19 +360,27 @@ export function rulebookRecapStore(db: DatabaseSync) {
     };
   }
 
+  function runInTx<T>(fn: () => T): T {
+    if (db.isTransaction) return fn();
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = fn();
+      db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   return {
     save(recap: RulebookMatchRecap, participants: string[]) {
-      db.exec("BEGIN IMMEDIATE");
-      try {
+      runInTx(() => {
         const inserted = insert.run(recap.matchId, recap.completedAt, JSON.stringify(recap));
         if (Number(inserted.changes) > 0) {
           for (const member of participants) addParticipant.run(member, recap.matchId);
         }
-        db.exec("COMMIT");
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
+      });
     },
     get(matchId: string, participantHash: string): RulebookMatchRecap | undefined {
       const row = read.get(matchId, participantHash) as { payload: string } | undefined;
@@ -414,13 +422,9 @@ export function rulebookRecapStore(db: DatabaseSync) {
       options: ShareRecapOptions,
       now: number,
     ): { recap: RulebookMatchRecap; share: RecapPublicShareState; publicRecap: PublicMatchRecap } | undefined {
-      db.exec("BEGIN IMMEDIATE");
-      try {
+      return runInTx(() => {
         const row = read.get(matchId, participantHash) as { payload: string } | undefined;
-        if (!row) {
-          db.exec("ROLLBACK");
-          return undefined;
-        }
+        if (!row) return undefined;
         const recap = JSON.parse(row.payload) as RulebookMatchRecap;
         const aliases = resolvePublicAliases(recap, options);
         const existing = readShareRecord(matchId);
@@ -440,36 +444,24 @@ export function rulebookRecapStore(db: DatabaseSync) {
             JSON.stringify(publicRecap),
           );
         }
-        db.exec("COMMIT");
         return {
           recap,
           share: { shareId, publishedAt, aliases },
           publicRecap,
         };
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
+      });
     },
     unshare(
       matchId: string,
       participantHash: string,
     ): { recap: RulebookMatchRecap; share: null; publicRecap: null } | undefined {
-      db.exec("BEGIN IMMEDIATE");
-      try {
+      return runInTx(() => {
         const row = read.get(matchId, participantHash) as { payload: string } | undefined;
-        if (!row) {
-          db.exec("ROLLBACK");
-          return undefined;
-        }
+        if (!row) return undefined;
         const recap = JSON.parse(row.payload) as RulebookMatchRecap;
         deleteShare.run(matchId);
-        db.exec("COMMIT");
         return { recap, share: null, publicRecap: null };
-      } catch (error) {
-        db.exec("ROLLBACK");
-        throw error;
-      }
+      });
     },
     getPublic(shareId: string): PublicMatchRecap | undefined {
       const row = readPublicById.get(shareId) as { payload: string } | undefined;
