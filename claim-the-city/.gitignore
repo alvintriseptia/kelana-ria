@@ -3,5 +3,14 @@ dist
 .DS_Store
 .env
 
-# Ignore the output video from Git but not videos you import into src/.
+# Remotion local caches and generated renders
+.remotion
 out
+renders
+tmp
+media-analysis
+*.log
+
+# Python bytecode cache
+__pycache__/
+*.pyc

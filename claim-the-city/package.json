@@ -1,7 +1,7 @@
 {
   "name": "claim-the-city",
   "version": "1.0.0",
-  "description": "My Remotion video",
+  "description": "Kelana Ria — Claim the City Promotional Film (Remotion)",
   "repository": {},
   "license": "UNLICENSED",
   "engines": {
@@ -10,6 +10,8 @@
   "private": true,
   "dependencies": {
     "@remotion/cli": "4.0.547",
+    "@remotion/fonts": "4.0.547",
+    "@remotion/media": "4.0.547",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "remotion": "4.0.547"
@@ -24,7 +26,23 @@
   },
   "scripts": {
     "dev": "remotion studio",
+    "studio": "remotion studio",
+    "compositions": "remotion compositions",
     "build": "remotion bundle",
+    "render:prototype": "remotion render KR-MotionDesign-Test-S07-SH02 renders/KR_MotionDesign_Test_S07_SH02_V2.mp4 --is-production=false",
+    "render:prototype:stills": "remotion render KR-MotionDesign-Test-S07-SH02 renders/stills-v2 --frames=56,91,148,185 --image-format=png --is-production=false",
+    "render:campaign": "remotion render KelanaRia-RoughCut renders/KR_Campaign_MotionGraphics_V2.mp4 --crf=30 --audio-bitrate=128k --is-production=false",
+    "render:campaign:stills": "remotion render KelanaRia-RoughCut renders/stills-campaign-v2 --frames=740,835,909,1590,1638,1690,1744,1818,1882,2478 --image-format=png --is-production=false",
+    "render:roughcut": "remotion render KelanaRia-RoughCut renders/KR_Campaign_RoughCut_V4.mp4 --crf=30 --audio-bitrate=128k --is-production=false",
+    "render:roughcut:hq": "remotion render KelanaRia-RoughCut renders/KR_Campaign_RoughCut_V4_hq.mp4 --is-production=false",
+    "audio:fetch": "python3 scripts/fetch_mixkit_audio.py",
+    "audio:mix": "python3 scripts/build_audio_mix.py",
+    "render:thumbnail": "remotion still KR-ClaimTheCity-Thumbnail renders/final/KR_ClaimTheCity_Thumbnail.jpg --image-format=jpeg --jpeg-quality=94 --overwrite",
+    "encode:deliveries": "bash scripts/encode_final_deliveries.sh",
+    "qa:deliveries": "python3 scripts/qa_final_deliveries.py",
+    "build:final": "python3 scripts/build_all_final.py",
+    "build:final:fast": "python3 scripts/build_all_final.py --fast-mp4",
+    "typecheck": "tsc --noEmit",
     "upgrade": "remotion upgrade",
     "lint": "eslint src && tsc"
   },
