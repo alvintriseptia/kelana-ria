@@ -961,8 +961,9 @@ export async function fetchApiJson<T extends Record<string, unknown>>(
     body?: unknown;
     signal?: AbortSignal;
     headers?: Record<string, string>;
+    cache?: RequestCache;
   } = {},
-): Promise<{ ok: boolean; status: number; data: T }> {
+): Promise<{ ok: boolean; status: number; data: T; headers: Headers; notModified: boolean }> {
   let response: Response;
   try {
     response = await fetch(path, {
@@ -974,6 +975,7 @@ export async function fetchApiJson<T extends Record<string, unknown>>(
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: options.signal,
+      ...(options.cache ? { cache: options.cache } : {}),
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -984,6 +986,16 @@ export async function fetchApiJson<T extends Record<string, unknown>>(
       undefined,
       error instanceof Error ? error.message : String(error),
     );
+  }
+
+  if (response.status === 304) {
+    return {
+      ok: true,
+      status: 304,
+      data: {} as T,
+      headers: response.headers,
+      notModified: true,
+    };
   }
 
   let parsed: unknown;
@@ -1008,5 +1020,5 @@ export async function fetchApiJson<T extends Record<string, unknown>>(
   }
 
   const data = (parsed && typeof parsed === "object" ? parsed : {}) as T;
-  return { ok: response.ok, status: response.status, data };
+  return { ok: response.ok, status: response.status, data, headers: response.headers, notModified: false };
 }

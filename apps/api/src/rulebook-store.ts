@@ -1594,7 +1594,13 @@ export function rulebookStore(
     liveRooms.set(roomCode, session);
   }
 
-  function viewRoom(roomCode: string, credential: string, now: number) {
+  function viewRoom(
+    roomCode: string,
+    credential: string,
+    now: number,
+    options: { includeBoard?: boolean } = {},
+  ) {
+    const includeBoard = options.includeBoard !== false;
     const session = liveRooms.get(roomCode);
     if (!session) return undefined;
     const credHash = digest(credential);
@@ -1606,20 +1612,25 @@ export function rulebookStore(
       const room = viewClaimEngineMatch(session.match, seatId, now);
       return {
         format: "claim-the-city" as const,
+        stateRev: session.stateRev,
         room,
         activity: session.activity.viewClaim(room),
-        publicBoard: {
-          startPoint: session.match.snapshot.startPoint,
-          landmarks: session.match.pack.geography.landmarks.map((l) => ({
-            id: l.id,
-            name: l.name,
-            zoneId: l.zoneId,
-            latitude: l.latitude,
-            longitude: l.longitude,
-            transitSummary: l.transitSummary,
-            accessNotes: l.accessNotes,
-          })),
-        },
+        ...(includeBoard
+          ? {
+              publicBoard: {
+                startPoint: session.match.snapshot.startPoint,
+                landmarks: session.match.pack.geography.landmarks.map((l) => ({
+                  id: l.id,
+                  name: l.name,
+                  zoneId: l.zoneId,
+                  latitude: l.latitude,
+                  longitude: l.longitude,
+                  transitSummary: l.transitSummary,
+                  accessNotes: l.accessNotes,
+                })),
+              },
+            }
+          : {}),
         pass: session.pass,
       };
     }
@@ -1632,23 +1643,28 @@ export function rulebookStore(
     return {
       format: "hide-and-seek" as const,
       ...(session.qa ? { qa: true as const } : {}),
+      stateRev: session.stateRev,
       room,
       deck,
       activity: session.activity.viewSeek(room, deck),
-      publicBoard: {
-        startPoint: session.match.snapshot.startPoint,
-        boundaryPolygon: session.match.snapshot.boundaryPolygon,
-        pois: session.match.snapshot.pois.map(({ id, name }) => ({ id, name })),
-        stations: session.match.snapshot.stations
-          .filter((s) => s.eligibleHidingAnchor)
-          .map((s) => ({
-            id: s.id,
-            name: s.name,
-            latitude: s.latitude,
-            longitude: s.longitude,
-            transitLines: s.transitLines,
-          })),
-      },
+      ...(includeBoard
+        ? {
+            publicBoard: {
+              startPoint: session.match.snapshot.startPoint,
+              boundaryPolygon: session.match.snapshot.boundaryPolygon,
+              pois: session.match.snapshot.pois.map(({ id, name }) => ({ id, name })),
+              stations: session.match.snapshot.stations
+                .filter((s) => s.eligibleHidingAnchor)
+                .map((s) => ({
+                  id: s.id,
+                  name: s.name,
+                  latitude: s.latitude,
+                  longitude: s.longitude,
+                  transitLines: s.transitLines,
+                })),
+            },
+          }
+        : {}),
       pass: session.pass,
     };
   }

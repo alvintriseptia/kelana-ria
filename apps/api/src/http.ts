@@ -1,8 +1,16 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { TLSSocket } from "node:tls";
+import { gzipSync } from "node:zlib";
 import type { GameBoard, LocationFix } from "@kelana-ria/contracts";
 
 const maxBodyBytes = 16 * 1024;
+const gzipMinBytes = 1024;
+
+function acceptsGzip(request?: IncomingMessage): boolean {
+  const header = request?.headers?.["accept-encoding"];
+  const raw = Array.isArray(header) ? header.join(",") : header ?? "";
+  return /(?:^|[\s,])gzip(?:;q=(?!0(?:\.0+)?(?:\s*,|\s*$))[\d.]+)?(?:\s*,|\s*$)/i.test(raw);
+}
 
 export function isGameBoard(value: unknown): value is GameBoard {
   return value === "compact" || value === "jakarta-wide";
@@ -18,13 +26,31 @@ export function setCredential(request: IncomingMessage, response: ServerResponse
   response.setHeader("Set-Cookie", `${name}=${token}; Path=${path}; HttpOnly; SameSite=Strict; Max-Age=2592000${secure ? "; Secure" : ""}`);
 }
 
-export function json(response: ServerResponse, status: number, content: object) {
-  response.writeHead(status, {
+export function json(
+  response: ServerResponse,
+  status: number,
+  content: object,
+  extraHeaders?: Record<string, string | number>,
+) {
+  const payload = Buffer.from(JSON.stringify(content), "utf8");
+  const headers: Record<string, string | number> = {
     "Cache-Control": "no-store",
     "Content-Type": "application/json; charset=utf-8",
     "X-Content-Type-Options": "nosniff",
-  });
-  response.end(JSON.stringify(content));
+    ...extraHeaders,
+  };
+  if (payload.length > gzipMinBytes && acceptsGzip(response.req)) {
+    const compressed = gzipSync(payload);
+    headers["Content-Encoding"] = "gzip";
+    headers["Content-Length"] = compressed.length;
+    headers["Vary"] = headers["Vary"] ? `${headers["Vary"]}, Accept-Encoding` : "Accept-Encoding";
+    response.writeHead(status, headers);
+    response.end(compressed);
+    return;
+  }
+  headers["Content-Length"] = payload.length;
+  response.writeHead(status, headers);
+  response.end(payload);
 }
 
 export function isObject(value: unknown): value is Record<string, unknown> {

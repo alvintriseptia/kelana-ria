@@ -10,7 +10,9 @@ import type {
   HideSeekPlayPhase,
   HideSeekQuestionFamily,
   HideSeekRulebookPack,
+  RulebookRoomPassSummary,
 } from "./rulebook.js";
+import type { RoomActivityFeed } from "./rulebook-activity.js";
 import type { LocationFix } from "./index.js";
 
 export type SeekEnginePhase =
@@ -314,3 +316,15 @@ export type SeekDeckHiderView = SeekDeckPublicView & {
   queuedBatchCount: number;
   plantedTraps: SeekPlantedTrap[];
 };
+
+export type SeekRoomPayloadResponse = {
+  format: "hide-and-seek";
+  qa?: true;
+  stateRev: number;
+  room: SeekEngineRoomView;
+  deck: SeekDeckPublicView | SeekDeckHiderView;
+  activity: RoomActivityFeed;
+  publicBoard?: SeekPublicBoard;
+  pass: RulebookRoomPassSummary;
+};
+
