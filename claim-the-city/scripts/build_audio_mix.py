@@ -33,8 +33,6 @@ OUT_WAV = os.path.join(OUT_DIR, "KR_ClaimTheCity_MasterMix_48k.wav")
 
 FPS = 30
 SR = 48000
-TOTAL_FRAMES = 2508
-TOTAL_SAMPLES = int(round(TOTAL_FRAMES * SR / FPS))  # 4,012,800 exact samples (83.600000s)
 
 
 def js_round(x: float) -> int:
@@ -49,25 +47,24 @@ def lin_to_db(v: float) -> float:
     return -120.0 if v <= 1e-12 else 20.0 * math.log10(v)
 
 
-# Exact locked timeline matching src/config/timeline.ts (2,508 frames @ 30 fps)
-# Per-clip target gain_lin calibrated from Milestone 3.1 objective LUFS audit to tighten
-# the 8.02 LU residual spread into <= 2.5 LU around ~-16.8 LUFS dialogue anchor.
+# Exact revised timeline matching src/config/timeline.ts (Milestone 4.1: 2,991 frames / 99.700s @ 30 fps)
+# Per-clip target gain_lin calibrated from objective LUFS audit to hold dialogue spread <= 2.5 LU.
 # Same-location cuts get 2f (67ms) overlapping crossfade tails (zero visual change!)
-# to eliminate the 267ms V-shaped ambience dips found in Milestone 3.1.
+# to eliminate V-shaped ambience dips across cuts.
 FOOTAGE_SPECS = [
     # (id, file, trim_s, trim_e, gain_lin, hpf_hz, debox_db, pres_db, pre_ov_f, post_ov_f)
     ("S01_SH01",     "footage/KR_SH01_SH01.mp4", 1.3, 6.2,  1.88, 70,  0.0, 0.0, 0, 2),
     ("S02_SH01",     "footage/KR_SH02_SH01.mp4", 0.6, 3.8,  0.88, 95,  0.0, 0.0, 2, 0),
-    ("S03_SH01",     "footage/KR_SH03_SH01.mp4", 2.0, 7.1,  1.26, 70,  0.0, 0.0, 0, 0),
-    ("S04_SH01",     "footage/KR_SH04_SH01.mp4", 1.7, 3.55, 0.82, 75,  0.0, 0.0, 0, 0),
-    ("S04_SH02",     "footage/KR_SH04_SH02.mp4", 0.5, 3.05, 0.75, 75, -2.0, 0.0, 0, 0),
+    ("S03_SH01",     "footage/KR_SH03_SH01.mp4", 0.6, 7.7,  1.26, 70,  0.0, 0.0, 0, 0),
+    ("S04_SH01",     "footage/KR_SH04_SH01.mp4", 1.7, 3.75, 0.82, 75,  0.0, 0.0, 0, 0),
+    ("S04_SH02",     "footage/KR_SH04_SH02.mp4", 0.5, 3.25, 0.75, 75, -2.0, 0.0, 0, 0),
     ("S04_SH03",     "footage/KR_SH04_SH03.mp4", 6.1, 7.55, 1.48, 95,  0.0, 2.2, 0, 0),
-    ("S04_SH04",     "footage/KR_SH04_SH04.mp4", 0.9, 4.55, 0.84, 75, -1.8, 0.0, 0, 0),
-    ("S05_SH01",     "footage/KR_SH05_SH01.mp4", 0.0, 4.0,  1.18, 70,  0.0, 0.0, 0, 2),
-    ("S05_SH02",     "footage/KR_SH05_SH02.mp4", 4.7, 7.2,  1.76, 70,  0.0, 0.0, 2, 2),
-    ("S05_SH04",     "footage/KR_SH05_SH04.mp4", 5.7, 7.8,  1.65, 70,  0.0, 0.0, 2, 0),
-    ("S06_SH01",     "footage/KR_SH06_SH01.mp4", 2.5, 7.0,  0.88, 70,  0.0, 0.0, 0, 0),
-    ("S06_SH03_V4",  "footage/KR_SH06_SH03.mp4", 0.3, 6.1,  0.71, 75, -2.2, 0.0, 0, 0),
+    ("S04_SH04",     "footage/KR_SH04_SH04.mp4", 0.9, 4.75, 0.84, 75, -1.8, 0.0, 0, 0),
+    ("S05_SH01",     "footage/KR_SH05_SH01.mp4", 0.0, 6.9,  1.22, 70,  0.0, 0.0, 0, 2),
+    ("S05_SH02",     "footage/KR_SH05_SH02.mp4", 0.0, 6.7,  1.42, 70,  0.0, 0.0, 0, 2),
+    ("S05_SH04",     "footage/KR_SH05_SH04.mp4", 0.4, 7.5,  1.42, 70,  0.0, 0.0, 2, 0),
+    ("S06_SH01",     "footage/KR_SH06_SH01.mp4", 1.3, 6.9,  0.88, 70,  0.0, 0.0, 0, 0),
+    ("S06_SH03_V4",  "footage/KR_SH06_SH03.mp4", 0.3, 6.35, 0.71, 75, -2.2, 0.0, 0, 0),
     ("S07_SH01",     "footage/KR_SH07_SH01.mp4", 3.0, 7.0,  0.90, 70,  0.0, 0.0, 0, 0),
     ("S07_SH02",     "footage/KR_SH07_SH02.mp4", 0.3, 6.8,  0.80, 75, -2.0, 0.0, 0, 0),
     ("S07_SH04",     "footage/KR_SH07_SH04.mp4", 2.8, 7.8,  0.88, 70,  0.0, 0.0, 0, 0),
@@ -77,6 +74,12 @@ FOOTAGE_SPECS = [
     ("S08_MONTAGE",  None,                       0.0, 4.8,  1.00,  0,  0.0, 0.0, 0, 0),
     ("S09_BRAND",    None,                       0.0, 4.0,  1.00,  0,  0.0, 0.0, 0, 0),
 ]
+
+TOTAL_FRAMES = sum(
+    max(1, js_round((te - ts) * FPS)) if rel_path else max(1, js_round(te * FPS))
+    for _, rel_path, ts, te, *_ in FOOTAGE_SPECS
+)
+TOTAL_SAMPLES = int(round(TOTAL_FRAMES * SR / FPS))  # 4,785,600 exact samples (99.700000s)
 
 
 def load_stereo_float(path: str, ss: float = None, dur: float = None):
@@ -380,7 +383,9 @@ def build_dialogue_bus():
 
     assert cursor_f == TOTAL_FRAMES, f"Expected {TOTAL_FRAMES}f, got {cursor_f}f"
 
-    # Locked S08_SH01 Warung Ambience J-cut (KR_SH08_SH02.mp4 0.05s..0.65s, starts f1910 / 01:03.67)
+    # Dynamic S08_SH01 Warung Ambience J-cut (KR_SH08_SH02.mp4 0.05s..0.65s, starts 14f before S08_SH01)
+    s08_sh01_sf = seg_starts["S08_SH01"][0]
+    jcut_frame = s08_sh01_sf - 14
     jcut_path = os.path.join(ASSETS_DIR, "footage/KR_SH08_SH02.mp4")
     jl, jr = load_stereo_float(jcut_path, ss=0.05, dur=0.60)
     c_hpf = biquad_coeffs("hpf", 70.0, SR, q=0.7071)
@@ -390,25 +395,26 @@ def build_dialogue_bus():
     cosine_fade_in(jr, int(SR * 0.30))
     cosine_fade_out(jl, int(SR * 0.133))
     cosine_fade_out(jr, int(SR * 0.133))
-    jcut_start = int(round((1910 / FPS) * SR))
+    jcut_start = int(round((jcut_frame / FPS) * SR))
     mix_into(dl, dr, jl, jr, jcut_start, gain=0.82)
 
-    # Locked S08_SH02_V2 Selfie L-cut laughter tail (KR_SH08_SH02.mp4 5.77s..7.17s = 1.40s, starts f2244)
+    # Dynamic S08_SH02_V2 Selfie L-cut laughter tail (KR_SH08_SH02.mp4 5.77s..7.17s = 1.40s, starts at S08_MONTAGE)
+    s08_montage_sf = seg_starts["S08_MONTAGE"][0]
     ll, lr = load_stereo_float(jcut_path, ss=5.77, dur=1.40)
     ll = apply_biquad(ll, c_hpf)
     lr = apply_biquad(lr, c_hpf)
     cosine_fade_out(ll, int(SR * 0.333))
     cosine_fade_out(lr, int(SR * 0.333))
-    lcut_start = int(round((2244 / FPS) * SR))
+    lcut_start = int(round((s08_montage_sf / FPS) * SR))
     mix_into(dl, dr, ll, lr, lcut_start, gain=1.54)
 
     max_gr = soft_compress_bus(dl, dr, thresh_db=-10.5, ratio=3.0, atk_ms=5.0, rel_ms=70.0, ceil_db=-3.5)
-    print(f"   Dialogue bus ready (max gentle transient GR = {max_gr:.2f} dB).")
+    print(f"   Dialogue bus ready ({TOTAL_FRAMES}f / {TOTAL_FRAMES/FPS:.2f}s, max gentle transient GR = {max_gr:.2f} dB).")
     return dl, dr, seg_starts
 
 
-def build_music_bus(dl, dr):
-    print("2/4 Building Bar-Aligned Funky Triplets Music Bus (100.0 BPM / 2.400s bar grid)...")
+def build_music_bus(dl, dr, seg_starts):
+    print("2/4 Building Phrase-Aligned Funky Triplets Music Bus (100.0 BPM / 2.400s bar grid)...")
     m_path = os.path.join(ASSETS_DIR, "audio/music/working/KR_BGM_ClaimTheCity_Main_48k.wav")
     src_l, src_r = load_stereo_float(m_path)
 
@@ -434,30 +440,56 @@ def build_music_bus(dl, dr):
             cosine_fade_out(sr_c, int(round(fo_s * SR)))
         mix_into(ml, mr, sl, sr_c, int(round(camp_s * SR)), gain=db_to_lin(gain_db))
 
-    # Region A: 1-beat sparse triplet pickup (0:04.20) at 00:07.50 -> Bar 2 downbeat (0:04.80)
-    # lands EXACTLY on 00:08.10 (f243 S03 map reveal!), playing uninterrupted to 00:43.17 (f1295).
-    place_slice(camp_s=7.50, trk_s=4.20, dur_s=35.72, fi_s=0.35, fo_s=0.07, gain_db=0.0)
+    # Dynamic visual anchors derived straight from seg_starts (zero drift)
+    t_s03 = seg_starts["S03_SH01"][0] / FPS                     # 8.100s (f243)
+    t_s04 = seg_starts["S04_SH01"][0] / FPS                     # 15.200s (f456)
+    t_s04_sh03 = seg_starts["S04_SH03"][0] / FPS                # 20.033s (f601)
+    t_s04_sh04 = seg_starts["S04_SH04"][0] / FPS                # 21.500s (f645)
+    t_s05 = seg_starts["S05_SH01"][0] / FPS                     # 25.367s (f761)
+    t_s05_claim = (seg_starts["S05_SH04"][0] + 164) / FPS       # 44.433s (f1333)
+    t_s06 = seg_starts["S06_SH01"][0] / FPS                     # 46.067s (f1382)
+    t_wrong = (seg_starts["S07_SH01"][0] + 46) / FPS            # 59.267s (f1778 JAWABAN SALAH)
+    t_s07_sh02 = seg_starts["S07_SH02"][0] / FPS                # 61.733s (f1852)
+    t_s07_stride = (seg_starts["S07_SH02"][0] + 160) / FPS      # 67.067s (f2012)
+    t_s07_sh04 = seg_starts["S07_SH04"][0] / FPS                # 68.233s (f2047)
+    t_pg_act = (seg_starts["S07_SH04"][0] + 58) / FPS           # 70.167s (f2105 POIN GANDA DIAKTIFKAN)
+    t_int = seg_starts["INT_MATCH_CONCLUSION"][0] / FPS         # 73.233s (f2197)
+    t_jcut = (seg_starts["S08_SH01"][0] - 14) / FPS             # 79.767s (f2393)
+    t_selfie = seg_starts["S08_MONTAGE"][0] / FPS               # 90.900s (f2727)
+    t_cta = (seg_starts["S09_BRAND"][0] + 46) / FPS             # 97.233s (f2917 SEGERA HADIR)
 
-    # Region B: Breakdown #1 drop (0:54.74) right on JAWABAN SALAH (00:43.17 / f1295) ->
-    # Bar 24 groove re-entry (0:57.60) lands EXACTLY on Opportunity + "Bentar!" (00:46.03 / f1381),
-    # driving uninterrupted through Poin Ganda reveal + Sarinah claim + activation to 00:57.13 (f1714).
-    place_slice(camp_s=43.13, trk_s=54.70, dur_s=14.08, fi_s=0.07, fo_s=0.08, gain_db=0.5)
+    # Region A1: 1-beat sparse triplet pickup (0:04.20) at 00:07.50 -> Bar 2 downbeat (0:04.80)
+    # lands EXACTLY on S03 paper-map reveal (00:08.10 / f243), playing 12 uninterrupted bars (B02..B13)
+    # across S03, S04 transit, S05_SH01 Q&A, and S05_SH02 Gate H discovery to 00:36.90 (Bar 14 downbeat).
+    t_a_splice = t_s03 + 12 * 2.400  # exact Bar 14 downbeat = 36.900s
+    place_slice(camp_s=t_s03 - 0.60, trk_s=4.20, dur_s=(t_a_splice - (t_s03 - 0.60)) + 0.06, fi_s=0.35, fo_s=0.08, gain_db=0.0)
 
-    # Region C: Peak Final Chorus Bar 34 downbeat (1:21.60) lands EXACTLY on 00:57.13 (f1714)
-    # driving territory transformation -> accelerated clock -> GREEN TEAM MENANG, tapering smoothly
-    # before warung J-cut (01:03.67).
-    place_slice(camp_s=57.10, trk_s=81.57, dur_s=6.80, fi_s=0.06, fo_s=0.85, gain_db=-1.0)
+    # Region A2: Seamless 4-bar phrase repeat (Bar 14 downbeat -> Bar 10 downbeat 0:24.00)
+    # driving uninterrupted through GBK completion/claim, Bundaran HI photo verification, and Kendal lead
+    # cleanly into JAWABAN SALAH (00:59.27 / f1778).
+    place_slice(camp_s=t_a_splice - 0.02, trk_s=24.00, dur_s=(t_wrong - (t_a_splice - 0.02)) + 0.05, fi_s=0.08, fo_s=0.07, gain_db=0.0)
 
-    # Region D: Breakdown #2 pure warm zero-drum melodic pocket (1:17.35..1:21.55, Lo=0.0%)
-    # looped seamlessly 3x across warung reunion & selfie countdown (01:03.75..01:16.05).
-    place_slice(camp_s=63.65, trk_s=77.35, dur_s=4.20, fi_s=0.35, fo_s=0.25, gain_db=-1.0)
-    place_slice(camp_s=67.60, trk_s=77.35, dur_s=4.20, fi_s=0.25, fo_s=0.25, gain_db=-1.0)
-    place_slice(camp_s=71.55, trk_s=77.35, dur_s=4.55, fi_s=0.25, fo_s=0.45, gain_db=-1.5)
+    # Region B: Breakdown #1 drop (0:54.70) right on JAWABAN SALAH (00:59.27 / f1778) ->
+    # Bar 24 groove re-entry (0:57.60) lands EXACTLY on Opportunity + "Bentar!" (01:02.13 / f1864),
+    # driving uninterrupted through Poin Ganda reveal + Sarinah claim + activation to INT_MATCH_CONCLUSION (01:13.23).
+    place_slice(camp_s=t_wrong - 0.04, trk_s=54.70, dur_s=(t_int - (t_wrong - 0.04)) + 0.08, fi_s=0.07, fo_s=0.08, gain_db=0.5)
 
-    # Region E: Peak Chorus bloom (1:40.27 -> 1:47.00) aligned so the CRISP NATIVE FINAL BUTTON
-    # (Bar 44 downbeat 1:45.60) lands EXACTLY on SEGERA HADIR (01:21.13 / f2434), decaying
-    # naturally to digital silence by 01:22.53 (1.07s clean hold before 01:23.60!).
-    place_slice(camp_s=75.80, trk_s=100.27, dur_s=7.20, fi_s=0.45, fo_s=0.15, gain_db=-1.0)
+    # Region C: Peak Final Chorus Bar 34 downbeat (1:21.60) lands EXACTLY on INT_MATCH_CONCLUSION (01:13.23 / f2197),
+    # driving territory transformation -> accelerated clock -> GREEN TEAM MENANG, tapering smoothly into warung J-cut.
+    place_slice(camp_s=t_int - 0.03, trk_s=81.57, dur_s=6.80, fi_s=0.06, fo_s=0.85, gain_db=-1.0)
+
+    # Region D: Breakdown #2 pure warm zero-drum melodic pocket (1:17.35..1:21.55)
+    # looped seamlessly 3x across warung reunion & selfie countdown (01:19.75..01:32.20).
+    t_d0 = t_jcut - 0.02
+    place_slice(camp_s=t_d0,        trk_s=77.35, dur_s=4.20, fi_s=0.35, fo_s=0.25, gain_db=-1.0)
+    place_slice(camp_s=t_d0 + 3.95, trk_s=77.35, dur_s=4.20, fi_s=0.25, fo_s=0.25, gain_db=-1.0)
+    place_slice(camp_s=t_d0 + 7.90, trk_s=77.35, dur_s=4.55, fi_s=0.25, fo_s=0.45, gain_db=-1.5)
+
+    # Region E: Peak Chorus bloom (1:40.27 -> 1:47.47) aligned so the CRISP NATIVE FINAL BUTTON
+    # (Bar 44 downbeat 1:45.60) lands EXACTLY on SEGERA HADIR (01:37.23 / f2917), decaying
+    # naturally to digital silence by 01:38.60 (1.10s clean hold before 01:39.70!).
+    t_e0 = t_cta - (105.60 - 100.27)
+    place_slice(camp_s=t_e0, trk_s=100.27, dur_s=7.20, fi_s=0.45, fo_s=0.15, gain_db=-1.0)
 
     # Create vocal-carved parallel version (-3.0 dB @ 2.2 kHz, Q=0.85) blended cleanly during speech
     c_carve = biquad_coeffs("peak", 2200.0, SR, q=0.85, gain_db=-3.0)
@@ -476,54 +508,52 @@ def build_music_bus(dl, dr):
         s2 = sum(dl[k] * dl[k] + dr[k] * dr[k] for k in range(i0, i1)) / (2 * (i1 - i0))
         sp_env[b] = lin_to_db(math.sqrt(s2))
 
-    # Build smooth per-block music gain (dB) following Milestone 3.1 music spotting arc
-    # Narrative baseline target (before speech ducking):
+    # Build smooth per-block music gain (dB) following Milestone 3.1 / 4.1 dynamic spotting arc
     def narrative_base_db(t: float) -> float:
-        if t < 8.10:
+        if t < t_s03:
             return -5.5     # 1-beat pickup
-        if t < 13.20:
-            return -3.5     # S03 reveal
-        if t < 17.60:
-            return -2.5     # S04 transit energy
-        if t < 19.07:
+        if t < t_s04:
+            return -3.8     # S03 reveal + restored objective explanation
+        if t < t_s04_sh03:
+            return -2.5     # S04_SH01/SH02 transit energy
+        if t < t_s04_sh04:
             return -5.0     # S04_SH03 low-SNR TransJakarta protection
-        if t < 22.73:
+        if t < t_s05:
             return -2.5     # S04_SH04 MRT
-        if t < 29.23:
-            return -4.5     # S05 GBK focused exploration
-        if t < 31.33:
-            return -2.5     # S05_SH04 GBK claim pop
-        if t < 43.17:
+        if t < t_s05_claim:
+            return -4.5     # S05 GBK focused check-in, Q&A, Gate B/F/H exploration & code assembly
+        if t < t_s06:
+            return -2.5     # S05_SH04 GBK landmark claim pop
+        if t < t_wrong:
             return -4.0     # S06 Bundaran HI + Kendal lead
-        if t < 45.80:
-            return -3.0     # S07_SH01 breakdown already quiet (-28dB natively)
-        if t < 51.00:
+        if t < t_s07_sh02:
+            return -3.0     # S07_SH01 breakdown already quiet natively
+        if t < t_s07_stride:
             return -3.5     # S07_SH02 comeback build
-        if t < 52.13:
-            return -1.5     # S07_SH02 tunnel exit stride swell!
-        if t < 54.07:
+        if t < t_s07_sh04:
+            return -1.5     # S07_SH02 tunnel exit stride swell
+        if t < t_pg_act:
             return -3.5     # S07_SH04 Sarinah claim
-        if t < 57.13:
+        if t < t_int:
             return -2.0     # S07_SH04 Poin Ganda lift -> climax
-        if t < 63.00:
-            return -1.0     # INT_MATCH_CONCLUSION open peak feature (~-13.8 LUFS)
-        if t < 74.20:
-            return -4.0     # S08 warm reunion (Breakdown #2 already -29dB natively -> ~-25 LUFS!)
-        if t < 75.20:
-            return -6.5     # Brief breath on selfie countdown + native shutter (01:14.80)
-        if t < 76.10:
+        if t < t_jcut - 0.5:
+            return -1.0     # INT_MATCH_CONCLUSION open peak feature
+        if t < t_selfie - 0.6:
+            return -4.0     # S08 warm reunion (Breakdown #2 already quiet natively)
+        if t < t_selfie + 0.4:
+            return -6.5     # Brief breath on selfie countdown + native shutter
+        if t < t_selfie + 1.3:
             return -4.5     # Soft under L-cut laughter
-        return -1.0         # Montage bloom & crisp closing brand button (~-13.8 LUFS)!
+        return -1.0         # Montage bloom & crisp closing brand button
 
     # Speech activity factor (0..1) with 120ms lookahead and smooth release
     speech_act = [0.0] * n_blocks
     for b in range(n_blocks):
         t = b * 0.01
         # During open graphic/montage sections (no speech except L-cut), skip ducking
-        if (57.15 <= t <= 63.80) or (t >= 76.25):
+        if (t_int <= t <= t_jcut + 0.15) or (t >= t_selfie + 1.45):
             raw = 0.0
         else:
-            # Look ahead 12 blocks (120ms) for speech peaks above -27 dBFS
             peak_sp = max(sp_env[b : min(n_blocks, b + 12)])
             raw = max(0.0, min(1.0, (peak_sp - (-28.0)) / 12.0))
         speech_act[b] = raw
@@ -543,19 +573,17 @@ def build_music_bus(dl, dr):
         b = min(n_blocks - 1, i // block)
         t = i / SR
         act = sm_act[b]
-        # Duck up to -6.5 dB underneath active speech (reunion already quiet natively so lighter duck)
-        max_duck = 3.5 if (63.7 <= t <= 75.8) else 6.8
+        max_duck = 3.5 if (t_jcut <= t <= t_selfie + 1.0) else 6.8
         g_db = narrative_base_db(t) - act * max_duck
         g_lin = db_to_lin(g_db)
-        # Blend carved mid EQ proportionally to speech activity
         ml[i] = (ml[i] * (1.0 - act) + ml_carve[i] * act) * g_lin
         mr[i] = (mr[i] * (1.0 - act) + mr_carve[i] * act) * g_lin
 
-    print("   Music bus ready (bar-aligned 5-region Funky Triplets edit + lookahead vocal-carve ducking).")
+    print("   Music bus ready (phrase-aligned 6-region Funky Triplets edit + lookahead vocal-carve ducking).")
     return ml, mr
 
 
-def build_sfx_bus():
+def build_sfx_bus(seg_starts):
     print("3/4 Building Tactile Board-Game SFX Bus (10 Mixkit 48 kHz assets + custom composites)...")
     sl = [0.0] * TOTAL_SAMPLES
     sr_b = [0.0] * TOTAL_SAMPLES
@@ -613,37 +641,51 @@ def build_sfx_bus():
         t_s = (frame_num / FPS) + (extra_offset_ms / 1000.0)
         mix_into(sl, sr_b, cl, cr, int(round(t_s * SR)), gain=db_to_lin(gain_db), pan=pan)
 
-    # Exact frame-accurate cues from docs/SOUND_DESIGN_CUE_SHEET.md & docs/AUDIO_ASSET_MANIFEST.md
-    place_sfx("sfx_paper_wipe",          233,  -7.5, pan= 0.08, max_dur_s=0.65)                 # S02->S03 paper wipe
-    place_sfx("sfx_card_deal",           249,  -4.0, pan= 0.00, max_dur_s=0.35)                 # S03 CLAIM THE CITY drop
-    place_sfx("sfx_tactile_ping",        708, -11.5, pan= 0.15, max_dur_s=0.65)                 # S05 GBK Check-in (modest)
-    place_sfx("sfx_stamp_claim",         889,  -6.5, pan= 0.00, max_dur_s=0.32)                 # S05 GBK DIKLAIM GREEN
-    place_sfx("sfx_paper_slide_soft",    984, -12.0, pan= 0.15, max_dur_s=0.45)                 # S06 Bundaran HI proof (preserves native shutter f983-f985!)
-    place_sfx("sfx_tactile_ping",       1022, -11.5, pan= 0.15, pitch_ratio=1.122, max_dur_s=0.48)  # S06 TERVERIFIKASI (+2st brighter)
-    place_sfx("sfx_stamp_claim",        1048,  -8.0, pan= 0.15, max_dur_s=0.32)                 # S06 Bundaran HI DIKLAIM YELLOW
-    place_sfx("sfx_score_flip",         1111,  -8.5, pan= 0.15, max_dur_s=0.25)                 # S06 Scoreboard Yellow 2
-    place_sfx("sfx_wrong_thud",         1295,  -7.0, pan= 0.15, max_dur_s=0.35)                 # S07 JAWABAN SALAH
-    place_sfx("sfx_tactile_ping",       1378, -11.0, pan= 0.15, pitch_ratio=1.06, max_dur_s=0.50)   # S07 Opportunity pre-lap (-3f before "Bentar!")
-    place_sfx("sfx_paper_slide_soft",   1381, -13.0, pan= 0.15, max_dur_s=0.40)                 # S07 Opportunity ticket slide
-    place_sfx("sfx_stamp_claim",        1410,  -9.5, pan= 0.15, max_dur_s=0.30)                 # S07 BELUM DIKLAIM stamp
-    place_sfx("sfx_card_deal",          1483,  -4.0, pan= 0.15, max_dur_s=0.35)                 # S07 POIN GANDA reveal
-    place_sfx("sfx_stamp_claim",        1579,  -8.0, pan= 0.15, max_dur_s=0.30)                 # S07 Relief Sarinah claim (Netral 1-1)
-    place_sfx("sfx_card_deal",          1608,  -5.5, pan= 0.15, max_dur_s=0.35)                 # S07 POIN GANDA tabletop return
+    def sf(seg_id: str, local_f: int = 0) -> int:
+        return seg_starts[seg_id][0] + local_f
 
-    # Signature 3-Layer POIN GANDA Activation Composite (f1622 / 00:54.07)
-    place_sfx("sfx_card_deal",          1622,  -5.0, pan= 0.12, max_dur_s=0.30, extra_offset_ms=0)
-    place_sfx("sfx_score_flip",         1622,  -7.5, pan= 0.12, max_dur_s=0.22, extra_offset_ms=30)
-    place_sfx("sfx_poin_ganda_activate",1622,  -6.5, pan= 0.08, max_dur_s=0.95, extra_offset_ms=40)
+    # Frame-locked cues dynamically anchored to seg_starts (zero drift)
+    place_sfx("sfx_paper_wipe",          sf("S03_SH01", -10),  -7.5, pan= 0.08, max_dur_s=0.65)                 # S02->S03 paper wipe
+    place_sfx("sfx_card_deal",           sf("S03_SH01",   6),  -4.0, pan= 0.00, max_dur_s=0.35)                 # S03 CLAIM THE CITY drop
+    place_sfx("sfx_paper_slide_soft",    sf("S03_SH01", 124), -13.0, pan= 0.00, max_dur_s=0.38)                 # S03 KUASAI ZONA TERBANYAK reveal (soft under Arga)
 
-    # S07 Beat 3 Green Takeover Score Flip (f1678 / 00:55.93, +2st upward)
-    place_sfx("sfx_score_flip",         1678,  -8.0, pan= 0.15, pitch_ratio=1.122, max_dur_s=0.25)
+    # S05 GBK 7-Step Progression (check-in -> challenge unlock -> Gate H found -> solve -> distinct landmark claim)
+    place_sfx("sfx_tactile_ping",        sf("S05_SH01",  26), -11.5, pan= 0.15, max_dur_s=0.60)                 # S05_SH01 GBK Check-in (modest, non-ownership)
+    place_sfx("sfx_card_deal",           sf("S05_SH01", 132),  -9.5, pan= 0.15, max_dur_s=0.32)                 # S05_SH01 GBK Challenge Unlock ("nyari kode di 3 gate")
+    place_sfx("sfx_tactile_ping",        sf("S05_SH02", 105), -13.0, pan=-0.15, pitch_ratio=1.122, max_dur_s=0.40) # S05_SH02 Gate H ✓ discovery tick ("Lah, ini udah H!")
+    place_sfx("sfx_tactile_ping",        sf("S05_SH04", 146), -12.0, pan= 0.00, pitch_ratio=1.122, max_dur_s=0.42) # S05_SH04 Challenge Complete ✓ chime
+    place_sfx("sfx_stamp_claim",         sf("S05_SH04", 170),  -6.5, pan= 0.00, max_dur_s=0.32)                 # S05_SH04 Distinct GBK DIKLAIM GREEN stamp ("Nah, dapat!")
 
-    # Custom 2-Layer Sudirman-Thamrin Territory Transformation Composite (f1718 / 00:57.27)
-    place_sfx("sfx_paper_wipe",         1718,  -6.5, pan=-0.12, max_dur_s=0.65, extra_offset_ms=0)
-    place_sfx("sfx_poin_ganda_activate",1718,  -9.5, pan=-0.08, max_dur_s=1.05, lpf_hz=2400.0, extra_offset_ms=80)
+    # S06 Bundaran HI photo proof (native shutter at local f80 preserved!) & Yellow 2 scoreboard
+    place_sfx("sfx_paper_slide_soft",    sf("S06_SH01",  80), -12.0, pan= 0.15, max_dur_s=0.45)                 # S06 Bundaran HI proof (preserves native shutter!)
+    place_sfx("sfx_tactile_ping",        sf("S06_SH01", 118), -11.5, pan= 0.15, pitch_ratio=1.122, max_dur_s=0.48) # S06 TERVERIFIKASI (+2st brighter)
+    place_sfx("sfx_stamp_claim",         sf("S06_SH01", 144),  -8.0, pan= 0.15, max_dur_s=0.32)                 # S06 Bundaran HI DIKLAIM YELLOW
+    place_sfx("sfx_score_flip",          sf("S06_SH03_V4", 36), -8.5, pan= 0.15, max_dur_s=0.25)                # S06 Scoreboard Yellow 2
 
-    # Accelerated Mechanical Match Timer (f1792..f1844 = 59.733s..61.467s = 1.733s)
-    # Extract clean alternating tick (0.06..0.30s) & tock (0.36..0.60s) from #1063 Fast wall clock ticking
+    # S07 Sarinah fail -> Opportunity -> Poin Ganda -> Comeback
+    place_sfx("sfx_wrong_thud",          sf("S07_SH01",  46),  -7.0, pan= 0.15, max_dur_s=0.35)                 # S07 JAWABAN SALAH
+    place_sfx("sfx_tactile_ping",        sf("S07_SH02",   9), -11.0, pan= 0.15, pitch_ratio=1.06, max_dur_s=0.50)  # S07 Opportunity pre-lap (-3f before "Bentar!")
+    place_sfx("sfx_paper_slide_soft",    sf("S07_SH02",  12), -13.0, pan= 0.15, max_dur_s=0.40)                 # S07 Opportunity ticket slide
+    place_sfx("sfx_stamp_claim",         sf("S07_SH02",  41),  -9.5, pan= 0.15, max_dur_s=0.30)                 # S07 BELUM DIKLAIM stamp
+    place_sfx("sfx_card_deal",           sf("S07_SH02", 114),  -4.0, pan= 0.15, max_dur_s=0.35)                 # S07 POIN GANDA reveal
+    place_sfx("sfx_stamp_claim",         sf("S07_SH04",  15),  -8.0, pan= 0.15, max_dur_s=0.30)                 # S07 Relief Sarinah claim (Netral 1-1)
+    place_sfx("sfx_card_deal",           sf("S07_SH04",  44),  -5.5, pan= 0.15, max_dur_s=0.35)                 # S07 POIN GANDA tabletop return
+
+    # Signature 3-Layer POIN GANDA Activation Composite (S07_SH04 local f58)
+    f_pg = sf("S07_SH04", 58)
+    place_sfx("sfx_card_deal",           f_pg,  -5.0, pan= 0.12, max_dur_s=0.30, extra_offset_ms=0)
+    place_sfx("sfx_score_flip",          f_pg,  -7.5, pan= 0.12, max_dur_s=0.22, extra_offset_ms=30)
+    place_sfx("sfx_poin_ganda_activate", f_pg,  -6.5, pan= 0.08, max_dur_s=0.95, extra_offset_ms=40)
+
+    # S07 Beat 3 Green Takeover Score Flip (S07_SH04 local f114, +2st upward)
+    place_sfx("sfx_score_flip",          sf("S07_SH04", 114),  -8.0, pan= 0.15, pitch_ratio=1.122, max_dur_s=0.25)
+
+    # Custom 2-Layer Sudirman-Thamrin Territory Transformation Composite (INT local f4)
+    f_terr = sf("INT_MATCH_CONCLUSION", 4)
+    place_sfx("sfx_paper_wipe",          f_terr,  -6.5, pan=-0.12, max_dur_s=0.65, extra_offset_ms=0)
+    place_sfx("sfx_poin_ganda_activate", f_terr,  -9.5, pan=-0.08, max_dur_s=1.05, lpf_hz=2400.0, extra_offset_ms=80)
+
+    # Accelerated Mechanical Match Timer (INT local f78..f130 = 1.733s)
     tl, tr = get_sfx("sfx_timer_sweep")
     tick_l = list(tl[int(0.06 * SR) : int(0.30 * SR)])
     tick_r = list(tr[int(0.06 * SR) : int(0.30 * SR)])
@@ -653,32 +695,29 @@ def build_sfx_bus():
         cosine_fade_in(arr_c, int(SR * 0.005))
         cosine_fade_out(arr_c, int(SR * 0.04))
 
-    # 12 progressively accelerating ticks matching Easing.inOut(cubic) across 1.65s (stops 80ms before bell!)
-    # Intervals tighten smoothly from ~210ms -> ~95ms
     tick_offsets_s = [0.00, 0.21, 0.40, 0.57, 0.72, 0.85, 0.97, 1.08, 1.19, 1.30, 1.42, 1.54]
-    t0_timer = 1792 / FPS
+    t0_timer = sf("INT_MATCH_CONCLUSION", 78) / FPS
     for idx_t, off in enumerate(tick_offsets_s):
         cl_t, cr_t = (tick_l, tick_r) if (idx_t % 2 == 0) else (tock_l, tock_r)
-        # Gently crescendo +2 dB into 00:00
         g_t = db_to_lin(-9.0 + (idx_t / (len(tick_offsets_s) - 1)) * 2.5)
         mix_into(sl, sr_b, cl_t, cr_t, int(round((t0_timer + off) * SR)), gain=g_t, pan=0.0)
 
-    # Round-end warm tabletop brass desk bell at exact 00:00 (f1844 / 01:01.47), warm -2.5 dB shelf @ 5.2 kHz
-    place_sfx("sfx_round_bell",         1844,  -8.5, pan= 0.00, max_dur_s=1.15, high_shelf_db=-2.5)
+    # Round-end warm tabletop brass desk bell at exact 00:00 (INT local f130), warm -2.5 dB shelf @ 5.2 kHz
+    place_sfx("sfx_round_bell",          sf("INT_MATCH_CONCLUSION", 130), -8.5, pan= 0.00, max_dur_s=1.15, high_shelf_db=-2.5)
 
-    # Subtle matte photo print settles in Weekend Memories montage (native selfie shutter at f2244 preserved!)
-    place_sfx("sfx_paper_slide_soft",   2268, -19.0, pan= 0.08, max_dur_s=0.35)
-    place_sfx("sfx_paper_slide_soft",   2292, -16.0, pan=-0.08, max_dur_s=0.35)
-    place_sfx("sfx_paper_slide_soft",   2316, -15.5, pan= 0.00, max_dur_s=0.40)
+    # Subtle matte photo print settles in Weekend Memories montage (native selfie shutter at S08_MONTAGE start preserved!)
+    place_sfx("sfx_paper_slide_soft",    sf("S08_MONTAGE", 24), -19.0, pan= 0.08, max_dur_s=0.35)
+    place_sfx("sfx_paper_slide_soft",    sf("S08_MONTAGE", 48), -16.0, pan=-0.08, max_dur_s=0.35)
+    place_sfx("sfx_paper_slide_soft",    sf("S08_MONTAGE", 72), -15.5, pan= 0.00, max_dur_s=0.40)
 
-    print("   SFX bus ready (19 onset-locked tactile cues + composites, zero duplicate shutters).")
+    print("   SFX bus ready (23 onset-locked tactile cues + composites, zero duplicate shutters).")
     return sl, sr_b
 
 
 def main():
-    dl, dr, _ = build_dialogue_bus()
-    ml, mr = build_music_bus(dl, dr)
-    sl, sr_b = build_sfx_bus()
+    dl, dr, seg_starts = build_dialogue_bus()
+    ml, mr = build_music_bus(dl, dr, seg_starts)
+    sl, sr_b = build_sfx_bus(seg_starts)
 
     print("4/4 Summing Master Bus, Calibrating Loudness (-14.5 LUFS) & Brickwall Limiting (-1.15 dBTP)...")
     # Sum buses
@@ -701,8 +740,8 @@ def main():
         master_l[i] *= trim_lin
         master_r[i] *= trim_lin
 
-    # Clean lookahead brickwall limiter (-1.20 dBFS -> guarantees <= -1.0 dBTP even after AAC encoding!)
-    max_lim_db = brickwall_lookahead_limiter(master_l, master_r, ceil_db=-1.20, lookahead_ms=5.0, rel_ms=65.0)
+    # Clean lookahead brickwall limiter (-1.35 dBFS -> guarantees <= -1.0 dBTP even after AAC encoding!)
+    max_lim_db = brickwall_lookahead_limiter(master_l, master_r, ceil_db=-1.35, lookahead_ms=5.0, rel_ms=65.0)
     print(f"   Lookahead brickwall limiter max GR: {max_lim_db:.2f} dB")
 
     # Tiny 10ms fade-in/out on program endpoints (zero click)

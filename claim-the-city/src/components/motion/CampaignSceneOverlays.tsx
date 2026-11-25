@@ -11,6 +11,7 @@ import { S07_SH02_V2_CUES } from "../../config/motionPrototypeS07SH02";
 import {
   ChallengeFailureCard,
   ChallengeProgressRibbon,
+  ChallengeUnlockCard,
   CheckInSuccessSlip,
   PhotoVerificationProofCard,
 } from "./ChallengeFeedbackOverlay";
@@ -57,8 +58,11 @@ const S02PaperTransition: React.FC = () => {
 };
 
 /**
- * S03_SH01 (153f) — Confident Claim the City game-mode reveal anchored cleanly inside
- * the open cream park center of the illustrated Jakarta paper map, introducing Green & Yellow.
+ * S03_SH01 (213f / 7.10s) — Confident Claim the City game-mode & objective reveal anchored
+ * inside the open cream park center of the illustrated Jakarta paper map:
+ *   f6..f28:   CLAIM THE CITY / SATU KOTA. DUA TIM.
+ *   f62..f76:  GREEN TEAM VS YELLOW TEAM (synced to Bima: "Ini rebutan wilayah gitu?")
+ *   f124..f138: KUASAI ZONA TERBANYAK. + concise win condition (synced to Arga: "Iya. Siapa yang dapat paling banyak.")
  */
 const S03ClaimTheCityReveal: React.FC = () => {
   const frame = useCurrentFrame();
@@ -92,8 +96,15 @@ const S03ClaimTheCityReveal: React.FC = () => {
     easing: Easing.bezier(0.16, 1, 0.3, 1),
   });
 
-  // Contrasting Green & Yellow team tokens enter cleanly on Bima's "rebutan wilayah gitu?" (f44)
-  const teamsEnter = interpolate(frame, [44, 58], [0, 1], {
+  // Contrasting Green & Yellow team tokens enter cleanly on Bima's "Ini rebutan wilayah gitu?" (f62)
+  const teamsEnter = interpolate(frame, [62, 76], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.bezier(0.16, 1, 0.3, 1),
+  });
+
+  // Objective strip enters cleanly on Arga's "Iya. Siapa yang dapat paling banyak." (f124)
+  const objectiveEnter = interpolate(frame, [124, 138], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: Easing.bezier(0.16, 1, 0.3, 1),
@@ -116,7 +127,7 @@ const S03ClaimTheCityReveal: React.FC = () => {
       <div
         style={{
           position: "absolute",
-          top: 174,
+          top: 132,
           left: 430,
           width: 1060,
           display: "flex",
@@ -129,10 +140,10 @@ const S03ClaimTheCityReveal: React.FC = () => {
         {/* Main Title Plate — tactile printed banner, crisp over animated map */}
         <div
           style={{
-            backgroundColor: "rgba(247, 246, 237, 0.94)",
+            backgroundColor: "rgba(247, 246, 237, 0.95)",
             border: `4px solid ${BRAND_COLORS.ink}`,
             borderRadius: 20,
-            padding: "20px 48px 22px",
+            padding: "18px 46px 20px",
             boxShadow: "10px 10px 0px #153D34",
             opacity: titleEnter,
             translate: `0px ${interpolate(titleEnter, [0, 1], [24, 0])}px`,
@@ -142,7 +153,7 @@ const S03ClaimTheCityReveal: React.FC = () => {
           <div
             style={{
               fontFamily: BRAND_FONTS.display,
-              fontSize: 122,
+              fontSize: 118,
               fontWeight: 700,
               lineHeight: 0.9,
               letterSpacing: "-0.01em",
@@ -153,7 +164,7 @@ const S03ClaimTheCityReveal: React.FC = () => {
               startFrame={16}
               endFrame={30}
               color={BRAND_COLORS.yellow}
-              height={26}
+              height={25}
               bottom={8}
             >
               {BRAND_COPY.modeName.toUpperCase()}
@@ -172,7 +183,7 @@ const S03ClaimTheCityReveal: React.FC = () => {
             padding: "8px 26px",
             boxShadow: "5px 5px 0px #153D34",
             fontFamily: BRAND_FONTS.body,
-            fontSize: 24,
+            fontSize: 23,
             fontWeight: 800,
             letterSpacing: "0.16em",
             opacity: subEnter,
@@ -187,7 +198,7 @@ const S03ClaimTheCityReveal: React.FC = () => {
         {teamsEnter > 0.01 && (
           <div
             style={{
-              marginTop: 26,
+              marginTop: 22,
               display: "inline-flex",
               alignItems: "center",
               gap: 18,
@@ -204,14 +215,14 @@ const S03ClaimTheCityReveal: React.FC = () => {
                 color: BRAND_COLORS.greenTeamText,
                 border: `3px solid ${BRAND_COLORS.ink}`,
                 borderRadius: 12,
-                padding: "10px 22px",
+                padding: "9px 22px",
                 boxShadow: "6px 6px 0px #153D34",
                 fontFamily: BRAND_FONTS.display,
-                fontSize: 38,
+                fontSize: 36,
                 fontWeight: 700,
                 letterSpacing: "0.05em",
                 lineHeight: 0.95,
-                rotate: "-1.6deg",
+                rotate: "-1.5deg",
               }}
             >
               <span
@@ -234,7 +245,7 @@ const S03ClaimTheCityReveal: React.FC = () => {
                 borderRadius: 999,
                 padding: "6px 14px",
                 fontFamily: BRAND_FONTS.display,
-                fontSize: 28,
+                fontSize: 27,
                 fontWeight: 700,
                 lineHeight: 1,
               }}
@@ -251,14 +262,14 @@ const S03ClaimTheCityReveal: React.FC = () => {
                 color: BRAND_COLORS.yellowTeamText,
                 border: `3px solid ${BRAND_COLORS.ink}`,
                 borderRadius: 12,
-                padding: "10px 22px",
+                padding: "9px 22px",
                 boxShadow: "6px 6px 0px #153D34",
                 fontFamily: BRAND_FONTS.display,
-                fontSize: 38,
+                fontSize: 36,
                 fontWeight: 700,
                 letterSpacing: "0.05em",
                 lineHeight: 0.95,
-                rotate: "1.6deg",
+                rotate: "1.5deg",
               }}
             >
               <span
@@ -271,6 +282,54 @@ const S03ClaimTheCityReveal: React.FC = () => {
                 }}
               />
               YELLOW TEAM
+            </div>
+          </div>
+        )}
+
+        {/* Milestone 4.1 Objective Card — establishes zone-control win condition without rulebook clutter */}
+        {objectiveEnter > 0.01 && (
+          <div
+            style={{
+              marginTop: 22,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              backgroundColor: "rgba(247, 246, 237, 0.96)",
+              border: `3.5px solid ${BRAND_COLORS.ink}`,
+              borderRadius: 16,
+              padding: "12px 28px 14px",
+              boxShadow: "7px 7px 0px #075C54",
+              opacity: objectiveEnter,
+              translate: `0px ${interpolate(objectiveEnter, [0, 1], [18, 0])}px`,
+              rotate: "-0.4deg",
+            }}
+          >
+            <div
+              style={{
+                backgroundColor: BRAND_COLORS.ink,
+                color: BRAND_COLORS.yellow,
+                borderRadius: 8,
+                padding: "5px 18px",
+                fontFamily: BRAND_FONTS.display,
+                fontSize: 44,
+                fontWeight: 700,
+                letterSpacing: "0.04em",
+                lineHeight: 0.96,
+              }}
+            >
+              KUASAI ZONA TERBANYAK.
+            </div>
+            <div
+              style={{
+                marginTop: 8,
+                fontFamily: BRAND_FONTS.body,
+                fontSize: 20,
+                fontWeight: 800,
+                color: BRAND_COLORS.ink,
+                letterSpacing: "-0.01em",
+              }}
+            >
+              Tim dengan zona terbanyak saat waktu habis menang
             </div>
           </div>
         )}
@@ -464,26 +523,40 @@ export const CampaignSceneOverlays: React.FC<{
     return null;
   }
 
-  // S05 — GBK Challenge: Beat 1 CHECK-IN -> Beat 2 TANTANGAN -> Beat 3 LANDMARK DIKLAIM
+  // S05 — GBK 7-Step Progression:
+  //   SH01 (207f): Step 2 Check-in (f26..f116, non-ownership) -> Step 3 Challenge Unlock (f132..f202)
+  //   SH02 (201f): Step 4 Physical Gate B/F/H exploration (H ✓ ticks live at f105 on Naya's discovery)
+  //   SH04 (213f): Steps 5-6 Clue Assembly -> Challenge Complete (f10..f160) -> Step 7 Distinct Landmark Claim (f164..f213)
   if (segmentId === "S05_SH01") {
     return (
-      <div style={{ position: "absolute", top: 56, right: 56, pointerEvents: "none" }}>
-        <CheckInSuccessSlip
-          landmarkName="STADION UTAMA GBK"
-          enterStart={26}
-          exitStart={durationInFrames - 10}
-          exitEnd={durationInFrames}
-        />
-      </div>
+      <AbsoluteFill style={{ pointerEvents: "none" }}>
+        <div style={{ position: "absolute", top: 56, right: 56 }}>
+          <CheckInSuccessSlip
+            landmarkName="STADION UTAMA GBK"
+            enterStart={26}
+            exitStart={108}
+            exitEnd={118}
+          />
+        </div>
+        <div style={{ position: "absolute", top: 56, right: 56 }}>
+          <ChallengeUnlockCard
+            enterStart={132}
+            exitStart={durationInFrames - 10}
+            exitEnd={durationInFrames}
+          />
+        </div>
+      </AbsoluteFill>
     );
   }
   if (segmentId === "S05_SH02") {
     return (
       <div style={{ position: "absolute", top: 48, left: 54, pointerEvents: "none" }}>
         <ChallengeProgressRibbon
-          enterStart={4}
-          exitStart={durationInFrames - 8}
+          enterStart={6}
+          exitStart={durationInFrames - 10}
           exitEnd={durationInFrames}
+          mode="explore-h"
+          hFoundFrame={105}
         />
       </div>
     );
@@ -491,29 +564,40 @@ export const CampaignSceneOverlays: React.FC<{
   if (segmentId === "S05_SH04") {
     // Anchored in pure open grey sky between Gate F sign (left) and Arga/Naya (right)
     return (
-      <div style={{ position: "absolute", top: 48, left: 444, pointerEvents: "none" }}>
-        <OwnershipStampCard
-          landmarkTitle="GELORA BUNG KARNO"
-          team="green"
-          landmarkDeltaLabel="+1 LANDMARK"
-          consequenceLine="ZONA SENAYAN · GREEN TEAM"
-          consequenceTone="green"
-          enterStart={6}
-          enterEnd={16}
-          stampStart={12}
-          exitStart={durationInFrames - 7}
-          exitEnd={durationInFrames}
-          width={540}
-        />
-      </div>
+      <AbsoluteFill style={{ pointerEvents: "none" }}>
+        <div style={{ position: "absolute", top: 48, left: 444 }}>
+          <ChallengeProgressRibbon
+            enterStart={10}
+            exitStart={154}
+            exitEnd={162}
+            mode="solve-all"
+          />
+        </div>
+        <div style={{ position: "absolute", top: 48, left: 444 }}>
+          <OwnershipStampCard
+            landmarkTitle="GELORA BUNG KARNO"
+            team="green"
+            landmarkDeltaLabel="+1 LANDMARK"
+            consequenceLine="ZONA SENAYAN · GREEN TEAM"
+            consequenceTone="green"
+            enterStart={164}
+            enterEnd={174}
+            stampStart={170}
+            exitStart={durationInFrames - 8}
+            exitEnd={durationInFrames}
+            width={540}
+          />
+        </div>
+      </AbsoluteFill>
     );
   }
 
   // S06 — Yellow takes the lead: Photo Proof (KR_PH02_BUNDARAN_HI) + Editorial Zone Scoreboard
+  // Restored 1.20s Sari setup in S06_SH01 shifts native shutter by +36f (local f80)
   if (segmentId === "S06_SH01") {
     return (
       <div style={{ position: "absolute", top: 88, right: 54, pointerEvents: "none" }}>
-        <PhotoVerificationProofCard />
+        <PhotoVerificationProofCard frameOffset={36} />
       </div>
     );
   }

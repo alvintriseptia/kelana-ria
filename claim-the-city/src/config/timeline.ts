@@ -88,15 +88,20 @@ export type ComputedTimelineSegment = TimelineSegmentInput & {
 };
 
 /**
- * Active Master Campaign Timeline — Milestone 1.1 Final Match Conclusion Pacing (Rough Cut V4, 83.60s).
- * Only the 00:57-01:02 match conclusion sequence and transition into the warung reunion were refined;
- * all unrelated timeline segments remain identical to V3.
+ * Active Master Campaign Timeline — Milestone 4.1 Narrative Clarity Correction (99.67s / 2,990f @ 30 fps).
+ * Reopened selectively from the approved 83.60s Milestone 4.0 lock exclusively to restore:
+ *   - Correction A: Complete S03_SH01 paper-map opening & breathing room after Arga's objective explanation.
+ *   - Correction B: Complete S05 GBK Q&A ("Challenge-nya apaan?" -> "Oh, disuruh nyari kode di tiga gate."),
+ *                   Gate B/F/H physical exploration, and clue resolution prior to distinct landmark claim.
+ *   - Continuity audit: S06_SH01 Sari's photo setup ("Dari sini dapat nih.") before Bima's reply, plus
+ *                       clean 0.20–0.25s vocal-tail breathing room on S04_SH01/SH02/SH04 and S06_SH03_V4.
  *
  * Archived timelines:
  * - src/config/timeline.extended-140s.backup.ts (140.10s / 4,203f)
  * - src/config/timeline.60s-v1.backup.ts (60.00s / 1,800f)
  * - src/config/timeline.82s-v2.backup.ts (82.00s / 2,460f)
  * - src/config/timeline.82s-v3.backup.ts (81.80s / 2,454f)
+ * - src/config/timeline.83.6s-m4.backup.ts (83.60s / 2,508f — approved Milestone 4.0 lock)
  */
 export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
   // SCENE 01 — Weekend routine (4.90s / 147f)
@@ -112,7 +117,7 @@ export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
     dialogueNotes:
       '[1.4s quiet cafe boredom] | Naya: "Abis ini ke mana?" (2.7-3.4s) | Bima: "Ya... ke mana lagi?" (4.3-5.7s) | [0.5s beat]',
     graphicCues: ["None — raw establishing routine"],
-    productionNotes: "Unchanged from V3.",
+    productionNotes: "Unchanged from M4.0.",
   },
 
   // SCENE 02 — Game introduction (3.20s / 96f)
@@ -128,27 +133,30 @@ export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
     dialogueNotes:
       'Arga: "Eh, lihat deh." (1.0-1.7s) | Naya: "Apaan?" (2.9-3.4s)',
     graphicCues: ["None — preserve physical phone naturally without screen insert"],
-    productionNotes: "Unchanged from V3.",
+    productionNotes: "Unchanged from M4.0.",
   },
 
-  // SCENE 03 — Claim the City (5.10s / 153f)
+  // SCENE 03 — Claim the City (7.10s / 213f) — Milestone 4.1 Correction A (+2.00s)
   {
     id: "S03_SH01",
     sceneId: "S03",
     sceneTitle: "Claim the City",
     kind: "footage",
     shotId: "KR_S03_SH01",
-    trimStartSec: 2.0,
-    trimEndSec: 7.1,
+    trimStartSec: 0.6,
+    trimEndSec: 7.7,
     volume: 1.05,
     dialogueNotes:
-      '[0.6s paper-map reveal] | Bima: "Ini rebutan wilayah gitu?" (2.6-4.3s) | Arga: "Iya. Siapa yang dapat paling banyak." (4.8-6.9s)',
-    graphicCues: ['Temp title: "CLAIM THE CITY / SATU KOTA. DUA TIM."'],
-    productionNotes: "Unchanged from V3.",
+      '[2.0s animated paper-map unfold w/ native paper rustle 1.2-1.5s] | Bima: "Ini rebutan wilayah gitu?" (2.6-4.35s) | Arga: "Iya. Siapa yang dapat paling banyak." (4.8-6.95s) | [0.75s clean landing beat]',
+    graphicCues: [
+      'Enhanced paper-map reveal: "CLAIM THE CITY / SATU KOTA. DUA TIM. / KUASAI ZONA TERBANYAK. / Tim dengan zona terbanyak saat waktu habis menang"',
+    ],
+    productionNotes:
+      "M4.1 Correction A: Restored 0.6-7.7s (+2.00s) so Arga's explanation never cuts off abruptly after 'banyak' (6.95s) and the enhanced objective graphic reads cleanly.",
     tempOverlay: "s03-title",
   },
 
-  // SCENE 04 — Transportation (9.53s / 286f)
+  // SCENE 04 — Transportation (10.13s / 305f) — Preserved montage + 0.20s clean vocal tails on SH01/SH02/SH04
   {
     id: "S04_SH01",
     sceneId: "S04",
@@ -156,11 +164,11 @@ export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
     kind: "footage",
     shotId: "KR_S04_SH01",
     trimStartSec: 1.7,
-    trimEndSec: 3.55,
+    trimEndSec: 3.75,
     volume: 0.95,
-    dialogueNotes: 'Arga: "Yang deket dulu aja ya?" (1.9-2.7s) | Naya: "Boleh." (3.1-3.4s)',
-    graphicCues: ["Temp badge: GREEN TEAM"],
-    productionNotes: "Unchanged from V3.",
+    dialogueNotes: 'Arga: "Yang deket dulu aja ya?" (1.9-2.8s) | Naya: "Boleh." (3.1-3.5s) | [0.25s clean tail before omitted "Yang mana?" at 4.1s]',
+    graphicCues: ["Team badge: GREEN TEAM"],
+    productionNotes: "M4.1 continuity tail (+0.20s) prevents abrupt vocal cut on 'Boleh.' while omitting unanswered 'Yang mana?'.",
     tempOverlay: "s04-green-tag",
   },
   {
@@ -170,12 +178,12 @@ export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
     kind: "footage",
     shotId: "KR_S04_SH02",
     trimStartSec: 0.5,
-    trimEndSec: 3.05,
+    trimEndSec: 3.25,
     volume: 0.88,
     dialogueNotes:
-      'Sari: "Kita mau ke mana dulu?" (0.6-1.4s) | Bima: "Udah, ikut gua aja." (1.8-2.9s)',
-    graphicCues: ["Temp badge: YELLOW TEAM"],
-    productionNotes: "Unchanged from V3.",
+      'Sari: "Kita mau ke mana dulu?" (0.6-1.5s) | Bima: "Udah, ikut gua aja." (1.8-3.0s) | [0.25s clean tail]',
+    graphicCues: ["Team badge: YELLOW TEAM"],
+    productionNotes: "M4.1 continuity tail (+0.20s) prevents abrupt vocal cut on 'aja.' (still 0.25s before next banter).",
     tempOverlay: "s04-yellow-tag",
   },
   {
@@ -188,8 +196,8 @@ export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
     trimEndSec: 7.55,
     volume: 0.95,
     dialogueNotes: 'Arga: "Oke, gas." (6.6-7.3s) inside TransJakarta',
-    graphicCues: ["Temp badge: GREEN TEAM"],
-    productionNotes: "Unchanged from V3.",
+    graphicCues: ["Pure Raw Jakarta"],
+    productionNotes: "Unchanged from M4.0.",
     tempOverlay: "s04-green-tag",
   },
   {
@@ -199,16 +207,16 @@ export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
     kind: "footage",
     shotId: "KR_S04_SH04",
     trimStartSec: 0.9,
-    trimEndSec: 4.55,
+    trimEndSec: 4.75,
     volume: 0.92,
     dialogueNotes:
-      'Sari: "Eh, bagus juga ya dari sini." (1.0-2.5s) [camera snap] | Bima: "Lo malah foto-foto." (3.4-4.4s)',
-    graphicCues: ["Temp badge: YELLOW TEAM"],
-    productionNotes: "Unchanged from V3.",
+      'Sari: "Eh, bagus juga ya dari sini." (1.0-2.6s) [camera snap] | Bima: "Lo malah foto-foto." (3.4-4.5s) | [0.25s clean tail]',
+    graphicCues: ["Pure Raw Jakarta"],
+    productionNotes: "M4.1 continuity tail (+0.20s) prevents abrupt cut on 'foto-foto.' (still 0.25s before Sari's next line).",
     tempOverlay: "s04-yellow-tag",
   },
 
-  // SCENE 05 — GBK challenge (8.60s / 258f)
+  // SCENE 05 — GBK challenge (20.70s / 621f) — Milestone 4.1 Correction B (+12.10s)
   {
     id: "S05_SH01",
     sceneId: "S05",
@@ -216,12 +224,16 @@ export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
     kind: "footage",
     shotId: "KR_S05_SH01",
     trimStartSec: 0.0,
-    trimEndSec: 4.0,
+    trimEndSec: 6.9,
     volume: 1.08,
     dialogueNotes:
-      'Arga: "Bentar, gue check-in dulu." (0.1-1.4s) | [1.5s phone beat] | Naya: "Challenge-nya apaan?" (3.0-3.9s)',
-    graphicCues: ["Temp badge: 1. CHECK-IN BERHASIL -> Tantangan GBK terbuka (belum dimiliki)"],
-    productionNotes: "Unchanged from V3.",
+      'Arga: "Bentar, gue check-in dulu." (0.1-1.45s) | [1.55s check-in beat] | Naya: "Challenge-nya apaan?" (3.0-3.95s) | Arga: "Oh, disuruh nyari kode di tiga gate." (4.5-6.4s) | [0.5s walk-in]',
+    graphicCues: [
+      "Step 2 (0.87-3.87s): CHECK-IN BERHASIL · STADION UTAMA GBK (Belum dimiliki)",
+      "Step 3 (4.40-6.80s): TANTANGAN TERBUKA · CARI KODE DI 3 GATE (Target: B · F · H)",
+    ],
+    productionNotes:
+      "M4.1 Correction B: Restored Arga's complete challenge explanation (+2.90s) after Naya's question.",
     tempOverlay: "s05-checkin",
   },
   {
@@ -230,13 +242,16 @@ export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
     sceneTitle: "GBK challenge",
     kind: "footage",
     shotId: "KR_S05_SH02",
-    trimStartSec: 4.7,
-    trimEndSec: 7.2,
+    trimStartSec: 0.0,
+    trimEndSec: 6.7,
     volume: 1.18,
     dialogueNotes:
-      'Naya: "Abis ini lewat sini aja." (4.8-5.7s) + physical walk toward stadium ring (5.8-7.2s)',
-    graphicCues: ["Temp badge: 2. TANTANGAN EKSPLORASI · GBK"],
-    productionNotes: "Unchanged from V3.",
+      'Arga: "B, F, sama H." (0.05-1.95s) | [looks up at Gate H sign] | Naya: "Lah, ini udah H!" (3.15-4.4s) | Naya: "Abis ini lewat sini aja." (4.8-5.8s) | [0.9s walk toward stadium ring]',
+    graphicCues: [
+      "Step 4 (0.20-6.63s): TANTANGAN GBK · GATE B · F · H tracker (H ✓ ticks live on Naya's Gate H discovery at 3.5s)",
+    ],
+    productionNotes:
+      "M4.1 Correction B: Restored full Gate B, F, H physical exploration conversation (+4.20s).",
     tempOverlay: "s05-challenge",
   },
   {
@@ -245,31 +260,37 @@ export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
     sceneTitle: "GBK challenge",
     kind: "footage",
     shotId: "KR_S05_SH04",
-    trimStartSec: 5.7,
-    trimEndSec: 7.8,
+    trimStartSec: 0.4,
+    trimEndSec: 7.5,
     volume: 1.14,
-    dialogueNotes: 'Naya: "Nah, dapet!" (5.9-6.9s) + celebratory turn (7.0-7.8s)',
-    graphicCues: ["Temp badge: 3. LANDMARK DIKLAIM · GBK -> Green Team (Senayan)"],
-    productionNotes: "Unchanged from V3.",
+    dialogueNotes:
+      'Naya: "Urutannya B, F, H kan?" (0.6-2.55s) | Arga: "Berarti nol tiga, nol tujuh, sebelas." (3.15-5.75s) | Naya: "Nah, dapat!" (5.9-6.95s) | [0.55s celebratory turn]',
+    graphicCues: [
+      "Steps 5-6 (0.33-5.40s local): TANTANGAN GBK · GATE B ✓ · F ✓ · H ✓ -> TANTANGAN SELESAI (no unverified digits displayed as factual signage)",
+      "Step 7 (5.47-7.10s local): Distinct LANDMARK DIKLAIM · GELORA BUNG KARNO · GREEN TEAM (+1 LANDMARK · ZONA SENAYAN)",
+    ],
+    productionNotes:
+      "M4.1 Correction B + continuity fix (+5.00s): Eliminates previous 5.7s mid-word clip on 'sebelas' and restores full clue assembly & distinct challenge-complete -> landmark-claim progression.",
     tempOverlay: "s05-claimed",
   },
 
-  // SCENE 06 — Competitive tension (10.30s / 309f)
+  // SCENE 06 — Competitive tension (11.67s / 350f) — Continuity fix on SH01 (+1.10s) & clean tail on SH03 (+0.25s)
   {
     id: "S06_SH01",
     sceneId: "S06",
     sceneTitle: "Competitive tension",
     kind: "footage",
     shotId: "KR_S06_SH01",
-    trimStartSec: 2.5,
-    trimEndSec: 7.0,
+    trimStartSec: 1.3,
+    trimEndSec: 6.9,
     volume: 0.94,
     dialogueNotes:
-      'Bima: "Ya, foto aja." (2.6-3.4s) | [shutter ~4.1s] | Sari: "Udah, gue kirim ya." (5.2-6.2s) | [0.8s quiet settle]',
+      'Sari: "Dari sini dapat nih." (1.5-2.35s) | Bima: "Ya, foto aja." (2.6-3.5s) | [native shutter 3.95s] | Sari: "Udah, gue kirim ya." (5.2-6.3s) | [0.6s quiet settle]',
     graphicCues: [
-      "3-stage sequential verification: 1. Foto terkirim · Menunggu verifikasi (Belum dimiliki) -> 2. Foto terverifikasi -> 3. Bundaran HI diklaim Yellow",
+      "3-stage sequential verification anchored to native shutter (local f80): 1. Menunggu verifikasi (Belum dimiliki) -> 2. Terverifikasi -> 3. Bundaran HI diklaim Yellow",
     ],
-    productionNotes: "Unchanged from V3.",
+    productionNotes:
+      "M4.1 continuity fix (+1.10s): Restores Sari's setup ('Dari sini dapat nih.') so Bima's reply ('Ya, foto aja.') is no longer orphaned.",
     tempOverlay: "s06-photo-verified",
   },
   {
@@ -279,16 +300,16 @@ export const ROUGHCUT_SEGMENTS_INPUT: readonly TimelineSegmentInput[] = [
     kind: "footage",
     shotId: "KR_S06_SH03_V4",
     trimStartSec: 0.3,
-    trimEndSec: 6.1,
+    trimEndSec: 6.35,
     volume: 0.84,
     dialogueNotes:
-      'Naya: "Eh, mereka udah dua zona!" (0.5-2.1s) | Arga: "Serius? Kita baru satu?" (2.5-4.0s) | Naya: "Iya! Ayo, harus ngejar nih." (4.3-6.0s)',
-    graphicCues: ["Temp scoreboard: ZONA DIKUASAI · GREEN 1 — YELLOW 2"],
-    productionNotes: "Unchanged from V3.",
+      'Naya: "Eh, mereka udah dua zona!" (0.5-2.2s) | Arga: "Serius? Kita baru satu?" (2.5-4.0s) | Naya: "Iya! Ayo, harus ngejar nih." (4.3-6.05s) | [0.3s clean step]',
+    graphicCues: ["Editorial scoreboard: ZONA DIKUASAI · GREEN 1 — YELLOW 2"],
+    productionNotes: "M4.1 continuity tail (+0.25s) prevents abrupt vocal cut on 'ngejar nih.'",
     tempOverlay: "s06-standings-1-2",
   },
 
-  // SCENE 07 — Tactical comeback (15.50s live + continuous conclusion bridge)
+  // SCENE 07 — Tactical comeback (15.50s live + continuous conclusion bridge — UNCHANGED)
   {
     id: "S07_SH01",
     sceneId: "S07",

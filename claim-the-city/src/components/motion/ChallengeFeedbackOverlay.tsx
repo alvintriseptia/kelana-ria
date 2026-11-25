@@ -136,14 +136,131 @@ export const CheckInSuccessSlip: React.FC<{
 };
 
 /**
- * S05_SH02 Beat 2 — Bold unboxed challenge observation ribbon built for mobile readability.
- * Communicates physical clue-solving progression without exposing unverified gate numbers.
+ * S05_SH01 Beat 2 — GBK Challenge Unlock Card synced to Arga's
+ * "Oh, disuruh nyari kode di tiga gate." Strictly non-ownership (challenge active only).
+ */
+export const ChallengeUnlockCard: React.FC<{
+  readonly enterStart: number;
+  readonly exitStart: number;
+  readonly exitEnd: number;
+}> = ({ enterStart, exitStart, exitEnd }) => {
+  const frame = useCurrentFrame();
+
+  const enterProgress = interpolate(frame, [enterStart, enterStart + 12], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.bezier(0.16, 1, 0.3, 1),
+  });
+  const exitProgress = interpolate(frame, [exitStart, exitEnd], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.bezier(0.7, 0, 0.84, 0),
+  });
+  const opacity =
+    interpolate(frame, [enterStart, enterStart + 5], [0, 1], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    }) *
+    interpolate(frame, [exitStart, exitEnd], [1, 0], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    });
+
+  if (opacity <= 0.005) {
+    return null;
+  }
+
+  const translateX =
+    interpolate(enterProgress, [0, 1], [54, 0]) +
+    interpolate(exitProgress, [0, 1], [0, 48]);
+
+  return (
+    <div
+      style={{
+        width: 548,
+        backgroundColor: BRAND_COLORS.ink,
+        color: BRAND_COLORS.paper,
+        border: `3.5px solid ${BRAND_COLORS.yellow}`,
+        borderRadius: 18,
+        padding: "18px 24px 20px",
+        boxShadow: "8px 8px 0px #075C54",
+        opacity,
+        translate: `${translateX}px 0px`,
+        rotate: "-0.8deg",
+      }}
+    >
+      <div
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 10,
+          backgroundColor: BRAND_COLORS.yellow,
+          color: BRAND_COLORS.ink,
+          borderRadius: 8,
+          padding: "4px 13px",
+          marginBottom: 12,
+          fontFamily: BRAND_FONTS.body,
+          fontSize: 16,
+          fontWeight: 800,
+          letterSpacing: "0.1em",
+        }}
+      >
+        TANTANGAN TERBUKA · GBK
+      </div>
+
+      <div
+        style={{
+          fontFamily: BRAND_FONTS.display,
+          fontSize: 56,
+          fontWeight: 700,
+          lineHeight: 0.94,
+          letterSpacing: "0.015em",
+          color: BRAND_COLORS.paper,
+          marginBottom: 12,
+        }}
+      >
+        CARI KODE DI 3 GATE
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingTop: 10,
+          borderTop: "2px dashed rgba(247, 246, 237, 0.28)",
+          fontFamily: BRAND_FONTS.body,
+          fontSize: 19,
+          fontWeight: 800,
+          color: BRAND_COLORS.lime,
+        }}
+      >
+        <span>Target: Gate B · F · H</span>
+        <span style={{ color: "rgba(247, 246, 237, 0.78)", fontSize: 17 }}>
+          Belum dimiliki
+        </span>
+      </div>
+    </div>
+  );
+};
+
+/**
+ * S05_SH02 & S05_SH04 — Bold challenge observation ribbon built for mobile readability.
+ * Tracks physical Gate B / F / H exploration and completion without exposing unverified numeric codes.
  */
 export const ChallengeProgressRibbon: React.FC<{
   readonly enterStart?: number;
   readonly exitStart: number;
   readonly exitEnd: number;
-}> = ({ enterStart = 4, exitStart, exitEnd }) => {
+  readonly mode?: "explore-h" | "solve-all";
+  readonly hFoundFrame?: number;
+}> = ({
+  enterStart = 4,
+  exitStart,
+  exitEnd,
+  mode = "explore-h",
+  hFoundFrame = 105,
+}) => {
   const frame = useCurrentFrame();
 
   const enterProgress = interpolate(frame, [enterStart, enterStart + 10], [0, 1], {
@@ -166,7 +283,21 @@ export const ChallengeProgressRibbon: React.FC<{
   }
 
   const translateX = interpolate(enterProgress, [0, 1], [-36, 0]);
-  const completedSteps = frame < 18 ? 1 : frame < 42 ? 2 : 3;
+
+  const gates: readonly { readonly id: "B" | "F" | "H"; readonly checked: boolean }[] =
+    mode === "explore-h"
+      ? [
+          { id: "B", checked: false },
+          { id: "F", checked: false },
+          { id: "H", checked: frame >= hFoundFrame },
+        ]
+      : [
+          { id: "B", checked: frame >= 84 },
+          { id: "F", checked: frame >= 108 },
+          { id: "H", checked: frame >= 132 },
+        ];
+
+  const isSolved = mode === "solve-all" && frame >= 146;
 
   return (
     <div
@@ -176,7 +307,7 @@ export const ChallengeProgressRibbon: React.FC<{
         gap: 12,
         backgroundColor: BRAND_COLORS.ink,
         color: BRAND_COLORS.paper,
-        border: `3.5px solid ${BRAND_COLORS.yellow}`,
+        border: `3.5px solid ${isSolved ? BRAND_COLORS.lime : BRAND_COLORS.yellow}`,
         borderRadius: 16,
         padding: "16px 24px 18px",
         boxShadow: "7px 7px 0px #075C54",
@@ -187,43 +318,52 @@ export const ChallengeProgressRibbon: React.FC<{
       {/* Dominant mobile-first headline */}
       <div
         style={{
-          fontFamily: BRAND_FONTS.display,
-          fontSize: 58,
-          fontWeight: 700,
-          lineHeight: 0.9,
-          letterSpacing: "0.02em",
-          color: BRAND_COLORS.yellow,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 16,
         }}
       >
-        TANTANGAN GBK
+        <div
+          style={{
+            fontFamily: BRAND_FONTS.display,
+            fontSize: 54,
+            fontWeight: 700,
+            lineHeight: 0.9,
+            letterSpacing: "0.02em",
+            color: isSolved ? BRAND_COLORS.lime : BRAND_COLORS.yellow,
+          }}
+        >
+          {isSolved ? "✓ TANTANGAN SELESAI" : "TANTANGAN GBK"}
+        </div>
       </div>
 
-      {/* High-contrast tactile observation steps (zero unverified numeric gate codes) */}
+      {/* High-contrast tactile Gate B / F / H observation steps (zero unverified numeric gate codes) */}
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
         <span
           style={{
             fontFamily: BRAND_FONTS.body,
-            fontSize: 21,
+            fontSize: 20,
             fontWeight: 800,
             letterSpacing: "0.04em",
             color: BRAND_COLORS.paper,
           }}
         >
-          OBSERVASI
+          {mode === "solve-all" ? "SUSUN KODE" : "EKSPLORASI"}
         </span>
 
         <div style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
-          {[1, 2, 3].map((step) => {
-            const active = step <= completedSteps;
+          {gates.map((gate) => {
+            const active = gate.checked;
             return (
               <div
-                key={step}
+                key={gate.id}
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  gap: 5,
-                  minWidth: 56,
+                  gap: 6,
+                  minWidth: 72,
                   height: 38,
                   backgroundColor: active
                     ? BRAND_COLORS.lime
@@ -233,14 +373,14 @@ export const ChallengeProgressRibbon: React.FC<{
                     ? `2px solid ${BRAND_COLORS.ink}`
                     : "2px solid rgba(247, 246, 237, 0.35)",
                   borderRadius: 999,
-                  paddingInline: 12,
+                  paddingInline: 14,
                   fontFamily: BRAND_FONTS.display,
                   fontSize: 28,
                   fontWeight: 700,
                   lineHeight: 1,
                 }}
               >
-                <span>{step}</span>
+                <span>GATE {gate.id}</span>
                 {active && <span>✓</span>}
               </div>
             );
@@ -253,13 +393,17 @@ export const ChallengeProgressRibbon: React.FC<{
 
 /**
  * S06_SH01 — Physical Bundaran HI photo proof snapshot using actual KR_PH02_BUNDARAN_HI.jpg.
- * Enforces strict chronological verification:
- *   f45..f81:  FOTO TERKIRIM · MENUNGGU VERIFIKASI (Belum dimiliki)
- *   f82..f107: TERVERIFIKASI ✓
- *   f108..f135: DIKLAIM · YELLOW TEAM (+1 LANDMARK)
+ * Enforces strict chronological verification anchored cleanly to the native camera shutter
+ * (offsettable via frameOffset when clip lead-in changes):
+ *   +44..+81:  FOTO TERKIRIM · MENUNGGU VERIFIKASI (Belum dimiliki)
+ *   +82..+107: TERVERIFIKASI ✓
+ *   +108..+135: DIKLAIM · YELLOW TEAM (+1 LANDMARK)
  */
-export const PhotoVerificationProofCard: React.FC = () => {
-  const frame = useCurrentFrame();
+export const PhotoVerificationProofCard: React.FC<{
+  readonly frameOffset?: number;
+}> = ({ frameOffset = 0 }) => {
+  const rawFrame = useCurrentFrame();
+  const frame = rawFrame - frameOffset;
 
   if (frame < 44) {
     return null;
@@ -270,7 +414,7 @@ export const PhotoVerificationProofCard: React.FC = () => {
     extrapolateRight: "clamp",
     easing: Easing.bezier(0.16, 1, 0.3, 1),
   });
-  const exitOpacity = interpolate(frame, [129, 135], [1, 0], {
+  const exitOpacity = interpolate(frame, [126, 132], [1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
@@ -330,7 +474,7 @@ export const PhotoVerificationProofCard: React.FC = () => {
         {stage === 2 && (
           <RubberStamp
             label="TERVERIFIKASI ✓"
-            enterFrame={82}
+            enterFrame={82 + frameOffset}
             tone="green"
             rotationDeg={-4}
             fontSize={30}
@@ -346,7 +490,7 @@ export const PhotoVerificationProofCard: React.FC = () => {
         {stage === 3 && (
           <RubberStamp
             label="DIKLAIM · YELLOW"
-            enterFrame={108}
+            enterFrame={108 + frameOffset}
             tone="ink"
             rotationDeg={-4.5}
             fontSize={30}
