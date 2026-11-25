@@ -327,7 +327,7 @@ export function createSoloServer({
   const seek = seekStore(databasePath, now);
   const handleSeek = seekHandler(seek, now, secureCookie);
   const handlePacks = packHandler(packs, now, secureCookie);
-  const rulebooks = rulebookStore(databasePath, { midtrans });
+  const rulebooks = rulebookStore(databasePath, { midtrans, now });
   const handleRulebooks = rulebookHandler(rulebooks, now, secureCookie, allowHideSeekQa, allowRulebookSandboxCheckout, rulebookReviewerKey);
   const handleMap = mapHandler(mapProxy);
   const handleStatic = staticDir ? staticHandler(staticDir) : undefined;
