@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -17,6 +17,7 @@ import type {
   PackEarningsEntry,
   PackOrderSummary,
   PackVersionStatus,
+  RulebookEntitlementSummary,
   RulebookFormat,
   RulebookPlayMode,
   SeekEngineAction,
@@ -178,9 +179,25 @@ export type ClaimPublicListing = {
 
 export type RulebookPublicListing = HideSeekPublicListing | ClaimPublicListing;
 
+const RESTORE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+const RESTORE_RATE_LIMIT_MAX = 5;
+const RESTORE_RATE_LIMIT_WINDOW_MS = 15 * 60_000;
+
+function generateRestoreCode(): string {
+  const part = () => Array.from({ length: 4 }, () => RESTORE_ALPHABET[randomInt(0, RESTORE_ALPHABET.length)]).join("");
+  return `KLR-${part()}-${part()}`;
+}
+
+function normalizeRestoreCode(raw: string): string | null {
+  const stripped = raw.trim().toUpperCase().replace(/[\s-]+/g, "");
+  if (!/^KLR[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}$/.test(stripped)) return null;
+  return `${stripped.slice(0, 3)}-${stripped.slice(3, 7)}-${stripped.slice(7, 11)}`;
+}
+
 export type RulebookRoomPass = {
   passId: string;
   orderId: string | null;
+  entitlementId?: string;
   roomCode: string;
   packId: string;
   version: number;
@@ -339,7 +356,7 @@ export function rulebookStore(
   const db = new DatabaseSync(databasePath, { timeout: 5000 });
   db.exec(`
     PRAGMA journal_mode = WAL;
-    PRAGMA synchronous = NORMAL;
+    PRAGMA synchronous = FULL;
     PRAGMA secure_delete = ON;
     PRAGMA foreign_keys = ON;
   `);
@@ -377,6 +394,17 @@ export function rulebookStore(
       room_code TEXT UNIQUE NOT NULL,
       payload TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS rulebook_entitlements (
+      entitlement_id TEXT PRIMARY KEY,
+      pack_id TEXT NOT NULL,
+      order_id TEXT UNIQUE NOT NULL,
+      owner_hash TEXT NOT NULL,
+      restore_code_hash TEXT UNIQUE NOT NULL,
+      created_at INTEGER NOT NULL,
+      restored_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_rulebook_entitlements_owner_pack
+      ON rulebook_entitlements (owner_hash, pack_id);
     CREATE TABLE IF NOT EXISTS rulebook_live_rooms (
       room_code TEXT PRIMARY KEY,
       format TEXT NOT NULL,
@@ -437,6 +465,27 @@ export function rulebookStore(
   const getPassByOrderStmt = db.prepare("SELECT payload FROM rulebook_passes WHERE order_id = ?");
   const getPassByCodeStmt = db.prepare("SELECT payload FROM rulebook_passes WHERE room_code = ?");
   const insertPassStmt = db.prepare("INSERT OR IGNORE INTO rulebook_passes (pass_id, order_id, room_code, payload) VALUES (?, ?, ?, ?)");
+
+  const insertEntitlementStmt = db.prepare(`
+    INSERT INTO rulebook_entitlements (entitlement_id, pack_id, order_id, owner_hash, restore_code_hash, created_at, restored_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const getEntitlementByOrderStmt = db.prepare(
+    "SELECT entitlement_id, pack_id, order_id, owner_hash, created_at, restored_at FROM rulebook_entitlements WHERE order_id = ?",
+  );
+  const getEntitlementByOwnerPackStmt = db.prepare(
+    "SELECT entitlement_id, pack_id, order_id, owner_hash, created_at, restored_at FROM rulebook_entitlements WHERE owner_hash = ? AND pack_id = ? ORDER BY created_at DESC LIMIT 1",
+  );
+  const getEntitlementByCodeHashStmt = db.prepare(
+    "SELECT entitlement_id, pack_id, order_id, owner_hash, created_at, restored_at FROM rulebook_entitlements WHERE restore_code_hash = ?",
+  );
+  const listEntitlementsByOwnerStmt = db.prepare(
+    "SELECT entitlement_id, pack_id, order_id, created_at, restored_at FROM rulebook_entitlements WHERE owner_hash = ? ORDER BY created_at DESC",
+  );
+  const rebindEntitlementOwnerStmt = db.prepare(
+    "UPDATE rulebook_entitlements SET owner_hash = ?, restored_at = ? WHERE entitlement_id = ?",
+  );
+  const restoreFailuresByCred = new Map<string, number[]>();
 
   const getLiveRoomStmt = db.prepare("SELECT 1 FROM rulebook_live_rooms WHERE room_code = ?");
   const deleteLiveRoomStmt = db.prepare("DELETE FROM rulebook_live_rooms WHERE room_code = ?");
@@ -817,6 +866,53 @@ export function rulebookStore(
     return { ok: true, record: rec };
   }
 
+  type EntitlementRow = {
+    entitlement_id: string;
+    pack_id: string;
+    order_id: string;
+    owner_hash?: string;
+    created_at: number;
+    restored_at: number | null;
+  };
+
+  function findActiveRoomForEntitlement(entitlementId: string, orderId: string, currentNow: number): string | null {
+    for (const session of [...liveRooms.values()].reverse()) {
+      const matchesEntitlement =
+        session.pass.entitlementId === entitlementId ||
+        (session.pass.orderId !== null && session.pass.orderId === orderId);
+      if (!matchesEntitlement) continue;
+      const ts = roomTime(session.pass.roomCode, currentNow);
+      if (session.format === "claim-the-city") {
+        syncClaimReadState(session, ts);
+      } else {
+        syncSeekReadState(session, ts);
+      }
+      if (!session.match.outcome) return session.pass.roomCode;
+    }
+    return null;
+  }
+
+  function listEntitlements(credential: string, currentNow: number): RulebookEntitlementSummary[] {
+    const ownerHash = digest(credential);
+    const rows = listEntitlementsByOwnerStmt.all(ownerHash) as EntitlementRow[];
+    return rows.map((row) => ({
+      packId: row.pack_id,
+      orderId: row.order_id,
+      purchasedAt: row.created_at,
+      restoredAt: row.restored_at ?? null,
+      activeRoomCode: findActiveRoomForEntitlement(row.entitlement_id, row.order_id, currentNow),
+    }));
+  }
+
+  function getCallerOwnership(credential: string, currentNow: number): {
+    ownedPackIds: string[];
+    entitlements: RulebookEntitlementSummary[];
+  } {
+    const entitlements = listEntitlements(credential, currentNow);
+    const ownedPackIds = [...new Set(entitlements.map((entry) => entry.packId))];
+    return { ownedPackIds, entitlements };
+  }
+
   function instantiateRoom(
     rec: StoredRulebookRecord,
     hostCredentialHash: string,
@@ -825,6 +921,7 @@ export function rulebookStore(
     orderId: string | null = null,
     qa = false,
     mode?: RulebookPlayMode,
+    entitlementId: string | null = null,
   ): LiveSession {
     return transact(() => {
       const prefix = rec.format === "claim-the-city" ? "RC" : "RB";
@@ -841,13 +938,14 @@ export function rulebookStore(
       const pass: RulebookRoomPass = {
         passId,
         orderId,
+        ...(entitlementId ? { entitlementId } : {}),
         roomCode,
         packId: rec.packId,
         version: rec.version,
         format: rec.format,
         maxPlayers: mode === "solo" ? 1 : rec.pack.session.maxPlayers,
         ...(mode ? { mode, minPlayers: mode === "group" ? Math.max(2, rec.pack.session.minPlayers) : 1 } : {}),
-        paid: orderId !== null,
+        paid: orderId !== null || entitlementId !== null,
         createdAt: now,
       };
 
@@ -902,6 +1000,54 @@ export function rulebookStore(
     });
   }
 
+  function createOwnedRoomFromRulebook(
+    packId: string,
+    version: number,
+    hostCredential: string,
+    hostName: string,
+    now: number,
+    mode?: RulebookPlayMode,
+    requestId?: string,
+    qa = false,
+  ):
+    | { ok: true; roomCode: string; pass: RulebookRoomPass; room: SeekEngineRoomView | ClaimEngineRoomView }
+    | { ok: false; error: string; roomCode?: string } {
+    const rec = getRecord(packId, version);
+    if (!rec || rec.status !== "published") return { ok: false, error: "pack-unavailable" };
+    if (qa && rec.format !== "hide-and-seek") return { ok: false, error: "seek-qa-only" };
+    if (!supportsMode(rec.pack, mode)) return { ok: false, error: "mode-unavailable" };
+    const hostHash = digest(hostCredential);
+    const entitlement = getEntitlementByOwnerPackStmt.get(hostHash, packId) as EntitlementRow | undefined;
+    if (!entitlement) return { ok: false, error: "payment-required" };
+    const requestKey = requestId ? JSON.stringify([hostHash, packId, version, mode, qa, requestId]) : undefined;
+    const previousCode = requestKey && catalogRooms.get(requestKey);
+    const previous = previousCode ? liveRooms.get(previousCode) : undefined;
+    if (previous) {
+      const room =
+        previous.format === "claim-the-city"
+          ? viewClaimEngineMatch(previous.match, "seat-1", now)
+          : viewSeekEngineMatch(previous.match, "seat-1", now);
+      return { ok: true, roomCode: previous.pass.roomCode, pass: previous.pass, room };
+    }
+    const activeRoomCode = findActiveRoomForEntitlement(entitlement.entitlement_id, entitlement.order_id, now);
+    if (activeRoomCode) {
+      return { ok: false, error: "entitlement-active-room-exists", roomCode: activeRoomCode };
+    }
+    const session = transact(() => {
+      const created = instantiateRoom(rec, hostHash, hostName, now, null, qa, mode, entitlement.entitlement_id);
+      if (requestKey) {
+        upsertCatalogRoomStmt.run(requestKey, created.pass.roomCode, now);
+        onCommit(() => catalogRooms.set(requestKey, created.pass.roomCode));
+      }
+      return created;
+    });
+    const room =
+      session.format === "claim-the-city"
+        ? viewClaimEngineMatch(session.match, "seat-1", now)
+        : viewSeekEngineMatch(session.match, "seat-1", now);
+    return { ok: true, roomCode: session.pass.roomCode, pass: session.pass, room };
+  }
+
   function createFreeRoomFromRulebook(
     packId: string,
     version: number,
@@ -913,10 +1059,16 @@ export function rulebookStore(
     requestId?: string,
   ):
     | { ok: true; roomCode: string; pass: RulebookRoomPass; room: SeekEngineRoomView | ClaimEngineRoomView }
-    | { ok: false; error: string } {
+    | { ok: false; error: string; roomCode?: string } {
     const rec = getRecord(packId, version);
     if (!rec || rec.status !== "published") return { ok: false, error: "pack-unavailable" };
-    if (rec.pack.meta.priceIdr > 0) return { ok: false, error: "payment-required" };
+    if (rec.pack.meta.priceIdr > 0) {
+      const hostHash = digest(hostCredential);
+      if (getEntitlementByOwnerPackStmt.get(hostHash, packId)) {
+        return createOwnedRoomFromRulebook(packId, version, hostCredential, hostName, now, mode, requestId, qa);
+      }
+      return { ok: false, error: "payment-required" };
+    }
     if (qa && rec.format !== "hide-and-seek") return { ok: false, error: "seek-qa-only" };
     if (!supportsMode(rec.pack, mode)) return { ok: false, error: "mode-unavailable" };
     const hostHash = digest(hostCredential);
@@ -962,6 +1114,9 @@ export function rulebookStore(
     if (!rec || rec.status !== "published") return { ok: false, error: "pack-unavailable" };
     if (rec.pack.meta.priceIdr <= 0) return { ok: false, error: "pack-is-free" };
     if (!supportsMode(rec.pack, mode)) return { ok: false, error: "mode-unavailable" };
+    if (getEntitlementByOwnerPackStmt.get(buyerHash, packId)) {
+      return { ok: false, error: "pack-already-owned" };
+    }
     const task = createProviderOrder(rec, orderId, buyerHash, now, mode);
     pendingOrders.set(orderId, task);
     try {
@@ -1036,7 +1191,17 @@ export function rulebookStore(
     hostName: string,
     notification: Partial<MidtransNotificationPayload> | undefined,
     now: number,
-  ): Promise<{ ok: true; duplicate: boolean; order: PackOrderSummary; pass?: RulebookRoomPass } | { ok: false; error: string }> {
+  ): Promise<
+    | {
+        ok: true;
+        duplicate: boolean;
+        order: PackOrderSummary;
+        pass?: RulebookRoomPass;
+        restoreCode?: string;
+        entitlement?: RulebookEntitlementSummary;
+      }
+    | { ok: false; error: string }
+  > {
     const row = getOrderStmt.get(orderId) as { payload: string; buyer_hash: string } | undefined;
     if (!row || (hostCredential !== undefined && digest(hostCredential) !== row.buyer_hash)) {
       return { ok: false, error: "order-not-found" };
@@ -1113,10 +1278,33 @@ export function rulebookStore(
       const rec = getRecord(freshOrder.packId, freshOrder.version);
       if (!rec) return { ok: false as const, error: "pack-not-found" };
 
+      const existingEntitlement = getEntitlementByOrderStmt.get(orderId) as EntitlementRow | undefined;
+      let entitlementId = existingEntitlement?.entitlement_id;
+      let restoreCode: string | undefined;
+      if (!entitlementId) {
+        entitlementId = `ent-${randomBytes(6).toString("hex")}`;
+        let candidate: string;
+        let candidateHash: string;
+        do {
+          candidate = generateRestoreCode();
+          candidateHash = digest(candidate);
+        } while (getEntitlementByCodeHashStmt.get(candidateHash));
+        restoreCode = candidate;
+        insertEntitlementStmt.run(
+          entitlementId,
+          rec.packId,
+          orderId,
+          freshRow.buyer_hash,
+          candidateHash,
+          now,
+          null,
+        );
+      }
+
       const existingPassRow = getPassByOrderStmt.get(orderId) as { payload: string } | undefined;
       const pass = existingPassRow
         ? (JSON.parse(existingPassRow.payload) as RulebookRoomPass)
-        : instantiateRoom(rec, freshRow.buyer_hash, hostName, now, orderId, false, freshOrder.mode).pass;
+        : instantiateRoom(rec, freshRow.buyer_hash, hostName, now, orderId, false, freshOrder.mode, entitlementId).pass;
 
       const existingEarningRow = getEarningByOrderStmt.get(orderId) as { payload: string } | undefined;
       const earning: PackEarningsEntry = existingEarningRow
@@ -1148,7 +1336,80 @@ export function rulebookStore(
       upsertOrderStmt.run(orderId, freshRow.buyer_hash, freshOrder.packId, freshOrder.version, JSON.stringify(freshOrder));
       deletePendingOrderStmt.run(orderId);
       onCommit(() => pendingOrderRecords.delete(orderId));
-      return { ok: true as const, duplicate: false, order: freshOrder, pass };
+      const entitlement: RulebookEntitlementSummary = {
+        packId: rec.packId,
+        orderId,
+        purchasedAt: existingEntitlement?.created_at ?? now,
+        restoredAt: existingEntitlement?.restored_at ?? null,
+        activeRoomCode: pass.roomCode,
+      };
+      return {
+        ok: true as const,
+        duplicate: false,
+        order: freshOrder,
+        pass,
+        ...(restoreCode ? { restoreCode } : {}),
+        entitlement,
+      };
+    });
+  }
+
+  function restoreEntitlement(
+    credential: string,
+    rawRestoreCode: string,
+    now: number,
+  ):
+    | {
+        ok: true;
+        packId: string;
+        orderId: string;
+        restoredAt: number;
+        ownedPackIds: string[];
+        entitlements: RulebookEntitlementSummary[];
+      }
+    | { ok: false; error: string } {
+    const callerHash = digest(credential);
+    const recentFailures = (restoreFailuresByCred.get(callerHash) ?? []).filter(
+      (ts) => now - ts < RESTORE_RATE_LIMIT_WINDOW_MS,
+    );
+    if (recentFailures.length >= RESTORE_RATE_LIMIT_MAX) {
+      restoreFailuresByCred.set(callerHash, recentFailures);
+      return { ok: false, error: "restore-rate-limited" };
+    }
+    const recordFailure = () => {
+      recentFailures.push(now);
+      restoreFailuresByCred.set(callerHash, recentFailures);
+    };
+
+    const normalized = normalizeRestoreCode(rawRestoreCode);
+    if (!normalized) {
+      recordFailure();
+      return { ok: false, error: "invalid-restore-code" };
+    }
+    const codeHash = digest(normalized);
+
+    return transact(() => {
+      const row = getEntitlementByCodeHashStmt.get(codeHash) as EntitlementRow | undefined;
+      if (!row) {
+        recordFailure();
+        return { ok: false as const, error: "invalid-restore-code" };
+      }
+      if (row.owner_hash !== callerHash) {
+        const existingForPack = getEntitlementByOwnerPackStmt.get(callerHash, row.pack_id) as EntitlementRow | undefined;
+        if (existingForPack) {
+          return { ok: false as const, error: "pack-already-owned" };
+        }
+      }
+      rebindEntitlementOwnerStmt.run(callerHash, now, row.entitlement_id);
+      const ownership = getCallerOwnership(credential, now);
+      return {
+        ok: true as const,
+        packId: row.pack_id,
+        orderId: row.order_id,
+        restoredAt: now,
+        ownedPackIds: ownership.ownedPackIds,
+        entitlements: ownership.entitlements,
+      };
     });
   }
 
@@ -1735,6 +1996,8 @@ export function rulebookStore(
   return {
     listPublicListings,
     listActiveRooms,
+    listEntitlements,
+    getCallerOwnership,
     listAllVersions: allRecords,
     listRecaps: (participant: string) => recaps.list(digest(participant)),
     readRecap: (matchId: string, participant: string) => recaps.get(matchId, digest(participant)),
@@ -1756,6 +2019,8 @@ export function rulebookStore(
     submitDraft,
     reviewVersion,
     createFreeRoomFromRulebook,
+    createOwnedRoomFromRulebook,
+    restoreEntitlement,
     createOrder,
     viewCatalogOrder,
     settleVerifiedOrder,

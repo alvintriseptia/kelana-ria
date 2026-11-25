@@ -61,10 +61,16 @@ export function rulebookHandler(
     const path = url.pathname;
     if (request.method === "GET" && path === "/api/rulebooks/catalog") {
       const member = credential(request, cookieName);
+      const ts = now();
+      const ownership = member
+        ? store.getCallerOwnership(member, ts)
+        : { ownedPackIds: [], entitlements: [] };
       json(response, 200, {
         editions: store.listPublicListings(undefined, true),
         sharedRecaps: store.listPublicRecaps(),
-        activeRooms: member ? store.listActiveRooms(member, now()) : [],
+        activeRooms: member ? store.listActiveRooms(member, ts) : [],
+        ownedPackIds: ownership.ownedPackIds,
+        entitlements: ownership.entitlements,
         allowSandboxCheckout,
       });
       return;
@@ -101,13 +107,18 @@ export function rulebookHandler(
       const format: RulebookFormat | undefined =
         rawFormat === "hide-and-seek" || rawFormat === "claim-the-city" ? rawFormat : undefined;
       const listings = store.listPublicListings(format);
+      const ts = now();
       if (role === "writer") {
-        const { versions, earnings } = store.creatorStudio(ensureCred(request, response));
+        const writerCred = ensureCred(request, response);
+        const { versions, earnings } = store.creatorStudio(writerCred);
+        const ownership = store.getCallerOwnership(writerCred, ts);
         json(response, 200, {
           role,
           listings,
           versions: versions.filter(record => !format || record.format === format).map(studioRecord),
           earnings,
+          ownedPackIds: ownership.ownedPackIds,
+          entitlements: ownership.entitlements,
           reviewEnabled: Boolean(reviewerHash),
         });
         return;
@@ -118,7 +129,18 @@ export function rulebookHandler(
           (!format || record.format === format) && (record.status === "submitted" || record.status === "published"));
         return json(response, 200, { role, versions: visible.map(studioRecord) });
       }
-      json(response, 200, { role: "public", listings, allowHideSeekQa, allowSandboxCheckout });
+      const member = credential(request, cookieName);
+      const ownership = member
+        ? store.getCallerOwnership(member, ts)
+        : { ownedPackIds: [], entitlements: [] };
+      json(response, 200, {
+        role: "public",
+        listings,
+        ownedPackIds: ownership.ownedPackIds,
+        entitlements: ownership.entitlements,
+        allowHideSeekQa,
+        allowSandboxCheckout,
+      });
       return;
     }
 
@@ -264,6 +286,19 @@ export function rulebookHandler(
     const cred = ensureCred(request, response);
     const ts = now();
 
+    if (path === "/api/rulebooks/entitlements/restore") {
+      const rawCode = typeof body.restoreCode === "string" ? body.restoreCode : "";
+      const res = store.restoreEntitlement(cred, rawCode, ts);
+      const status = res.ok
+        ? 200
+        : res.error === "restore-rate-limited"
+          ? 429
+          : res.error === "pack-already-owned"
+            ? 409
+            : 400;
+      return json(response, status, res);
+    }
+
     if (path === "/api/rulebooks/catalog") {
       const { type, edition, version, mode, requestId } = body;
       if (typeof edition !== "string" || !edition || typeof version !== "number" ||
@@ -273,7 +308,8 @@ export function rulebookHandler(
       }
       if (type === "play") {
         const result = store.createFreeRoomFromRulebook(edition, version, cred, "Host", ts, false, mode, requestId);
-        return json(response, result.ok ? 200 : 400, result);
+        const status = result.ok ? 200 : result.error === "entitlement-active-room-exists" ? 409 : 400;
+        return json(response, status, result);
       }
       if (type !== "buy" && type !== "check-payment" && type !== "simulate-payment") {
         return json(response, 400, { error: "invalid-request" });
@@ -281,7 +317,8 @@ export function rulebookHandler(
       if (!allowSandboxCheckout) return json(response, 403, { error: "checkout-unavailable" });
       if (type === "buy") {
         const result = await store.createOrder(cred, edition, version, ts, mode, requestId);
-        return json(response, result.ok ? 200 : 400, result);
+        const status = result.ok ? 200 : result.error === "pack-already-owned" ? 409 : 400;
+        return json(response, status, result);
       }
       const order = store.viewCatalogOrder(cred, edition, version, mode, requestId);
       if (!order) return json(response, 404, { error: "order-not-found" });
@@ -352,36 +389,51 @@ export function rulebookHandler(
         json(response, res.ok ? 200 : 400, res.ok ? { ...res, record: studioRecord(res.record) } : res);
         return;
       }
-      if (type === "create-free-room") {
+      if (type === "create-free-room" || type === "create-owned-room") {
         if (body.qa === true && !allowHideSeekQa) return json(response, 403, { error: "seek-qa-disabled" });
         const requestId = typeof body.requestId === "string" && /^[\w-]{8,100}$/.test(body.requestId)
           ? body.requestId : undefined;
-        const res = store.createFreeRoomFromRulebook(
-          String(body.packId ?? ""),
-          Number(body.version ?? 1),
-          cred,
-          String(body.hostName ?? "Host"),
-          ts,
-          body.qa === true,
-          undefined,
-          requestId,
-        );
-        json(response, res.ok ? 200 : 400, res);
+        const mode = body.mode === "solo" || body.mode === "group" ? body.mode : undefined;
+        const res = type === "create-owned-room"
+          ? store.createOwnedRoomFromRulebook(
+              String(body.packId ?? ""),
+              Number(body.version ?? 1),
+              cred,
+              String(body.hostName ?? "Host"),
+              ts,
+              mode,
+              requestId,
+              body.qa === true,
+            )
+          : store.createFreeRoomFromRulebook(
+              String(body.packId ?? ""),
+              Number(body.version ?? 1),
+              cred,
+              String(body.hostName ?? "Host"),
+              ts,
+              body.qa === true,
+              mode,
+              requestId,
+            );
+        const status = res.ok ? 200 : res.error === "entitlement-active-room-exists" ? 409 : 400;
+        json(response, status, res);
         return;
       }
       if (type === "create-order") {
         if (!allowSandboxCheckout) return json(response, 403, { error: "checkout-unavailable" });
         const requestId = typeof body.requestId === "string" && /^[\w-]{8,100}$/.test(body.requestId)
           ? body.requestId : undefined;
+        const mode = body.mode === "solo" || body.mode === "group" ? body.mode : undefined;
         const res = await store.createOrder(
           cred,
           String(body.packId ?? ""),
           Number(body.version ?? 1),
           ts,
-          undefined,
+          mode,
           requestId,
         );
-        json(response, res.ok ? 200 : 400, res);
+        const status = res.ok ? 200 : res.error === "pack-already-owned" ? 409 : 400;
+        json(response, status, res);
         return;
       }
       if (type === "verify-settlement") {

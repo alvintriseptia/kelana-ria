@@ -298,6 +298,7 @@ export type ActiveRulebookRoomSummary = {
 export type RulebookRoomPassSummary = {
   passId: string;
   orderId: string | null;
+  entitlementId?: string;
   roomCode: string;
   packId: string;
   version: number;
@@ -308,3 +309,12 @@ export type RulebookRoomPassSummary = {
   paid: boolean;
   createdAt: number;
 };
+
+export type RulebookEntitlementSummary = {
+  packId: string;
+  orderId: string;
+  purchasedAt: number;
+  restoredAt: number | null;
+  activeRoomCode: string | null;
+};
+
