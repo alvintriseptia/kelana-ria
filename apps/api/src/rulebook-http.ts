@@ -140,9 +140,37 @@ export function rulebookHandler(
     if (request.method === "GET" && path.startsWith("/api/rulebooks/rooms/")) {
       const roomCode = decodeURIComponent(path.slice("/api/rulebooks/rooms/".length));
       const cred = ensureCred(request, response);
-      const view = store.viewRoom(roomCode, cred, store.roomTime(roomCode, now()));
+      const includeBoard = url.searchParams.get("includeBoard") !== "0";
+      const roomNow = store.roomTime(roomCode, now());
+      const view = store.viewRoom(roomCode, cred, roomNow, { includeBoard });
       if (!view) return json(response, 404, { error: "room-not-found" });
-      json(response, 200, view);
+      const roleTag = view.format === "hide-and-seek" ? view.room.role : view.room.isSolo ? "solo" : "group";
+      const promptTag = view.activity.prompt?.id ?? "";
+      const etagDigest = createHash("sha256")
+        .update(`${roomCode}:${view.room.seatId}:${roleTag}:${view.stateRev}:${includeBoard ? 1 : 0}:${promptTag}`)
+        .digest("base64url")
+        .slice(0, 22);
+      const etag = `"rb-${etagDigest}"`;
+      const ifNoneMatch = request.headers["if-none-match"];
+      const matched = typeof ifNoneMatch === "string" && ifNoneMatch.split(",").some((part) => {
+        const cleaned = part.trim().replace(/^W\//i, "");
+        return cleaned === "*" || cleaned === etag;
+      });
+      if (matched) {
+        response.writeHead(304, {
+          "Cache-Control": "private, no-cache",
+          ETag: etag,
+          Vary: "Accept-Encoding",
+          "X-Server-Now": String(roomNow),
+        });
+        response.end();
+        return;
+      }
+      json(response, 200, view, {
+        "Cache-Control": "private, no-cache",
+        ETag: etag,
+        "X-Server-Now": String(roomNow),
+      });
       return;
     }
 

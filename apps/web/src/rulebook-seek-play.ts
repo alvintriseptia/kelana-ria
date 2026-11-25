@@ -49,6 +49,7 @@ type PublicListing = {
 
 type RoomPayload = {
   activity: RoomActivityFeed;
+  stateRev?: number;
   room: SeekEngineRoomView;
   publicBoard: SeekPublicBoard;
   qa?: true;
@@ -192,6 +193,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let joinName = "Pemain Baru";
   let foundCodeDraft = "";
   let live: RoomPayload | null = null;
+  let cachedBoard: { code: string; board: SeekPublicBoard } | null = null;
+  let roomEtag: { code: string; includeBoard: boolean; value: string } | null = null;
   let activeOrderId: string | null = null;
   let allowHideSeekQa = false;
   let allowSandboxCheckout = false;
@@ -561,46 +564,83 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const code = roomCode;
     const request = ++roomRequest;
     const requestAction = seq;
-    const { status, data } = await fetchApiJson<RoomPayload & { error?: string }>(
-      `/api/rulebooks/rooms/${encodeURIComponent(code)}`,
-      { signal: lifecycle.signal },
-    );
+    const hasBoard = Boolean(live && cachedBoard && cachedBoard.code === code);
+    const includeBoard = !hasBoard;
+    const path = includeBoard
+      ? `/api/rulebooks/rooms/${encodeURIComponent(code)}`
+      : `/api/rulebooks/rooms/${encodeURIComponent(code)}?includeBoard=0`;
+    const reqHeaders: Record<string, string> = {};
+    if (roomEtag && roomEtag.code === code && roomEtag.includeBoard === includeBoard) {
+      reqHeaders["If-None-Match"] = roomEtag.value;
+    }
+    const { status, data, headers, notModified } = await fetchApiJson<
+      (Omit<RoomPayload, "publicBoard"> & { publicBoard?: SeekPublicBoard; error?: string })
+    >(path, { signal: lifecycle.signal, headers: reqHeaders, cache: "no-store" });
     if (request !== roomRequest || code !== roomCode || lifecycle.signal.aborted || (background && (busy || requestAction !== seq))) return;
+    if (notModified) {
+      const serverNow = Number(headers.get("x-server-now"));
+      if (Number.isFinite(serverNow) && serverNow > 0) {
+        roomNow = serverNow;
+        clockBase = performance.now();
+        updateClock();
+      }
+      if (!background && !skipRender) render();
+      return;
+    }
     if ("room" in data && data.room) {
-      const { now, ...next } = data.room;
+      const board = data.publicBoard ?? (cachedBoard?.code === code ? cachedBoard.board : undefined);
+      if (!board) {
+        cachedBoard = null;
+        roomEtag = null;
+        return refreshRoom(allowInvitePrompt, background, skipRender);
+      }
+      cachedBoard = { code, board };
+      const etag = headers.get("etag");
+      if (etag) roomEtag = { code, includeBoard, value: etag };
+      const payload: RoomPayload = { ...data, publicBoard: board };
+      const { now, ...next } = payload.room;
       const previous = live;
-      const unchanged = previous && JSON.stringify({ ...previous, room: { ...previous.room, now: 0 } }) ===
-        JSON.stringify({ ...data, room: { ...next, now: 0 } });
+      const unchanged = Boolean(
+        previous &&
+        previous.room.code === payload.room.code &&
+        previous.room.seatId === payload.room.seatId &&
+        previous.room.role === payload.room.role &&
+        (previous.activity.prompt?.id ?? null) === (payload.activity.prompt?.id ?? null) &&
+        (typeof previous.stateRev === "number" && typeof payload.stateRev === "number"
+          ? previous.stateRev === payload.stateRev
+          : JSON.stringify({ ...previous, room: { ...previous.room, now: 0 } }) ===
+            JSON.stringify({ ...payload, room: { ...next, now: 0 } })),
+      );
       roomNow = now;
       clockBase = performance.now();
-      live = data;
-      reconcilePendingAction(data);
+      live = payload;
+      reconcilePendingAction(payload);
       if (
-        (data.room.phase === "lobby" ||
-          data.room.phase === "head_start" ||
-          data.room.phase === "seeking" ||
-          data.room.phase === "endgame" ||
-          data.room.phase === "regroup") &&
-        !data.room.outcome
+        (payload.room.phase === "lobby" ||
+          payload.room.phase === "head_start" ||
+          payload.room.phase === "seeking" ||
+          payload.room.phase === "endgame" ||
+          payload.room.phase === "regroup") &&
+        !payload.room.outcome
       ) {
         saveActiveRoom({
-          roomCode: data.room.code,
+          roomCode: payload.room.code,
           format: "hide-and-seek",
-          packId: data.room.packMeta.packId,
-          version: data.room.packMeta.version,
-          title: data.room.packMeta.title,
-          phase: data.room.phase,
-          role: data.room.role,
-          turnNumber: data.room.turnNumber,
-          totalPlannedTurns: data.room.totalPlannedTurns,
-          playerCount: data.room.seats.length,
-          maxPlayers: data.pass.maxPlayers,
+          packId: payload.room.packMeta.packId,
+          version: payload.room.packMeta.version,
+          title: payload.room.packMeta.title,
+          phase: payload.room.phase,
+          role: payload.room.role,
+          turnNumber: payload.room.turnNumber,
+          totalPlannedTurns: payload.room.totalPlannedTurns,
+          playerCount: payload.room.seats.length,
+          maxPlayers: payload.pass.maxPlayers,
         });
       } else {
-        clearActiveRoom(data.room.code);
+        clearActiveRoom(payload.room.code);
       }
-      if (previous?.room.code !== data.room.code) {
-        qaStationId = data.qa ? sessionStorage.getItem(`seek-qa-location:${data.room.code}`) ?? "" : "";
+      if (previous?.room.code !== payload.room.code) {
+        qaStationId = payload.qa ? sessionStorage.getItem(`seek-qa-location:${payload.room.code}`) ?? "" : "";
         qaAdvanceRetry = undefined;
       }
       syncRoomUrl(roomCode);
@@ -1947,7 +1987,13 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   }, { signal: lifecycle.signal });
 
   window.addEventListener("online", () => {
-    if (!busy && !actionPending && roomCode) {
+    if (!document.hidden && !busy && !actionPending && roomCode) {
+      void refreshRoom(false, true).catch(() => {});
+    }
+  }, { signal: lifecycle.signal });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && navigator.onLine && !busy && !actionPending && roomCode) {
       void refreshRoom(false, true).catch(() => {});
     }
   }, { signal: lifecycle.signal });
@@ -1968,7 +2014,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
   const ticker = window.setInterval(updateClock, 1000);
   const poller = window.setInterval(() => {
-    if (!live || live.room.outcome || busy || actionPending || pollActive || document.hidden) return;
+    if (!live || live.room.outcome || busy || actionPending || pollActive || document.hidden || !navigator.onLine) return;
     pollActive = true;
     void refreshRoom(false, true).catch(() => {}).finally(() => { pollActive = false; });
   }, 3000);

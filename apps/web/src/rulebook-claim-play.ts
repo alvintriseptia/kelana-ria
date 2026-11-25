@@ -58,6 +58,7 @@ type PublicLandmark = {
 type ClaimRoomPayload = {
   activity: RoomActivityFeed;
   format: "claim-the-city";
+  stateRev?: number;
   room: ClaimEngineRoomView;
   publicBoard: {
     startPoint: GeoCoordinate & { id: string; name: string };
@@ -194,10 +195,13 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let joinCode = roomCode;
   let joinName = "Pemain";
   let live: ClaimRoomPayload | null = null;
+  let cachedBoard: { code: string; board: ClaimRoomPayload["publicBoard"] } | null = null;
+  let roomEtag: { code: string; includeBoard: boolean; value: string } | null = null;
   let activeOrderId: string | null = null;
   let statusMsg = "";
   let inlineError: ClaimInlineError = null;
   let busy = false;
+  let pollActive = false;
   const lifetime = new AbortController();
   const toast = createPlayerToast({ signal: lifetime.signal, layout: "page" });
   let demoLocation = false;
@@ -405,42 +409,79 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     if (!roomCode) return;
     const req = ++refreshSeq;
     const code = roomCode;
-    const { status, data } = await fetchApiJson<ClaimRoomPayload & { error?: string }>(
-      `/api/rulebooks/rooms/${encodeURIComponent(code)}`,
-      { signal: lifetime.signal },
-    );
+    const hasBoard = Boolean(live && cachedBoard && cachedBoard.code === code);
+    const includeBoard = !hasBoard;
+    const path = includeBoard
+      ? `/api/rulebooks/rooms/${encodeURIComponent(code)}`
+      : `/api/rulebooks/rooms/${encodeURIComponent(code)}?includeBoard=0`;
+    const reqHeaders: Record<string, string> = {};
+    if (roomEtag && roomEtag.code === code && roomEtag.includeBoard === includeBoard) {
+      reqHeaders["If-None-Match"] = roomEtag.value;
+    }
+    const { status, data, headers, notModified } = await fetchApiJson<
+      (Omit<ClaimRoomPayload, "publicBoard"> & { publicBoard?: ClaimRoomPayload["publicBoard"]; error?: string })
+    >(path, { signal: lifetime.signal, headers: reqHeaders, cache: "no-store" });
     if (req !== refreshSeq || code !== roomCode || lifetime.signal.aborted || (background && busy)) return;
+    if (notModified) {
+      const serverNow = Number(headers.get("x-server-now"));
+      if (Number.isFinite(serverNow) && serverNow > 0) {
+        serverOffset = serverNow - Date.now();
+        updateClocks();
+      }
+      if (!background && !skipRender) render();
+      return;
+    }
     if ("room" in data && data.room) {
-      serverOffset = data.room.now - Date.now();
-      reconcilePendingAction(data.room);
-      if ((data.room.phase === "lobby" || data.room.phase === "active") && !data.room.outcome) {
+      const board = data.publicBoard ?? (cachedBoard?.code === code ? cachedBoard.board : undefined);
+      if (!board) {
+        cachedBoard = null;
+        roomEtag = null;
+        return refreshRoom(allowInvitePrompt, background, skipRender);
+      }
+      cachedBoard = { code, board };
+      const etag = headers.get("etag");
+      if (etag) roomEtag = { code, includeBoard, value: etag };
+      const payload: ClaimRoomPayload = { ...data, publicBoard: board };
+      serverOffset = payload.room.now - Date.now();
+      reconcilePendingAction(payload.room);
+      if ((payload.room.phase === "lobby" || payload.room.phase === "active") && !payload.room.outcome) {
         saveActiveRoom({
-          roomCode: data.room.code,
+          roomCode: payload.room.code,
           format: "claim-the-city",
-          packId: data.room.packMeta.packId,
-          version: data.room.packMeta.version,
-          title: data.room.packMeta.title,
-          phase: data.room.phase,
-          role: data.room.isSolo ? "solo" : "group",
-          playerCount: data.room.seats.length,
-          maxPlayers: data.pass.maxPlayers,
+          packId: payload.room.packMeta.packId,
+          version: payload.room.packMeta.version,
+          title: payload.room.packMeta.title,
+          phase: payload.room.phase,
+          role: payload.room.isSolo ? "solo" : "group",
+          playerCount: payload.room.seats.length,
+          maxPlayers: payload.pass.maxPlayers,
         });
       } else {
-        clearActiveRoom(data.room.code);
+        clearActiveRoom(payload.room.code);
       }
-      if (selectedCardId && !data.room.ownHand.some(card => card.instanceId === selectedCardId)) {
+      if (selectedCardId && !payload.room.ownHand.some(card => card.instanceId === selectedCardId)) {
         selectedCardId = "";
       }
-      if (background && live && JSON.stringify({ ...live.room, now: 0 }) === JSON.stringify({ ...data.room, now: 0 }) &&
-        JSON.stringify(live.activity) === JSON.stringify(data.activity)) {
-        live = data;
+      const unchanged = Boolean(
+        background &&
+        live &&
+        live.room.code === payload.room.code &&
+        live.room.seatId === payload.room.seatId &&
+        (live.activity.prompt?.id ?? null) === (payload.activity.prompt?.id ?? null) &&
+        (typeof live.stateRev === "number" && typeof payload.stateRev === "number"
+          ? live.stateRev === payload.stateRev
+          : JSON.stringify({ ...live.room, now: 0 }) === JSON.stringify({ ...payload.room, now: 0 }) &&
+            JSON.stringify(live.activity) === JSON.stringify(payload.activity)),
+      );
+      if (unchanged) {
+        live = payload;
         return;
       }
-      if (data.room.outcome && !live?.room.outcome) {
+      if (payload.room.outcome && !live?.room.outcome) {
         panel = "score";
         folded = false;
       }
-      live = data;
+      live = payload;
       syncRoomUrl(roomCode);
     } else if (background) {
       return;
@@ -1601,7 +1642,13 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   }, { signal: lifetime.signal });
 
   window.addEventListener("online", () => {
-    if (!busy && roomCode) {
+    if (!document.hidden && !busy && roomCode) {
+      void refreshRoom(false, true).catch(() => {});
+    }
+  }, { signal: lifetime.signal });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && navigator.onLine && !busy && roomCode) {
       void refreshRoom(false, true).catch(() => {});
     }
   }, { signal: lifetime.signal });
@@ -1617,9 +1664,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   });
   const clock = window.setInterval(updateClocks, 250);
   const poll = window.setInterval(() => {
-    if (!busy && (live?.room.phase === "lobby" || live?.room.phase === "active")) {
-      void refreshRoom(false, true).catch(() => {});
-    }
+    if (document.hidden || !navigator.onLine || busy || pollActive) return;
+    if (live?.room.phase !== "lobby" && live?.room.phase !== "active") return;
+    pollActive = true;
+    void refreshRoom(false, true).catch(() => {}).finally(() => { pollActive = false; });
   }, 3000);
   return () => {
     lifetime.abort();

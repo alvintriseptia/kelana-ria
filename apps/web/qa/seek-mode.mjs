@@ -137,7 +137,7 @@ try {
   assert.equal(await menu.evaluate(element => document.activeElement === element), true);
   await menu.click();
   await Promise.all([
-    host.waitForResponse(r => r.url().endsWith(`/api/rulebooks/rooms/${code}`) && r.request().method() === "GET"),
+    host.waitForResponse(r => new URL(r.url()).pathname === `/api/rulebooks/rooms/${code}` && r.request().method() === "GET"),
     refresh.click(),
   ]);
   await host.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));

@@ -189,7 +189,7 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
     const hiders = seats.filter(seat => seat.seatId === hiderId);
     const seekers = seats.filter(seat => seat.seatId !== hiderId);
     const answering = phase === "seeking" || phase === "endgame";
-    const newTurn = turn !== seekTurn;
+    const newTurn = phase !== "lobby" && (turn !== seekTurn || seekPhase === "lobby");
 
     function noteQuestion(question: SeekEngineQuestion, questionTurn: number, formerHiderId: string | null, active: boolean) {
       if (questionStates.get(question.id) === question.status) return;
@@ -254,7 +254,7 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
     if (match.outcome && match.startedAt !== null && seekPhase !== phase) {
       publish(seats, { kind: "round-complete", text: "Permainan selesai.", panel: "score", at: match.outcome.at });
     }
-    seekTurn = turn;
+    if (phase !== "lobby") seekTurn = turn;
     seekPhase = phase;
     return dirty || publishedSinceCheck;
   }

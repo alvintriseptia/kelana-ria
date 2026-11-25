@@ -295,3 +295,16 @@ export type ActiveRulebookRoomSummary = {
   maxPlayers?: number;
 };
 
+export type RulebookRoomPassSummary = {
+  passId: string;
+  orderId: string | null;
+  roomCode: string;
+  packId: string;
+  version: number;
+  format: RulebookFormat;
+  maxPlayers: number;
+  mode?: RulebookPlayMode;
+  minPlayers?: number;
+  paid: boolean;
+  createdAt: number;
+};

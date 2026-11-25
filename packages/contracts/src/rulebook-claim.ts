@@ -4,10 +4,13 @@
 import type {
   CurseClearCondition,
   GeoCoordinate,
+  GeoStartPoint,
   RulebookMeta,
+  RulebookRoomPassSummary,
   RulebookValidationIssue,
   TransitMode,
 } from "./rulebook.js";
+import type { RoomActivityFeed } from "./rulebook-activity.js";
 import type { LocationFix } from "./index.js";
 
 export type ClaimTeamMode = "ffa" | "teams";
@@ -426,3 +429,26 @@ export type ClaimEngineActionReply = {
   distanceMeters?: number;
   purgedPhotoIds?: string[];
 };
+
+export type ClaimPublicBoard = {
+  startPoint: GeoStartPoint;
+  landmarks: {
+    id: string;
+    name: string;
+    zoneId: string;
+    latitude: number;
+    longitude: number;
+    transitSummary: string;
+    accessNotes: string;
+  }[];
+};
+
+export type ClaimRoomPayloadResponse = {
+  format: "claim-the-city";
+  stateRev: number;
+  room: ClaimEngineRoomView;
+  activity: RoomActivityFeed;
+  publicBoard?: ClaimPublicBoard;
+  pass: RulebookRoomPassSummary;
+};
+

@@ -388,6 +388,10 @@ try {
   assert.equal(new URL(pageVisitor.url()).search, "");
   assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
+  await pageVisitor.waitForFunction(() => {
+    const el = document.querySelector(".cat-card");
+    return Boolean(el && getComputedStyle(el).backgroundColor);
+  });
   const catalogCardTheme = await pageVisitor.locator(".cat-card").first().evaluate((el) => {
     const s = getComputedStyle(el);
     return { bg: s.backgroundColor, border: s.borderTopColor };
