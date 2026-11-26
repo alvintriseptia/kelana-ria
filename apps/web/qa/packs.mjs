@@ -157,7 +157,7 @@ try {
   await buyer.page.screenshot({ path: join(results, "pack-public-catalog.png"), fullPage: true });
 
   // 7. Buyer creates a pending sandbox order on v2, returns before settlement (no access), then verifies settlement (A29, A30).
-  const ordered = await postPack(buyer, "Beli sesi uji coba (v2)", "create-order");
+  const ordered = await postPack(buyer, "Beli paket uji coba (v2)", "create-order");
   assert.equal(ordered.status, 200);
   assert.equal(ordered.body.orders.length, 1);
   assert.equal(ordered.body.orders[0].orderId, "ord-sandbox-1");

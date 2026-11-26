@@ -156,9 +156,29 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     recoverable: false,
   },
   "payment-required": {
-    message: "Edisi ini memerlukan pass sesi. Selesaikan pembayaran terlebih dahulu untuk membuka ruang.",
+    message: "Edisi ini belum dimiliki. Beli paket terlebih dahulu atau pulihkan dengan Kode Pemulihan untuk membuka ruang.",
     placement: "inline-screen",
     tone: "info",
+  },
+  "pack-already-owned": {
+    message: "Paket ini sudah dimiliki di perangkat ini. Kamu bisa langsung bermain tanpa bayar lagi.",
+    placement: "toast",
+    tone: "info",
+  },
+  "entitlement-active-room-exists": {
+    message: "Masih ada ruang aktif untuk paket ini. Lanjutkan ruang yang berjalan atau selesaikan dulu sebelum membuat ruang baru.",
+    placement: "toast",
+    tone: "info",
+  },
+  "invalid-restore-code": {
+    message: "Kode Pemulihan tidak cocok. Periksa kembali format KLR-XXXX-XXXX, lalu coba lagi.",
+    placement: "toast",
+    tone: "warn",
+  },
+  "restore-rate-limited": {
+    message: "Terlalu banyak percobaan Kode Pemulihan. Tunggu beberapa menit, lalu coba lagi.",
+    placement: "toast",
+    tone: "warn",
   },
   "pack-is-free": {
     message: "Edisi ini gratis. Langsung tekan tombol mulai tanpa perlu checkout.",

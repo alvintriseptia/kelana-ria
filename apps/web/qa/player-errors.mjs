@@ -190,7 +190,7 @@ try {
 
   // 1b. Pending payment stays inline inside checkout box until resolved
   await pageCat.goto(`${baseUrl}/?edition=qa-paid-errors-claim&version=1`, { waitUntil: "networkidle" });
-  await pageCat.getByRole("button", { name: "Beli sesi · Uji pembayaran" }).click();
+  await pageCat.getByRole("button", { name: "Beli paket · Uji pembayaran" }).click();
   await pageCat.getByRole("button", { name: "Cek status pembayaran" }).waitFor();
   await installAlertObserver(pageCat);
   await pageCat.getByRole("button", { name: "Cek status pembayaran" }).click();
@@ -204,6 +204,19 @@ try {
   assert.equal((await readAlertLog(pageCat)).length, 1);
   assert.ok(await pageCat.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageCat.screenshot({ path: path.join(results, "errors-pending-payment.png"), fullPage: true });
+
+  // 1c. Invalid restore code triggers friendly game toast without leaking raw error code
+  await pageCat.getByRole("button", { name: "Pulihkan paket" }).click();
+  await pageCat.getByTestId("restore-modal").waitFor();
+  await pageCat.fill("#cat-restore-input", "KLR-0000-BAD1");
+  await pageCat.getByRole("button", { name: "Pulihkan", exact: true }).click();
+  const restoreToast = pageCat.getByTestId("player-toast");
+  await restoreToast.waitFor();
+  const restoreToastText = await restoreToast.innerText();
+  assert.match(restoreToastText, /Kode Pemulihan tidak cocok/);
+  assertNoRawErrorLeaks(restoreToastText, "Invalid restore code toast");
+  assert.ok(await pageCat.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await pageCat.getByRole("button", { name: "Batal", exact: true }).click();
   await ctxCat.close();
 
   // 2. Claim the City on 390 x 844: GPS denied, out-of-range check-in, stale card target toast,

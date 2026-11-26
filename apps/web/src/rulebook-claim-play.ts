@@ -8,6 +8,7 @@ import type {
   ClaimLandmarkState,
   ClaimSanitizedLeafChallenge,
   GeoCoordinate,
+  RulebookEntitlementSummary,
   RulebookPlayMode,
 } from "@kelana-ria/contracts";
 import type { BoardMapHandle, BoardMapUpdateOptions } from "./board-map";
@@ -119,7 +120,7 @@ function claimPrimitiveLabel(primitive: string): string {
 }
 
 function idr(amount: number): string {
-  return amount === 0 ? "Gratis (Resmi)" : `Rp ${amount.toLocaleString("id-ID")}`;
+  return amount === 0 ? "Gratis (Resmi)" : `Rp ${amount.toLocaleString("id-ID")} · Beli sekali`;
 }
 
 function getActiveLeaf(attempt: ClaimActiveAttemptView): ClaimSanitizedLeafChallenge | null {
@@ -191,6 +192,9 @@ function writeSessionId(key: string, value?: string) {
 export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): () => void {
   let allowSandboxCheckout = false;
   let listings: ClaimPublicListing[] = [];
+  let ownedPackIds: string[] = [];
+  let entitlements: RulebookEntitlementSummary[] = [];
+  let settledRestore: { roomCode: string; restoreCode: string; copied: boolean } | null = null;
   let roomCode = new URLSearchParams(location.search).get("room") ?? "";
   let joinCode = roomCode;
   let joinName = "Pemain";
@@ -362,24 +366,32 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   }
 
   async function loadCatalog() {
-    const { data } = await fetchApiJson<{ listings?: ClaimPublicListing[]; allowSandboxCheckout?: boolean }>(
+    const { data } = await fetchApiJson<{
+      listings?: ClaimPublicListing[];
+      ownedPackIds?: string[];
+      entitlements?: RulebookEntitlementSummary[];
+      allowSandboxCheckout?: boolean;
+    }>(
       "/api/rulebooks?format=claim-the-city",
       { signal: lifetime.signal },
     );
     allowSandboxCheckout = data.allowSandboxCheckout === true;
     listings = (data.listings ?? []).filter((l) => l.format === "claim-the-city");
+    ownedPackIds = Array.isArray(data.ownedPackIds) ? data.ownedPackIds : [];
+    entitlements = Array.isArray(data.entitlements) ? data.entitlements : [];
     const params = new URLSearchParams(location.search);
     const launchPackId = params.get("pack");
     const shouldLaunch = params.get("launch") === "1";
     if (!roomCode && shouldLaunch && launchPackId) {
-      const target = listings.find((l) => l.packId === launchPackId && l.priceIdr === 0);
+      const target = listings.find((l) => l.packId === launchPackId && (l.priceIdr === 0 || ownedPackIds.includes(l.packId)));
       if (target) {
-        const persistKey = `kelana-claim-free:${target.packId}:${target.version}`;
-        const pending = ensurePendingAction(`create-free:${target.packId}:${target.version}`, "create-free-room", undefined, persistKey);
+        const isOwnedPaid = target.priceIdr > 0 && ownedPackIds.includes(target.packId);
+        const persistKey = `kelana-claim-${isOwnedPaid ? "owned" : "free"}:${target.packId}:${target.version}`;
+        const pending = ensurePendingAction(`create-${isOwnedPaid ? "owned" : "free"}:${target.packId}:${target.version}`, isOwnedPaid ? "create-owned-room" : "create-free-room", undefined, persistKey);
         const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
           signal: lifetime.signal,
           body: {
-            type: "create-free-room",
+            type: isOwnedPaid ? "create-owned-room" : "create-free-room",
             packId: target.packId,
             version: target.version,
             hostName: "Host",
@@ -395,7 +407,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           return;
         }
         clearPendingAction(persistKey);
-        reportError({ error: res.error, status }, { surface: "catalog", action: "start-free", target: target.packId }, "catalog");
+        reportError({ error: res.error, status }, { surface: "catalog", action: isOwnedPaid ? "start-owned" : "start-free", target: target.packId }, "catalog");
       }
     }
     if (roomCode) {
@@ -756,10 +768,12 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       </div>
 
       ${listings
-        .map(
-          (item) => `<article class="rb-card" data-pack-id="${escapeText(item.packId)}">
+        .map((item) => {
+          const owned = item.priceIdr > 0 && ownedPackIds.includes(item.packId);
+          const ent = owned ? entitlements.find((e) => e.packId === item.packId) : undefined;
+          return `<article class="rb-card" data-pack-id="${escapeText(item.packId)}">
             <div class="rb-badges">
-              <span class="rb-badge ${item.priceIdr > 0 ? "rb-badge-paid" : ""}">${escapeText(idr(item.priceIdr))}</span>
+              ${owned ? '<span class="rb-badge rb-badge-owned" data-testid="owned-badge"><span aria-hidden="true">✓</span> Dimiliki</span>' : `<span class="rb-badge ${item.priceIdr > 0 ? "rb-badge-paid" : ""}">${escapeText(idr(item.priceIdr))}</span>`}
               <span class="rb-badge">${escapeText(item.cityLabel)}</span>
               <span class="rb-badge">${item.minPlayers}–${item.maxPlayers} pemain (${item.teamMode === "teams" ? "Tim" : "Individu"})</span>
               <span class="rb-badge">${item.zones.length} zona · ${item.landmarkCount} landmark</span>
@@ -776,14 +790,33 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
               ${
                 item.priceIdr === 0
                   ? `<button type="button" class="primary" data-action="start-free" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Buat Ruang Gratis</button>`
-                  : allowSandboxCheckout
-                    ? `<button type="button" class="primary" data-action="buy-pack" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Beli Pass Sesi (${escapeText(idr(item.priceIdr))} · Uji Pembayaran)</button>`
-                    : "<p>Edisi berbayar belum tersedia pada uji publik ini.</p>"
+                  : owned
+                    ? ent?.activeRoomCode
+                      ? `<button type="button" class="primary" data-action="resume-owned" data-room="${escapeText(ent.activeRoomCode)}" ${busy ? "disabled" : ""}>Lanjutkan Ruang (${escapeText(ent.activeRoomCode)})</button>`
+                      : `<button type="button" class="primary" data-action="start-owned" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Buat Ruang (Dimiliki)</button>`
+                    : allowSandboxCheckout
+                      ? `<button type="button" class="primary" data-action="buy-pack" data-pack="${escapeText(item.packId)}" data-version="${item.version}" ${busy ? "disabled" : ""}>Beli Paket (${escapeText(idr(item.priceIdr))} · Uji Pembayaran)</button>`
+                      : "<p>Edisi berbayar belum tersedia pada uji publik ini.</p>"
               }
             </div>
-          </article>`,
-        )
+          </article>`;
+        })
         .join("")}
+
+      ${
+        settledRestore
+          ? `<div class="rb-card" data-testid="restore-code-card">
+              <div class="rb-badges"><span class="rb-badge rb-badge-owned"><span aria-hidden="true">✓</span> Dimiliki</span></div>
+              <h3>Simpan Kode Pemulihan</h3>
+              <p>Paket ini sekarang milikmu dan bisa dimainkan ulang kapan saja. Simpan kode ini sebelum masuk ruang:</p>
+              <p><code data-testid="restore-code-value">${escapeText(settledRestore.restoreCode)}</code></p>
+              <div class="rb-actions">
+                <button type="button" class="secondary" data-action="copy-settled-restore">${settledRestore.copied ? "✓ Tersalin" : "Salin kode"}</button>
+                <button type="button" class="primary" data-action="enter-settled-room">Masuk Ruang (${escapeText(settledRestore.roomCode)})</button>
+              </div>
+            </div>`
+          : ""
+      }
 
       ${
         activeOrderId
@@ -1383,11 +1416,30 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       refreshSeq++;
       syncRoomUrl("");
       render();
+      void loadCatalog();
       return;
     }
 
     const action = btn.dataset.action;
     if (!action) return;
+    if (action === "copy-settled-restore" && settledRestore) {
+      const codeToCopy = settledRestore.restoreCode;
+      void (async () => {
+        let copied = false;
+        try {
+          if (navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(codeToCopy);
+            copied = true;
+          }
+        } catch {
+          copied = false;
+        }
+        if (lifetime.signal.aborted || !settledRestore) return;
+        settledRestore = { ...settledRestore, copied };
+        render();
+      })();
+      return;
+    }
     if (action === "panel") {
       panel = btn.dataset.panel as ClaimPanel;
       if (panel === "activity") btn.closest<HTMLDetailsElement>(".sg-room-menu")?.removeAttribute("open");
@@ -1456,16 +1508,17 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     else if (action === "join-room") catchSlot = "join";
 
     void (async () => {
-      if (action === "start-free") {
+      if (action === "start-free" || action === "start-owned") {
         render();
         const packId = btn.dataset.pack ?? "";
         const version = Number(btn.dataset.version ?? 1);
-        const persistKey = `kelana-claim-free:${packId}:${version}`;
-        const pending = ensurePendingAction(`create-free:${packId}:${version}`, "create-free-room", undefined, persistKey);
+        const isOwnedLaunch = action === "start-owned";
+        const persistKey = `kelana-claim-${isOwnedLaunch ? "owned" : "free"}:${packId}:${version}`;
+        const pending = ensurePendingAction(`create-${isOwnedLaunch ? "owned" : "free"}:${packId}:${version}`, isOwnedLaunch ? "create-owned-room" : "create-free-room", undefined, persistKey);
         const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; roomCode?: string; error?: string }>("/api/rulebooks", {
           signal: lifetime.signal,
           body: {
-            type: "create-free-room",
+            type: isOwnedLaunch ? "create-owned-room" : "create-free-room",
             packId,
             version,
             hostName: "Host",
@@ -1474,6 +1527,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         });
         clearPendingAction(persistKey);
         if (ok && res.ok && res.roomCode) {
+          settledRestore = null;
           roomCode = res.roomCode;
           joinCode = res.roomCode;
           statusMsg = `Ruang Claim ${roomCode} berhasil dibuat.`;
@@ -1481,8 +1535,27 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           toast.resetDedupe();
           await refreshRoom(false, false, true);
         } else {
-          reportError({ error: res.error ?? "invalid-request", status }, { surface: "catalog", action: "start-free", target: packId }, "catalog");
+          reportError({ error: res.error ?? "invalid-request", status }, { surface: "catalog", action, target: packId }, "catalog");
+          if (res.error === "entitlement-active-room-exists") void loadCatalog();
         }
+      } else if (action === "resume-owned") {
+        const targetRoom = btn.dataset.room ?? "";
+        if (targetRoom) {
+          settledRestore = null;
+          roomCode = targetRoom;
+          joinCode = targetRoom;
+          toast.clear();
+          toast.resetDedupe();
+          await refreshRoom(false, false, true);
+        }
+      } else if (action === "enter-settled-room" && settledRestore) {
+        const targetRoom = settledRestore.roomCode;
+        settledRestore = null;
+        roomCode = targetRoom;
+        joinCode = targetRoom;
+        toast.clear();
+        toast.resetDedupe();
+        await refreshRoom(false, false, true);
       } else if (action === "buy-pack") {
         render();
         const packId = btn.dataset.pack ?? "";
@@ -1506,11 +1579,12 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           toast.resetDedupe();
         } else {
           reportError({ error: res.error ?? "invalid-request", status }, { surface: "checkout", action: "buy-pack", target: packId }, "catalog");
+          if (res.error === "pack-already-owned") void loadCatalog();
         }
       } else if (action === "settle-order") {
         render();
         const orderId = btn.dataset.order ?? "";
-        const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; pass?: { roomCode: string }; error?: string }>("/api/rulebooks", {
+        const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; pass?: { roomCode: string }; restoreCode?: string; error?: string }>("/api/rulebooks", {
           signal: lifetime.signal,
           body: {
             type: "verify-settlement",
@@ -1523,12 +1597,18 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         });
         if (ok && res.ok && res.pass) {
           activeOrderId = null;
-          roomCode = res.pass.roomCode;
-          joinCode = res.pass.roomCode;
-          statusMsg = `Pembayaran lunas! Ruang ${roomCode} terbuka.`;
           toast.clear();
           toast.resetDedupe();
-          await refreshRoom(false, false, true);
+          if (res.restoreCode) {
+            settledRestore = { roomCode: res.pass.roomCode, restoreCode: res.restoreCode, copied: false };
+            statusMsg = "Pembayaran lunas! Simpan Kode Pemulihan sebelum masuk ruang.";
+            void loadCatalog();
+          } else {
+            roomCode = res.pass.roomCode;
+            joinCode = res.pass.roomCode;
+            statusMsg = `Pembayaran lunas! Ruang ${roomCode} terbuka.`;
+            await refreshRoom(false, false, true);
+          }
         } else {
           reportError({ error: res.error ?? "payment-pending", status }, { surface: "checkout", action: "settle-order", target: orderId }, "catalog");
         }
