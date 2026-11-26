@@ -37,6 +37,16 @@ export type JakartaTransitCatalog = {
 export type Step2Target = { kind: "start" | "station" | "poi" | "landmark"; id: string };
 export type Step2Tab = "primary" | "secondary" | "start" | "boundary";
 
+export type Step2UndoEntry = {
+  pack: StudioPack;
+  snapshot: GeoSnapshot;
+  selected: Step2Target | null;
+  subTab: Step2Tab;
+  zoneId: string | null;
+  vertex: number | null;
+  label: string;
+};
+
 export type Step2State = {
   mapMode: StudioMapMode;
   subTab: Step2Tab;
@@ -55,6 +65,10 @@ export type Step2State = {
   vertex: number | null;
   editingChallenges: boolean;
   saved: boolean;
+  undoStack: Step2UndoEntry[];
+  locatingGps: boolean;
+  gpsFeedback: string;
+  gpsError: string;
 };
 
 const TRANSIT_MODE_META: { mode: StudioTransitMode; label: string }[] = [
@@ -294,9 +308,37 @@ export function updateStationAttributes(
   return next;
 }
 
-function renderInspector(record: StudioVersionRecord, selected: Step2Target | null, editable: boolean): string {
+function renderCoordAccordion(
+  id: string,
+  latId: string,
+  lngId: string,
+  latitude: number,
+  longitude: number,
+  dis: string,
+): string {
+  return `<details class="rb-accordion studio-coord-accordion" data-studio-accordion="coord-inspector" data-testid="coord-advanced">
+    <summary>Koordinat &amp; ID (Lanjutan)</summary>
+    <div class="studio-coord-body">
+      <small>ID: <code>${escapeText(id)}</code></small>
+      <div class="rb-grid-2">
+        <label class="rb-field"><span>Latitude</span><input id="${latId}" type="number" step="0.00001" value="${latitude}" ${dis}></label>
+        <label class="rb-field"><span>Longitude</span><input id="${lngId}" type="number" step="0.00001" value="${longitude}" ${dis}></label>
+      </div>
+    </div>
+  </details>`;
+}
+
+function renderInspector(
+  record: StudioVersionRecord,
+  selected: Step2Target | null,
+  editable: boolean,
+  locatingGps: boolean,
+): string {
   if (!selected) return "";
   const dis = editable ? "" : "disabled";
+  const gpsBtn = editable
+    ? `<button type="button" class="secondary" data-map-action="gps-move-selected" data-testid="studio-gps-move" ${locatingGps ? "disabled" : ""}>${locatingGps ? "Mencari lokasi…" : "Pakai Lokasi Saya"}</button>`
+    : "";
 
   if (selected.kind === "start") {
     const sp = record.snapshot.startPoint;
@@ -305,10 +347,9 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Titik Awal</span><input id="ed-sp-name" value="${escapeText(sp.name)}" ${dis}></label>
         <label class="rb-field"><span>Catatan Akses</span><input id="ed-sp-notes" value="${escapeText(sp.accessNotes ?? "")}" ${dis}></label>
-        <label class="rb-field"><span>Latitude</span><input id="ed-sp-lat" type="number" step="0.00001" value="${sp.latitude}" ${dis}></label>
-        <label class="rb-field"><span>Longitude</span><input id="ed-sp-lng" type="number" step="0.00001" value="${sp.longitude}" ${dis}></label>
       </div>
-      ${editable ? `<div class="rb-actions"><button type="button" class="primary" data-map-action="apply-selected">Terapkan Titik Awal</button></div>` : ""}
+      ${renderCoordAccordion(sp.id, "ed-sp-lat", "ed-sp-lng", sp.latitude, sp.longitude, dis)}
+      ${editable ? `<div class="rb-actions"><button type="button" class="primary" data-map-action="apply-selected">Terapkan Titik Awal</button>${gpsBtn}</div>` : ""}
     </details>`;
   }
 
@@ -319,12 +360,9 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
     const nameInputId = idx === 0 ? "ed-station-name" : "ed-point-name";
     return `<details class="rb-accordion" open data-testid="step2-inspector">
       <summary data-studio-point-heading>${escapeText(st.name)}</summary>
-      <small>ID: <code>${escapeText(st.id)}</code></small>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Stasiun</span><input id="${nameInputId}" data-field="name" value="${escapeText(st.name)}" ${dis}></label>
         <label class="rb-field"><span>Jalur Transit (pisahkan koma)</span><input id="ed-st-lines" value="${escapeText(st.transitLines.join(", "))}" ${dis}></label>
-        <label class="rb-field"><span>Latitude</span><input id="ed-st-lat" type="number" step="0.00001" value="${st.latitude}" ${dis}></label>
-        <label class="rb-field"><span>Longitude</span><input id="ed-st-lng" type="number" step="0.00001" value="${st.longitude}" ${dis}></label>
         <label class="rb-field"><span>Wilayah / Kecamatan</span><input id="ed-st-attr-kecamatan" value="${escapeText(st.attributes?.kecamatan ?? "")}" placeholder="Mis. Kebayoran Baru" ${dis}></label>
         <label class="rb-field"><span>Koridor / Area</span><input id="ed-st-attr-corridor" value="${escapeText(st.attributes?.corridor ?? "")}" placeholder="Mis. Selatan" ${dis}></label>
         <label class="rb-field"><span>Jam Publik</span><input id="ed-st-hours" value="${escapeText(st.publicHours ?? "05:00-23:00")}" ${dis}></label>
@@ -337,10 +375,12 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
         </label>
       </div>
       <label class="rb-field"><span>Catatan Akses Publik</span><input id="ed-st-notes" value="${escapeText(st.accessNotes ?? "")}" ${dis}></label>
+      ${renderCoordAccordion(st.id, "ed-st-lat", "ed-st-lng", st.latitude, st.longitude, dis)}
       ${
         editable
           ? `<div class="rb-actions">
               <button type="button" class="primary" data-map-action="apply-selected">Simpan titik</button>
+              ${gpsBtn}
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus Stasiun</button>
             </div>`
           : ""
@@ -353,17 +393,16 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
     if (!poi) return "";
     return `<details class="rb-accordion" open data-testid="step2-inspector">
       <summary data-studio-point-heading>${escapeText(poi.name)} (POI)</summary>
-      <small>ID: <code>${escapeText(poi.id)}</code></small>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama POI</span><input id="ed-poi-name" value="${escapeText(poi.name)}" ${dis}></label>
         <label class="rb-field"><span>Kategori POI</span><input id="ed-poi-cat" value="${escapeText(poi.category)}" ${dis}></label>
-        <label class="rb-field"><span>Latitude</span><input id="ed-poi-lat" type="number" step="0.00001" value="${poi.latitude}" ${dis}></label>
-        <label class="rb-field"><span>Longitude</span><input id="ed-poi-lng" type="number" step="0.00001" value="${poi.longitude}" ${dis}></label>
       </div>
+      ${renderCoordAccordion(poi.id, "ed-poi-lat", "ed-poi-lng", poi.latitude, poi.longitude, dis)}
       ${
         editable
           ? `<div class="rb-actions">
               <button type="button" class="primary" data-map-action="apply-selected">Simpan titik</button>
+              ${gpsBtn}
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus POI</button>
             </div>`
           : ""
@@ -379,7 +418,6 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
     return `<details class="rb-accordion" open data-testid="step2-inspector">
       <summary data-studio-point-heading>${escapeText(lm.name)}</summary>
       <button type="button" class="studio-tool" data-map-action="edit-challenges">Sunting tantangan landmark</button>
-      <small>ID: <code>${escapeText(lm.id)}</code></small>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Landmark</span><input id="${nameInputId}" data-field="name" value="${escapeText(lm.name)}" ${dis}></label>
         <label class="rb-field"><span>Zona</span>
@@ -389,18 +427,18 @@ function renderInspector(record: StudioVersionRecord, selected: Step2Target | nu
               .join("")}
           </select>
         </label>
-        <label class="rb-field"><span>Latitude</span><input id="ed-lm-lat" type="number" step="0.00001" value="${lm.latitude}" ${dis}></label>
-        <label class="rb-field"><span>Longitude</span><input id="ed-lm-lng" type="number" step="0.00001" value="${lm.longitude}" ${dis}></label>
         <label class="rb-field"><span>Ringkasan Transit</span><input id="ed-lm-transit" value="${escapeText(lm.transitSummary)}" ${dis}></label>
         <label class="rb-field"><span>Jam Publik</span><input id="ed-lm-hours" value="${escapeText(lm.publicHours)}" ${dis}></label>
         <label class="rb-field"><span>Tempuh dari Mulai (menit)</span><input id="ed-lm-travel" type="number" value="${Math.round((lm.estimatedTravelFromStartMs ?? 600_000) / 60_000)}" ${dis}></label>
         <label class="rb-field"><span>Estimasi Tantangan (menit)</span><input id="ed-lm-chal" type="number" value="${Math.round((lm.estimatedChallengeMs ?? 240_000) / 60_000)}" ${dis}></label>
       </div>
       <label class="rb-field"><span>Catatan Akses Publik</span><input id="ed-lm-notes" value="${escapeText(lm.accessNotes)}" ${dis}></label>
+      ${renderCoordAccordion(lm.id, "ed-lm-lat", "ed-lm-lng", lm.latitude, lm.longitude, dis)}
       ${
         editable
           ? `<div class="rb-actions">
               <button type="button" class="primary" data-map-action="apply-selected">Simpan titik</button>
+              ${gpsBtn}
               <button type="button" class="secondary" data-map-action="delete-selected">Hapus Landmark</button>
             </div>`
           : ""
@@ -415,7 +453,9 @@ export function renderStep2Top(state: Step2State, editable: boolean): string {
   const mapAction = state.mapMode === "add" ? "Ketuk peta untuk menambah titik."
     : state.mapMode === "move" ? "Ketuk lokasi baru untuk titik terpilih."
     : state.mapMode === "boundary" ? "Ketuk peta untuk menambah sudut batas."
-    : "Ketuk pin untuk menyunting titik.";
+    : editable ? "Ketuk pin untuk menyunting, atau seret pin terpilih."
+    : "Ketuk pin untuk melihat rincian titik.";
+  const lastUndo = state.undoStack[state.undoStack.length - 1];
   return `<div class="studio-map-caption">
       <p>${state.mapFailed ? "Pakai daftar lokasi untuk menyunting titik." : mapAction}</p>
       <span class="rb-badge" data-map-save-state role="status">${state.saved ? "Tersimpan" : "Belum disimpan"}</span>
@@ -424,7 +464,11 @@ export function renderStep2Top(state: Step2State, editable: boolean): string {
       <button type="button" class="studio-tool studio-find-location" data-map-drawer="points" aria-expanded="${state.drawer === "points"}">Cari lokasi</button>
       <button type="button" class="studio-tool" data-map-drawer="transit" aria-expanded="${state.drawer === "transit"}">Transit Jakarta</button>
       ${state.mapFailed ? "" : '<button type="button" class="studio-tool" data-map-action="recenter">Pusatkan</button>'}
+      ${editable ? `<button type="button" class="studio-tool" data-map-action="gps-add" data-testid="studio-gps-add" ${state.locatingGps ? "disabled" : ""}>${state.locatingGps ? "Mencari lokasi…" : "Pakai Lokasi Saya"}</button>` : ""}
+      ${editable ? `<button type="button" class="studio-tool" data-map-action="undo-map" data-testid="studio-map-undo" ${state.undoStack.length === 0 ? "disabled" : ""} aria-label="${lastUndo ? escapeText(`Urungkan: ${lastUndo.label}`) : "Urungkan"}">Urungkan${state.undoStack.length > 0 ? ` (${state.undoStack.length})` : ""}</button>` : ""}
     </div>
+    ${state.gpsError ? `<p class="studio-gps-feedback studio-gps-error" role="alert" data-testid="studio-gps-status">${escapeText(state.gpsError)}</p>`
+      : state.gpsFeedback ? `<p class="studio-gps-feedback" role="status" data-testid="studio-gps-status">${escapeText(state.gpsFeedback)}</p>` : ""}
     ${!state.mapFailed && editable ? `<div class="studio-section-tabs studio-map-modes" role="group" aria-label="Mode interaksi peta">
       <button type="button" data-map-mode="select" aria-pressed="${state.mapMode === "select"}">${state.mapMode === "move" || state.mapMode === "boundary" ? "Kembali ke pilih titik" : "Pilih titik"}</button>
       <button type="button" data-map-mode="add" aria-pressed="${state.mapMode === "add"}">Tambah di peta</button>
@@ -627,7 +671,7 @@ export function renderStep2Bottom(
         </fieldset>`
       : `<fieldset data-point-fields aria-label="Editor lokasi">
       ${zoneView ? renderZoneEditor(record, state, editable) : boundaryView ? renderBoundaryEditor(record, state, editable)
-        : renderInspector(record, currentPoint, editable)}
+        : renderInspector(record, currentPoint, editable, state.locatingGps)}
       ${editable && currentPoint && !zoneView && !boundaryView && !state.mapFailed
         ? `<button type="button" class="studio-tool" data-map-mode="move" aria-pressed="${state.mapMode === "move"}">Pindahkan titik di peta</button>` : ""}
       ${addPoint ? `<button type="button" class="studio-tool" data-map-action="${claim ? "add-landmark" : state.subTab === "secondary" ? "add-poi" : "add-station"}">Tambah ${claim ? "landmark" : state.subTab === "secondary" ? "POI" : "stasiun"}</button>` : ""}

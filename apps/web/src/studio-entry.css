@@ -235,3 +235,43 @@
   background: #eef8f2;
 }
 
+.studio-map-editor .board-map-pin-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+.studio-map-editor .board-map-pin-draggable:active {
+  cursor: grabbing;
+}
+.studio-map-tools {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 6.6rem), 1fr));
+}
+.studio-map-tools > button {
+  min-height: 44px;
+  min-width: 44px;
+}
+.studio-gps-feedback {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 9px;
+  font-size: .82rem;
+  font-weight: 700;
+  background: #e6f4ea;
+  color: #12483a;
+  border: 1px solid #87aa9b;
+}
+.studio-gps-feedback.studio-gps-error {
+  background: #fef2f2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+.studio-coord-accordion {
+  margin-top: .35rem;
+  border-style: dashed;
+}
+.studio-coord-body {
+  display: grid;
+  gap: .55rem;
+  padding-top: .45rem;
+}
+
+
