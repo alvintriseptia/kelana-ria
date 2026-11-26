@@ -214,6 +214,26 @@ export function validateClaimRulebook(
         );
       }
     }
+    if (session.opponentTracking !== undefined) {
+      const tracking = session.opponentTracking;
+      const validModes = new Set(["off", "last_checkin", "periodic_gps"]);
+      if (!tracking || typeof tracking !== "object" || !validModes.has(tracking.mode)) {
+        addError(
+          "invalid-opponent-tracking",
+          "session.opponentTracking.mode",
+          "opponentTracking.mode must be off, last_checkin, or periodic_gps.",
+        );
+      } else if (
+        tracking.intervalMs !== undefined &&
+        (!isPositiveInt(tracking.intervalMs) || tracking.intervalMs < 3_000 || tracking.intervalMs > 300_000)
+      ) {
+        addError(
+          "invalid-opponent-tracking",
+          "session.opponentTracking.intervalMs",
+          "opponentTracking.intervalMs must be an integer between 3000 and 300000.",
+        );
+      }
+    }
   }
 
   const claiming = pack.claiming;

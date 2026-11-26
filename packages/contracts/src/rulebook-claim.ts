@@ -16,6 +16,12 @@ import type { LocationFix } from "./index.js";
 export type ClaimTeamMode = "ffa" | "teams";
 export type ClaimFailPolicy = "cooldown_ms" | "burned_for_player";
 export type ClaimChallengeMode = "per_landmark" | "challenge_hand";
+export type ClaimOpponentTrackingMode = "off" | "last_checkin" | "periodic_gps";
+
+export type ClaimOpponentTrackingRules = {
+  mode: ClaimOpponentTrackingMode;
+  intervalMs?: number;
+};
 
 export type ClaimSoloTargets = {
   lockedLandmarks: number;
@@ -29,6 +35,7 @@ export type ClaimSessionRules = {
   requireStartCheckIn: boolean;
   durationMs: number;
   soloTargets?: ClaimSoloTargets;
+  opponentTracking?: ClaimOpponentTrackingRules;
 };
 
 export type ClaimOwnershipRules = {
@@ -360,6 +367,22 @@ export type ClaimEngineOutcome = {
   at: number;
 };
 
+export type ClaimSeatPosition = {
+  seatId: string;
+  name: string;
+  teamId: string;
+  latitude: number;
+  longitude: number;
+  at: number;
+  source: "gps" | "checkin";
+  zoneId?: string;
+};
+
+export type ClaimPresenceEvent = {
+  positions: ClaimSeatPosition[];
+  now: number;
+};
+
 export type ClaimEngineRoomView = {
   code: string;
   now: number;
@@ -380,6 +403,11 @@ export type ClaimEngineRoomView = {
     distinctZones: number;
     targetZones: number;
   };
+  opponentTracking?: {
+    mode: ClaimOpponentTrackingMode;
+    intervalMs: number;
+  };
+  seatPositions?: ClaimSeatPosition[];
   ownActiveAttempt: ClaimActiveAttemptView | null;
   ownLearningExplanation?: { landmarkId: string; text: string };
   ownCooldowns: Record<string, number>;

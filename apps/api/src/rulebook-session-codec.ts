@@ -2,6 +2,7 @@ import { randomInt } from "node:crypto";
 import type {
   ClaimEngineActionReply,
   ClaimRulebookPack,
+  ClaimSeatPosition,
   GeoSnapshot,
   HideSeekRulebookPack,
   SeekEngineActionReply,
@@ -31,6 +32,7 @@ export type LiveClaimSession = {
   pass: RulebookRoomPass;
   match: ClaimEngineMatch;
   photos: Map<string, Buffer>;
+  seatPositions: Map<string, ClaimSeatPosition>;
   activity: ReturnType<typeof createRoomActivity>;
   recapSaved?: boolean;
   stateRev: number;
@@ -154,6 +156,7 @@ export function deserializeLiveSession(
       pass: raw.pass,
       match,
       photos,
+      seatPositions: new Map(),
       activity: createRoomActivity(raw.activity),
       recapSaved: Boolean(raw.recapSaved),
       stateRev,

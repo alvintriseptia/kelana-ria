@@ -7,8 +7,12 @@ import type {
   ClaimEngineAction,
   ClaimEngineActionReply,
   ClaimEngineRoomView,
+  ClaimOpponentTrackingMode,
+  ClaimPresenceEvent,
   ClaimRulebookPack,
   ClaimRulebookValidationResult,
+  ClaimSeatPosition,
+  GeoCoordinate,
   GeoSnapshot,
   HideSeekCardCategory,
   HideSeekRulebookPack,
@@ -70,8 +74,9 @@ import {
   type PlaySeekCardParams,
   type SeekDeckEngineState,
 } from "./seek-engine/deck-engine.js";
+import { verifyGpsFreshAndAccurate } from "./seek-engine/geo-evaluator.js";
 import { createFixtureGeoSeedProvider, seedAndFreezeGeoSnapshot, type GeoSeedRequest } from "./seek-engine/geo-seeder.js";
-import { computeGeoSnapshotHash, validateHideSeekRulebook } from "./seek-engine/rulebook-validator.js";
+import { computeGeoSnapshotHash, haversineMeters, validateHideSeekRulebook } from "./seek-engine/rulebook-validator.js";
 import {
   activeHiderSeatId,
   applySeekEngineAction,
@@ -86,6 +91,9 @@ import {
 
 const PLATFORM_FEE_RATE = 0.15;
 const ORDER_TTL_MS = 15 * 60_000;
+const PRESENCE_MIN_PING_MS = 3_000;
+const PRESENCE_DEFAULT_INTERVAL_MS = 10_000;
+const PRESENCE_MIN_MOVE_METERS = 10;
 
 function digest(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -194,10 +202,41 @@ function normalizeRestoreCode(raw: string): string | null {
   return `${stripped.slice(0, 3)}-${stripped.slice(3, 7)}-${stripped.slice(7, 11)}`;
 }
 
-export type RoomRevEvent = {
-  stateRev: number;
-  now: number;
-};
+export type RoomStreamEvent =
+  | { type: "rev"; stateRev: number; now: number }
+  | ({ type: "presence" } & ClaimPresenceEvent);
+
+function isClaimSoloSession(match: ClaimEngineMatch): boolean {
+  return match.mode === undefined ? match.seats.length === 1 : match.mode === "solo";
+}
+
+function effectiveOpponentTracking(match: ClaimEngineMatch): {
+  mode: ClaimOpponentTrackingMode;
+  intervalMs: number;
+} {
+  if (isClaimSoloSession(match)) {
+    return { mode: "off", intervalMs: PRESENCE_DEFAULT_INTERVAL_MS };
+  }
+  const configured = match.pack.session.opponentTracking;
+  const mode: ClaimOpponentTrackingMode = configured?.mode ?? "periodic_gps";
+  const intervalMs = Math.max(PRESENCE_MIN_PING_MS, configured?.intervalMs ?? PRESENCE_DEFAULT_INTERVAL_MS);
+  return { mode, intervalMs };
+}
+
+function deriveNearestZoneId(match: ClaimEngineMatch, coord: GeoCoordinate): string | undefined {
+  const landmarks = match.pack.geography.landmarks;
+  if (landmarks.length === 0) return undefined;
+  let best = landmarks[0];
+  let bestDist = haversineMeters(coord, best);
+  for (let i = 1; i < landmarks.length; i++) {
+    const d = haversineMeters(coord, landmarks[i]);
+    if (d < bestDist) {
+      best = landmarks[i];
+      bestDist = d;
+    }
+  }
+  return best.zoneId;
+}
 
 export type RulebookRoomPass = {
   passId: string;
@@ -598,13 +637,14 @@ export function rulebookStore(
   }
 
   const liveRooms = new Map<string, LiveSession>();
-  const roomSubscribers = new Map<string, Set<{ onEvent: (event: RoomRevEvent) => void; onClose?: () => void }>>();
+  const roomSubscribers = new Map<string, Set<{ onEvent: (event: RoomStreamEvent) => void; onClose?: () => void }>>();
+  const presenceMetaByRoom = new Map<string, Map<string, { lastPingAt: number; lastBroadcastAt: number }>>();
   const catalogRooms = new Map<string, string>();
   const pendingOrders = new Map<string, ReturnType<typeof createOrder>>();
   const pendingOrderRecords = new Map<string, { buyerHash: string; order: RulebookOrder }>();
   let touchSeq = 0;
 
-  function emitRoomEvent(roomCode: string, event: RoomRevEvent) {
+  function emitRoomEvent(roomCode: string, event: RoomStreamEvent) {
     const subs = roomSubscribers.get(roomCode);
     if (!subs || subs.size === 0) return;
     for (const sub of [...subs]) {
@@ -613,6 +653,16 @@ export function rulebookStore(
       } catch {
         // Broken client streams must never disrupt committed room mutations.
       }
+    }
+  }
+
+  function wipeClaimPresence(session: LiveClaimSession, now: number) {
+    const roomCode = session.pass.roomCode;
+    const hadPositions = session.seatPositions.size > 0;
+    session.seatPositions.clear();
+    presenceMetaByRoom.delete(roomCode);
+    if (hadPositions) {
+      onCommit(() => emitRoomEvent(roomCode, { type: "presence", positions: [], now }));
     }
   }
 
@@ -658,10 +708,11 @@ export function rulebookStore(
     if (bumpRev) {
       session.stateRev += 1;
       const roomCode = session.pass.roomCode;
-      const event: RoomRevEvent = { stateRev: session.stateRev, now };
+      const event: RoomStreamEvent = { type: "rev", stateRev: session.stateRev, now };
       onCommit(() => emitRoomEvent(roomCode, event));
     }
     if (session.match.outcome) {
+      if (session.format === "claim-the-city") wipeClaimPresence(session, now);
       deleteAllRoomPhotos(session);
       deleteLiveRoomStmt.run(session.pass.roomCode);
       return;
@@ -991,6 +1042,7 @@ export function rulebookStore(
           pass,
           match,
           photos: new Map(),
+          seatPositions: new Map(),
           activity: createRoomActivity(),
           stateRev: 1,
         };
@@ -1503,8 +1555,41 @@ export function rulebookStore(
         }
         if (pruneClaimPhotos(session, pending)) photoChanged = true;
         const recapChanged = captureCompletedMatch(session);
+        if (
+          !replay &&
+          !reply.error &&
+          claimAction.type === "check-in-landmark" &&
+          !session.match.outcome &&
+          session.match.phase === "active" &&
+          effectiveOpponentTracking(session.match).mode !== "off"
+        ) {
+          const seat = session.match.seats.find((s) => s.seatId === seatId);
+          const lmDef = session.match.pack.geography.landmarks.find((l) => l.id === claimAction.landmarkId);
+          if (seat && lmDef) {
+            session.seatPositions.set(seatId, {
+              seatId: seat.seatId,
+              name: seat.name,
+              teamId: seat.teamId,
+              latitude: lmDef.latitude,
+              longitude: lmDef.longitude,
+              at: now,
+              source: "checkin",
+              zoneId: lmDef.zoneId,
+            });
+            const snapshotPositions = [...session.seatPositions.values()];
+            onCommit(() => emitRoomEvent(roomCode, { type: "presence", positions: snapshotPositions, now }));
+          }
+        }
         if ((!replay && !reply.error) || exp.changed || actChanged || photoChanged || recapChanged) {
           persistLiveSession(session, now, true);
+        }
+        if (session.match.outcome) {
+          wipeClaimPresence(session, now);
+        }
+        const tracking = effectiveOpponentTracking(session.match);
+        reply.room.opponentTracking = tracking;
+        if (session.match.phase === "active" && !session.match.outcome && tracking.mode !== "off") {
+          reply.room.seatPositions = [...session.seatPositions.values()];
         }
         return reply;
       });
@@ -1895,7 +1980,13 @@ export function rulebookStore(
       if (!seatId) return undefined;
       touchLiveRoom(roomCode, session);
       syncClaimReadState(session, now);
+      if (session.match.outcome) wipeClaimPresence(session, now);
       const room = viewClaimEngineMatch(session.match, seatId, now);
+      const tracking = effectiveOpponentTracking(session.match);
+      room.opponentTracking = tracking;
+      if (session.match.phase === "active" && !session.match.outcome && tracking.mode !== "off") {
+        room.seatPositions = [...session.seatPositions.values()];
+      }
       return {
         format: "claim-the-city" as const,
         stateRev: session.stateRev,
@@ -1953,6 +2044,92 @@ export function rulebookStore(
         : {}),
       pass: session.pass,
     };
+  }
+
+  function updateClaimPresence(
+    roomCode: string,
+    credential: string,
+    fix: LocationFix,
+    now: number,
+  ):
+    | { ok: true; position: ClaimSeatPosition; broadcast: boolean; now: number }
+    | { ok: false; status: 400 | 404 | 429; error: string; retryAfterMs?: number } {
+    const session = liveRooms.get(roomCode);
+    if (!session || session.format !== "claim-the-city") {
+      return { ok: false, status: 404, error: "room-not-found" };
+    }
+    const credHash = digest(credential);
+    const seatId = findClaimEngineSeat(session.match, credHash);
+    if (!seatId) {
+      return { ok: false, status: 404, error: "room-not-found" };
+    }
+    syncClaimReadState(session, now);
+    if (session.match.outcome || session.match.phase !== "active") {
+      if (session.match.outcome) wipeClaimPresence(session, now);
+      return { ok: false, status: 400, error: "room-not-active" };
+    }
+    const tracking = effectiveOpponentTracking(session.match);
+    if (tracking.mode !== "periodic_gps") {
+      return { ok: false, status: 400, error: "presence-disabled" };
+    }
+    const valid = verifyGpsFreshAndAccurate(fix, now, session.match.pack.geography);
+    if (!valid.ok) {
+      return { ok: false, status: 400, error: valid.error };
+    }
+    const seat = session.match.seats.find((s) => s.seatId === seatId);
+    if (!seat) {
+      return { ok: false, status: 404, error: "room-not-found" };
+    }
+    let roomMeta = presenceMetaByRoom.get(roomCode);
+    if (!roomMeta) {
+      roomMeta = new Map();
+      presenceMetaByRoom.set(roomCode, roomMeta);
+    }
+    const prevMeta = roomMeta.get(seatId);
+    if (prevMeta && now - prevMeta.lastPingAt < PRESENCE_MIN_PING_MS) {
+      return {
+        ok: false,
+        status: 429,
+        error: "presence-rate-limited",
+        retryAfterMs: PRESENCE_MIN_PING_MS - (now - prevMeta.lastPingAt),
+      };
+    }
+
+    const existing = session.seatPositions.get(seatId);
+    const movedMeters = existing ? haversineMeters(existing, fix) : Infinity;
+    const position: ClaimSeatPosition = {
+      seatId: seat.seatId,
+      name: seat.name,
+      teamId: seat.teamId,
+      latitude: fix.latitude,
+      longitude: fix.longitude,
+      at: now,
+      source: "gps",
+      zoneId: deriveNearestZoneId(session.match, fix),
+    };
+    session.seatPositions.set(seatId, position);
+
+    const elapsedSinceBroadcast = prevMeta ? now - prevMeta.lastBroadcastAt : Infinity;
+    const shouldBroadcast =
+      !existing ||
+      existing.source !== "gps" ||
+      movedMeters >= PRESENCE_MIN_MOVE_METERS ||
+      elapsedSinceBroadcast >= tracking.intervalMs;
+
+    roomMeta.set(seatId, {
+      lastPingAt: now,
+      lastBroadcastAt: shouldBroadcast ? now : (prevMeta?.lastBroadcastAt ?? now),
+    });
+
+    if (shouldBroadcast) {
+      emitRoomEvent(roomCode, {
+        type: "presence",
+        positions: [...session.seatPositions.values()],
+        now,
+      });
+    }
+
+    return { ok: true, position, broadcast: shouldBroadcast, now };
   }
 
   function listActiveRooms(credential: string, currentNow: number): ActiveRulebookRoomSummary[] {
@@ -2015,10 +2192,10 @@ export function rulebookStore(
     roomCode: string,
     credential: string,
     now: number,
-    onEvent: (event: RoomRevEvent) => void,
+    onEvent: (event: RoomStreamEvent) => void,
     onClose?: () => void,
   ):
-    | { ok: true; stateRev: number; now: number; unsubscribe: () => void }
+    | { ok: true; stateRev: number; now: number; presence?: ClaimPresenceEvent; unsubscribe: () => void }
     | { ok: false; error: "room-not-found" | "not-a-member" } {
     const session = liveRooms.get(roomCode);
     if (!session) return { ok: false, error: "room-not-found" };
@@ -2046,7 +2223,14 @@ export function rulebookStore(
       bucket.delete(entry);
       if (bucket.size === 0) roomSubscribers.delete(roomCode);
     };
-    return { ok: true, stateRev: session.stateRev, now: roomNow, unsubscribe };
+    const presence: ClaimPresenceEvent | undefined =
+      session.format === "claim-the-city" &&
+      session.match.phase === "active" &&
+      !session.match.outcome &&
+      effectiveOpponentTracking(session.match).mode !== "off"
+        ? { positions: [...session.seatPositions.values()], now: roomNow }
+        : undefined;
+    return { ok: true, stateRev: session.stateRev, now: roomNow, ...(presence ? { presence } : {}), unsubscribe };
   }
 
   async function seedGeoFromOfficialFixture(request: GeoSeedRequest): Promise<GeoSnapshot> {
@@ -2089,6 +2273,7 @@ export function rulebookStore(
     settleVerifiedOrder,
     joinRoom,
     actInRoom,
+    updateClaimPresence,
     answerSeekPhoto,
     submitClaimPhoto,
     viewRoomPhoto,
@@ -2112,6 +2297,7 @@ export function rulebookStore(
         }
       }
       roomSubscribers.clear();
+      presenceMetaByRoom.clear();
       db.close();
     },
   };

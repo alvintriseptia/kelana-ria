@@ -6,6 +6,7 @@ import type {
   ClaimRulebookPack,
   GeoSnapshot,
   HideSeekRulebookPack,
+  LocationFix,
   RulebookFormat,
   SeekEngineAction,
   SeekMapPreviewRequest,
@@ -14,7 +15,7 @@ import { credential, hasJsonBody, isObject, json, requestBody, setCredential } f
 import type { MidtransNotificationPayload } from "./midtrans-adapter.js";
 import type { PlaySeekCardParams } from "./seek-engine/deck-engine.js";
 import type { GeoSeedRequest } from "./seek-engine/geo-seeder.js";
-import type { rulebookStore, StoredRulebookRecord } from "./rulebook-store.js";
+import type { RoomStreamEvent, rulebookStore, StoredRulebookRecord } from "./rulebook-store.js";
 
 const cookieName = "kelana_rulebook";
 const SSE_KEEPALIVE_MS = 20_000;
@@ -173,9 +174,13 @@ export function rulebookHandler(
       let keepalive: ReturnType<typeof setInterval> | undefined;
       let unsubscribe: (() => void) | undefined;
 
-      const writeEvent = (stateRev: number, eventNow: number) => {
+      const writeEvent = (event: RoomStreamEvent) => {
         if (closed || response.writableEnded || response.destroyed) return;
-        response.write(`event: rev\ndata: ${JSON.stringify({ stateRev, now: eventNow })}\n\n`);
+        if (event.type === "presence") {
+          response.write(`event: presence\ndata: ${JSON.stringify({ positions: event.positions, now: event.now })}\n\n`);
+          return;
+        }
+        response.write(`event: rev\ndata: ${JSON.stringify({ stateRev: event.stateRev, now: event.now })}\n\n`);
       };
 
       const cleanup = () => {
@@ -197,7 +202,7 @@ export function rulebookHandler(
         roomCode,
         cred,
         now(),
-        (event) => writeEvent(event.stateRev, event.now),
+        (event) => writeEvent(event),
         cleanup,
       );
       if (!sub.ok) return json(response, 404, { error: "room-not-found" });
@@ -213,6 +218,9 @@ export function rulebookHandler(
       response.flushHeaders?.();
       activeSseStreams.add(cleanup);
       response.write(`retry: 3000\nevent: rev\ndata: ${JSON.stringify({ stateRev: sub.stateRev, now: sub.now })}\n\n`);
+      if (sub.presence) {
+        response.write(`event: presence\ndata: ${JSON.stringify(sub.presence)}\n\n`);
+      }
 
       keepalive = setInterval(() => {
         if (closed || response.writableEnded || response.destroyed) {
@@ -238,8 +246,15 @@ export function rulebookHandler(
       if (!view) return json(response, 404, { error: "room-not-found" });
       const roleTag = view.format === "hide-and-seek" ? view.room.role : view.room.isSolo ? "solo" : "group";
       const promptTag = view.activity.prompt?.id ?? "";
+      const presenceTag =
+        view.format === "claim-the-city" && view.room.seatPositions?.length
+          ? view.room.seatPositions
+              .map((p) => `${p.seatId}:${p.at}:${p.latitude.toFixed(5)}:${p.longitude.toFixed(5)}:${p.source}`)
+              .sort()
+              .join("|")
+          : "";
       const etagDigest = createHash("sha256")
-        .update(`${roomCode}:${view.room.seatId}:${roleTag}:${view.stateRev}:${includeBoard ? 1 : 0}:${promptTag}`)
+        .update(`${roomCode}:${view.room.seatId}:${roleTag}:${view.stateRev}:${includeBoard ? 1 : 0}:${promptTag}:${presenceTag}`)
         .digest("base64url")
         .slice(0, 22);
       const etag = `"rb-${etagDigest}"`;
@@ -284,6 +299,24 @@ export function rulebookHandler(
       return json(response, 400, { error: "invalid-request" });
     }
     if (!isObject(body)) return json(response, 400, { error: "invalid-request" });
+
+    const presenceRoute = /^\/api\/rulebooks\/rooms\/([^/]+)\/presence$/.exec(path);
+    if (presenceRoute) {
+      const cred = credential(request, cookieName);
+      if (!cred) return json(response, 404, { error: "room-not-found" });
+      const roomCode = decodeURIComponent(presenceRoute[1]);
+      const fix = (isObject(body.fix) ? body.fix : body) as unknown as LocationFix;
+      const roomNow = store.roomTime(roomCode, now());
+      const res = store.updateClaimPresence(roomCode, cred, fix, roomNow);
+      if (!res.ok) {
+        const headers =
+          res.status === 429 && res.retryAfterMs !== undefined
+            ? { "Retry-After": String(Math.max(1, Math.ceil(res.retryAfterMs / 1000))) }
+            : undefined;
+        return json(response, res.status, { error: res.error, ...(res.retryAfterMs !== undefined ? { retryAfterMs: res.retryAfterMs } : {}) }, headers);
+      }
+      return json(response, 200, { ok: true, position: res.position, broadcast: res.broadcast, now: res.now });
+    }
 
     const recapShareRoute = /^\/api\/rulebooks\/recaps\/((?:RC|RB)-[\dA-F]{6})\/(share|unshare)$/.exec(path);
     if (recapShareRoute) {
