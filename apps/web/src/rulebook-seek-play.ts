@@ -39,9 +39,12 @@ import {
   copyToClipboard,
   openConfirmDialog,
   openQrModal,
+  openQuickJoinRoomDialog,
   renderCanceledRoomCard,
   renderLobbyInviteCard,
+  renderPostMatchActions,
 } from "./lobby-ui";
+import { preparePhotoFile, type PhotoDraftState } from "./photo-capture";
 import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
 import { answerText, incomingQuestion, questionDeck, questionNames, questionOptions, rewardCard } from "./seek-game-panels";
 import "./rulebook-seek-play.css";
@@ -257,7 +260,9 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let previewError: { key: string; message: string } | undefined;
   let draftPreview: { key: string; data: SeekMapPreview; fix: CapturedLocation; validUntil?: number } | undefined;
   let draftFix: { referenceKey: string; fix: CapturedLocation; validUntil?: number } | undefined;
-  let photoPreview = "";
+  let seekPhotoDraft: PhotoDraftState | null = null;
+  let seekPhotoUploading = false;
+  let seekPhotoSeq = 0;
   let thermometerEnd: CapturedLocation | undefined;
   let actionPending = false;
   let keepIds = new Set<string>();
@@ -1410,13 +1415,20 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           : ""
       }
 
-      ${room.outcome ? `<div class="rb-card">
+      ${room.outcome ? `<div class="rb-card" data-testid="seek-outcome">
         <h3>Hasil permainan</h3>
         <p>${escapeText(room.seats.find(seat => seat.seatId === room.outcome?.winnerSeatId)?.name ?? "Tidak ada pemenang")}</p>
         <ul class="rb-list">${room.turns.map(turn => `<li>
           <strong>${escapeText(room.seats.find(seat => seat.seatId === turn.hiderSeatId)?.name ?? "Penyembunyi")}</strong>
           <span>${clockText(turn.adjustedMs)}</span></li>`).join("")}</ul>
-        ${room.startedAt !== null ? `<a class="cat-link" href="/?recap=${encodeURIComponent(room.code)}">Buka ringkasan</a>` : ""}
+        ${renderPostMatchActions({
+          roomCode: room.code,
+          packId: pass.packId,
+          version: pass.version,
+          started: room.startedAt !== null,
+          canPlayAgain: !pass.paid || isHost || ownedPackIds.includes(pass.packId),
+          busy,
+        })}
       </div>` : ""}
 
       ${room.phase === "regroup" ? (() => {
@@ -1650,7 +1662,14 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       const extras = alternatives.map(card => `<button type="button" class="sg-pick" data-action="play-card"
         data-instance="${escapeText(card.instanceId)}" data-primitive="${card.effect.primitive}" ${busy ? "disabled" : ""}>${escapeText(card.title)}</button>`).join("")
         + (room.phase === "endgame" ? `<button type="button" class="sg-pick" data-action="cannot-answer" data-qid="${escapeText(pending.id)}" ${busy ? "disabled" : ""}>Tidak bisa menjawab</button>` : "");
-      return incomingQuestion(pending, answerChoice, publicBoard.pois, photoPreview, extras, busy)
+      return incomingQuestion(
+        pending,
+        answerChoice,
+        publicBoard.pois,
+        seekPhotoDraft ? { prepared: seekPhotoDraft.prepared, processing: seekPhotoDraft.processing, uploading: seekPhotoUploading } : null,
+        extras,
+        busy,
+      )
         + slotAlert("answer-photo")
         + slotAlert("answer-field")
         + `<p>Jawab dalam <span data-deadline="${pending.deadline}"></span></p>`;
@@ -1753,7 +1772,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     if (!busy) drawKey = nextDraw;
     if (pendingId !== nextPending) {
       answerChoice = "";
-      photoPreview = "";
+      seekPhotoDraft = null;
+      seekPhotoUploading = false;
     }
     pendingId = nextPending;
 
@@ -1898,35 +1918,114 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     if (!(event.target instanceof HTMLInputElement) || event.target.id !== "sg-clue-photo") return;
     const file = event.target.files?.[0];
     const questionId = pendingId;
-    photoPreview = "";
+    seekPhotoDraft = null;
     inlineError = null;
     if (!file) {
       render();
       return;
     }
-    if (file.size > 2 * 1024 * 1024) {
-      reportError("photo-too-large", { action: "answer-photo", target: questionId }, "answer-photo");
-      render();
-      return;
-    }
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      reportError("invalid-photo", { action: "answer-photo", target: questionId }, "answer-photo");
-      render();
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (questionId !== pendingId || lifecycle.signal.aborted) return;
-      photoPreview = String(reader.result ?? "");
-      render();
-    };
-    reader.onerror = () => {
-      if (questionId !== pendingId || lifecycle.signal.aborted) return;
-      reportError("photo-unreadable", { action: "answer-photo", target: questionId }, "answer-photo");
-      render();
-    };
-    reader.readAsDataURL(file);
+    const seqNum = ++seekPhotoSeq;
+    const promise = preparePhotoFile(file);
+    seekPhotoDraft = { processing: true, prepared: null, promise, seq: seqNum };
+    render();
+    void promise.then(
+      (prepared) => {
+        if (questionId !== pendingId || lifecycle.signal.aborted || seekPhotoDraft?.seq !== seqNum) return;
+        seekPhotoDraft = { processing: false, prepared, seq: seqNum };
+        render();
+      },
+      (error) => {
+        if (questionId !== pendingId || lifecycle.signal.aborted || seekPhotoDraft?.seq !== seqNum) return;
+        seekPhotoDraft = null;
+        reportError(error, { action: "answer-photo", target: questionId }, "answer-photo");
+        render();
+      },
+    );
   }, { signal: lifecycle.signal });
+
+  async function switchToSeekRoom(nextCode: string, nextStatus = "") {
+    roomCode = nextCode;
+    joinCode = nextCode;
+    live = null;
+    cachedBoard = null;
+    roomEtag = null;
+    drawKey = "";
+    pendingId = "";
+    answerChoice = "";
+    seekPhotoDraft = null;
+    seekPhotoUploading = false;
+    stationId = "";
+    family = null;
+    option = "";
+    renderedTurn = "";
+    startMapExpanded = false;
+    closeMap();
+    destroyStartMiniMap();
+    mapFailed = false;
+    statusMsg = nextStatus;
+    inlineError = null;
+    pendingAction = null;
+    toast.clear();
+    syncRoomUrl(nextCode);
+    await refreshRoom();
+  }
+
+  async function executePlayAgain() {
+    if (!live || busy || actionPending) return;
+    const { room, pass } = live;
+    const ownSeat = room.seats.find((s) => s.seatId === room.seatId);
+    const requestType = pass.paid ? "create-owned-room" : "create-free-room";
+    const hostName = resolveDefaultPlayerName(getCachedAuth()?.user?.displayName, ownSeat?.name ?? "Pemain");
+    const pending = ensurePendingAction(
+      `play-again:${room.code}:${pass.packId}:${pass.version}`,
+      requestType,
+    );
+    actionPending = true;
+    busy = true;
+    root.setAttribute("aria-busy", "true");
+    inlineError = null;
+    render();
+    try {
+      const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; roomCode?: string; error?: string }>(
+        "/api/rulebooks",
+        {
+          signal: lifecycle.signal,
+          body: {
+            type: requestType,
+            packId: pass.packId,
+            version: pass.version,
+            ...(pass.mode ? { mode: pass.mode } : {}),
+            hostName,
+            requestId: pending.id,
+          },
+        },
+      );
+      clearPendingAction();
+      if (lifecycle.signal.aborted) return;
+      if (ok && res.ok && res.roomCode) {
+        await switchToSeekRoom(res.roomCode, `Ruang baru ${res.roomCode} siap dimainkan.`);
+        return;
+      }
+      reportError(
+        { error: res.error ?? "invalid-request", status },
+        { surface: "seek", action: requestType, target: pass.packId },
+        "lobby",
+      );
+    } catch (error) {
+      if (!lifecycle.signal.aborted) {
+        const resolved = reportError(error, { surface: "seek", action: requestType, target: pass.packId }, "lobby");
+        if (!resolved.uncertain) clearPendingAction();
+      }
+    } finally {
+      busy = false;
+      actionPending = false;
+      if (!lifecycle.signal.aborted) {
+        root.removeAttribute("aria-busy");
+        render();
+        if (!pendingAction) roomEvents.sync();
+      }
+    }
+  }
 
   async function executeConfirmedLeave(toastText: string) {
     if (!live || busy || actionPending) return;
@@ -1958,6 +2057,13 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   root.addEventListener("click", (event) => {
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
     if (!btn || busy || actionPending || btn.disabled) return;
+
+    if (btn.dataset.photoClear !== undefined) {
+      seekPhotoDraft = null;
+      if (inlineError?.slot === "answer-photo") inlineError = null;
+      render();
+      return;
+    }
 
     const locAction = btn.dataset.locAction;
     if (locAction === "enable-live-location") {
@@ -2035,6 +2141,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       liveLocation.stop();
       drawKey = "";
       pendingId = "";
+      seekPhotoDraft = null;
+      seekPhotoUploading = false;
       statusMsg = "";
       inlineError = null;
       pendingAction = null;
@@ -2051,6 +2159,31 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
     const action = btn.dataset.action;
     if (!action) return;
+    if (action === "play-again" && live) {
+      void executePlayAgain();
+      return;
+    }
+    if (action === "join-new-room") {
+      const auth = getCachedAuth();
+      openQuickJoinRoomDialog({
+        authenticatedDisplayName: auth?.user?.displayName,
+        authenticated: auth?.authenticated,
+        onJoined: (format, nextCode) => {
+          if (format === "hide-and-seek") {
+            void switchToSeekRoom(nextCode);
+          } else {
+            const url = new URL(location.href);
+            url.searchParams.set("play", "rulebook-claim");
+            url.searchParams.set("room", nextCode);
+            url.searchParams.delete("pack");
+            url.searchParams.delete("launch");
+            history.pushState({ fromChooser: true }, "", url);
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          }
+        },
+      });
+      return;
+    }
     if (action === "confirm-leave" && live) {
       btn.closest<HTMLDetailsElement>(".sg-room-menu")?.removeAttribute("open");
       const spec = destructiveExitSpec(live);
@@ -2441,9 +2574,28 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         await postRoomAction({ type: "answer-question", questionId: btn.dataset.qid, answerCode: answerChoice });
       } else if (action === "answer-photo") {
         const questionId = btn.dataset.qid ?? "";
+        let prepared = seekPhotoDraft?.prepared ?? null;
+        if (!prepared && seekPhotoDraft?.processing && seekPhotoDraft.promise) {
+          try {
+            prepared = await seekPhotoDraft.promise;
+          } catch (error) {
+            if (!lifecycle.signal.aborted) {
+              seekPhotoDraft = null;
+              reportError(error, { action: "answer-photo", target: questionId }, "answer-photo");
+              render();
+            }
+            return;
+          }
+        }
+        if (!prepared) {
+          reportError("photo-required", { action: "answer-photo", target: questionId }, "answer-photo");
+          render();
+          return;
+        }
         const pending = ensurePendingAction(JSON.stringify([roomCode, "answer-photo", questionId]), "answer-photo", { questionId });
         ++seq;
         busy = true;
+        seekPhotoUploading = true;
         render();
         try {
           const { ok, status, data: response } = await fetchApiJson<{ error?: string }>("/api/rulebooks/seek-photo", {
@@ -2452,13 +2604,14 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               roomCode,
               questionId,
               actionId: pending.id,
-              photoBase64: photoPreview.split(",")[1],
+              photoBase64: prepared.base64,
             },
           });
           clearPendingAction();
           if (response.error || !ok) {
             reportError({ error: response.error ?? "invalid-photo", status }, { action: "answer-photo", target: questionId }, "answer-photo");
           } else {
+            seekPhotoDraft = null;
             inlineError = null;
             toast.clear();
             toast.resetDedupe();
@@ -2470,6 +2623,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             if (!resolved.uncertain) clearPendingAction();
           }
         } finally {
+          seekPhotoUploading = false;
           busy = false;
           render();
         }
