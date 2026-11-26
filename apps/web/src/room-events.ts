@@ -1,13 +1,19 @@
+import type { ClaimSeatPosition } from "@kelana-ria/contracts";
+
 export interface ActiveRoomSnapshot {
   code: string;
   stateRev: number;
 }
+
+export type RoomConnectionState = "connected" | "polling" | "offline";
 
 export interface RoomEventBridgeOptions {
   signal: AbortSignal;
   getActiveRoom: () => ActiveRoomSnapshot | null;
   isBusy: () => boolean;
   onSync: () => Promise<void>;
+  onPresence?: (positions: ClaimSeatPosition[], now: number) => void;
+  onConnectionChange?: (state: RoomConnectionState) => void;
   heartbeatMs?: number;
   fallbackPollMs?: number;
   reconnectBackoffMs?: number;
@@ -18,6 +24,7 @@ export interface RoomEventBridge {
   markSynced: () => void;
   destroy: () => void;
   isConnected: () => boolean;
+  getConnectionState: () => RoomConnectionState;
 }
 
 const DEFAULT_HEARTBEAT_MS = 15_000;
@@ -30,6 +37,8 @@ export function createRoomEventBridge(options: RoomEventBridgeOptions): RoomEven
     getActiveRoom,
     isBusy,
     onSync,
+    onPresence,
+    onConnectionChange,
     heartbeatMs = DEFAULT_HEARTBEAT_MS,
     fallbackPollMs = DEFAULT_FALLBACK_POLL_MS,
     reconnectBackoffMs = DEFAULT_RECONNECT_BACKOFF_MS,
@@ -43,15 +52,23 @@ export function createRoomEventBridge(options: RoomEventBridgeOptions): RoomEven
   let lastSyncAt = Date.now();
   let nextReconnectAt = 0;
   let networkOnline = typeof navigator === "undefined" ? true : navigator.onLine;
+  let connectionState: RoomConnectionState = networkOnline ? "connected" : "offline";
   const isOnline = () => networkOnline && navigator.onLine;
 
-  function closeSource() {
+  function setConnectionState(next: RoomConnectionState) {
+    if (connectionState === next) return;
+    connectionState = next;
+    onConnectionChange?.(next);
+  }
+
+  function closeSource(nextState?: RoomConnectionState) {
     if (source) {
       source.close();
       source = null;
     }
     sourceRoomCode = "";
     connected = false;
+    if (nextState) setConnectionState(nextState);
   }
 
   function triggerSync() {
@@ -84,7 +101,7 @@ export function createRoomEventBridge(options: RoomEventBridgeOptions): RoomEven
     }
     const active = getActiveRoom();
     if (!active || document.hidden || !isOnline() || typeof EventSource === "undefined") {
-      closeSource();
+      closeSource(!isOnline() ? "offline" : undefined);
       return;
     }
     if (source && sourceRoomCode === active.code) {
@@ -106,12 +123,14 @@ export function createRoomEventBridge(options: RoomEventBridgeOptions): RoomEven
       if (source !== es || signal.aborted) return;
       connected = true;
       nextReconnectAt = 0;
+      setConnectionState("connected");
     });
 
     es.addEventListener("rev", (event) => {
       if (source !== es || signal.aborted) return;
       connected = true;
       nextReconnectAt = 0;
+      setConnectionState("connected");
       let rev = 0;
       try {
         const parsed = JSON.parse((event as MessageEvent<string>).data) as { stateRev?: unknown };
@@ -133,11 +152,36 @@ export function createRoomEventBridge(options: RoomEventBridgeOptions): RoomEven
       }
     });
 
+    es.addEventListener("presence", (event) => {
+      if (source !== es || signal.aborted) return;
+      connected = true;
+      nextReconnectAt = 0;
+      setConnectionState("connected");
+      if (!onPresence) return;
+      try {
+        const parsed = JSON.parse((event as MessageEvent<string>).data) as {
+          positions?: ClaimSeatPosition[];
+          now?: number;
+        };
+        if (Array.isArray(parsed.positions) && typeof parsed.now === "number") {
+          const current = getActiveRoom();
+          if (!current || current.code !== active.code) {
+            closeSource();
+            return;
+          }
+          onPresence(parsed.positions, parsed.now);
+        }
+      } catch {
+        // Ignore malformed presence frames.
+      }
+    });
+
     es.addEventListener("error", () => {
       if (source !== es || signal.aborted) return;
       connected = false;
+      setConnectionState(isOnline() ? "polling" : "offline");
       if (es.readyState === EventSource.CLOSED) {
-        closeSource();
+        closeSource(isOnline() ? "polling" : "offline");
         nextReconnectAt = Date.now() + reconnectBackoffMs;
       }
     });
@@ -160,6 +204,7 @@ export function createRoomEventBridge(options: RoomEventBridgeOptions): RoomEven
   window.addEventListener("online", () => {
     networkOnline = true;
     if (signal.aborted || document.hidden) return;
+    setConnectionState("polling");
     nextReconnectAt = 0;
     ensureStream(true);
     triggerSync();
@@ -167,7 +212,7 @@ export function createRoomEventBridge(options: RoomEventBridgeOptions): RoomEven
 
   window.addEventListener("offline", () => {
     networkOnline = false;
-    closeSource();
+    closeSource("offline");
   }, { signal });
 
   document.addEventListener("visibilitychange", () => {
@@ -211,5 +256,6 @@ export function createRoomEventBridge(options: RoomEventBridgeOptions): RoomEven
     markSynced,
     destroy,
     isConnected: () => connected,
+    getConnectionState: () => connectionState,
   };
 }

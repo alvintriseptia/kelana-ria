@@ -1,6 +1,6 @@
 import { motionAllowed, playGameMotion } from "./game-motion";
 import type { RoomActivityEvent, RoomActivityFeed } from "@kelana-ria/contracts";
-import { createRoomActivityUi, renderRoomActivity } from "./room-activity";
+import { createRoomActivityUi, formatRelativeAge, freshnessBucket, renderRoomActivity } from "./room-activity";
 import type {
   LocationFix,
   GeoCoordinate,
@@ -22,7 +22,7 @@ import { fetchApiJson, resolvePlayerError, type PlayerErrorSurface, type PlayerE
 import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { clearActiveRoom, saveActiveRoom } from "./active-room-storage";
-import { createRoomEventBridge } from "./room-events";
+import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
 import { answerText, incomingQuestion, questionDeck, questionNames, questionOptions, rewardCard } from "./seek-game-panels";
 import "./rulebook-seek-play.css";
 
@@ -251,6 +251,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let mapKey = "";
   let mapRequest = 0;
   let mapConfigRequest: ReturnType<typeof fetchMapConfig> | undefined;
+  let connectionState: RoomConnectionState = typeof navigator === "undefined" || navigator.onLine ? "connected" : "offline";
   const roomEvents = createRoomEventBridge({
     signal: lifecycle.signal,
     getActiveRoom: () =>
@@ -259,6 +260,14 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         : null,
     isBusy: () => busy || actionPending,
     onSync: () => refreshRoom(false, true),
+    onConnectionChange: (state) => {
+      connectionState = state;
+      const pill = root.querySelector<HTMLElement>("[data-sg-conn-pill]");
+      if (pill) {
+        pill.hidden = state === "connected";
+        pill.textContent = state === "offline" ? "Luring · menunggu koneksi" : "Menyambungkan ulang…";
+      }
+    },
   });
   let clockBase = performance.now();
   let roomNow = 0;
@@ -402,11 +411,22 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       const text = clockText(Number(element.dataset.deadline) - now);
       if (element.textContent !== text) element.textContent = text;
     });
+    root.querySelectorAll<HTMLElement>("[data-activity-at]").forEach(element => {
+      const text = formatRelativeAge(Number(element.dataset.activityAt), now);
+      if (element.textContent !== text) element.textContent = text;
+    });
     const age = root.querySelector<HTMLElement>("#sg-position-age");
     if (age && room.seekerPosition) {
-      const seconds = Math.floor(Math.max(0, now - room.seekerPosition.at) / 1000);
-      const text = seconds < 10 ? "Baru saja" : seconds < 60 ? `${seconds} dtk lalu` : `${Math.floor(seconds / 60)} mnt lalu`;
+      const bucket = freshnessBucket(room.seekerPosition.at, now);
+      const text = formatRelativeAge(room.seekerPosition.at, now, true);
       if (age.textContent !== text) age.textContent = text;
+      if (age.dataset.freshness !== bucket) age.dataset.freshness = bucket;
+      const seekerPin = mapHost?.querySelector<HTMLElement>('[data-map-point="seeker"]');
+      if (seekerPin && seekerPin.dataset.freshness !== bucket) {
+        seekerPin.dataset.freshness = bucket;
+        seekerPin.classList.remove("board-map-pin-fresh", "board-map-pin-aging", "board-map-pin-stale");
+        seekerPin.classList.add(`board-map-pin-${bucket}`);
+      }
     }
   }
 
@@ -868,7 +888,19 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           .map(station => ({ ...point(station), selectable: canHide || room.role === "seeker", dimmed: candidates ? !candidates.has(station.id) : false,
             markerKind: "station" as const, markerText: station.id === room.ownAnchorStationId ? "◆" : "•",
             label: station.id === room.ownAnchorStationId ? "Lokasi terkunci" : undefined })),
-        ...(seeker ? [{ ...point({ ...seeker, id: "seeker", name: seeker.seatId === room.seatId ? "Kamu" : "Pencari" }), markerKind: "seeker" as const, markerText: "◎", label: "Check-in" }] : []),
+        ...(seeker
+          ? (() => {
+              const bucket = freshnessBucket(seeker.at, roomNow + performance.now() - clockBase);
+              return [{
+                ...point({ ...seeker, id: "seeker", name: seeker.seatId === room.seatId ? "Kamu" : "Pencari" }),
+                markerKind: "seeker" as const,
+                markerText: "◎",
+                label: "Check-in",
+                freshness: bucket,
+                dataAttrs: { "data-freshness": bucket },
+              }];
+            })()
+          : []),
         ...(thermometer ? [{ ...point({ ...thermometer.start, id: "thermometer-a", name: "Titik A" }), markerKind: "thermometer" as const, markerText: "A" }] : []),
         ...(thermometer?.end ? [{ ...point({ ...thermometer.end, id: "thermometer-b", name: "Titik B" }), markerKind: "thermometer" as const, markerText: "B" }] : []),
       ],
@@ -1086,7 +1118,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       </div>
 
       ${(room.outcome || room.phase === "regroup") && payload.activity.events.length
-        ? `<details class="rb-card rb-accordion"><summary>Aktivitas terbaru</summary>${renderRoomActivity(payload.activity)}</details>` : ""}
+        ? `<details class="rb-card rb-accordion"><summary>Aktivitas terbaru</summary>${renderRoomActivity(payload.activity, roomNow + performance.now() - clockBase)}</details>` : ""}
 
       ${payload.qa && !room.outcome ? `<section class="rb-card" aria-label="Kontrol QA">${renderQaControls(payload)}</section>` : ""}
 
@@ -1271,7 +1303,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
   function renderGamePanel(payload: RoomPayload, deal: boolean): string {
     const { room, deck, publicBoard } = payload;
-    if (panel === "activity") return renderRoomActivity(payload.activity);
+    if (panel === "activity") return renderRoomActivity(payload.activity, roomNow + performance.now() - clockBase);
     if (panel === "qa") return payload.qa ? renderQaControls(payload) : "";
     if (panel === "board") return renderBoardControls(payload) + renderCurses(payload);
     if (panel === "history") return `<h2 id="sg-panel-title" tabindex="-1">Riwayat petunjuk</h2>
@@ -1446,6 +1478,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       </div>
     </header>
     ${room.phase !== "head_start" ? `<p class="sg-location">${room.seekerPosition ? `${room.seekerPosition.seatId === room.seatId ? "Kamu" : "Pencari"} · ${station ? escapeText(station.name) : "Check-in terverifikasi"} · <span id="sg-position-age"></span>` : "Belum ada check-in pencari"}</p>` : ""}
+    <p class="sg-location" data-sg-conn-pill role="status" ${connectionState === "connected" ? "hidden" : ""}>${connectionState === "offline" ? "Luring · menunggu koneksi" : "Menyambungkan ulang…"}</p>
     ${hasMapResult && latest ? `<p class="sg-map-result" role="status">${questionNames[latest.family]} · ${escapeText(answerText(latest.answerLabel ?? ""))}</p>` : ""}`;
     dock.innerHTML = `${panel || activeScreenAlert || statusMsg ? `<section class="sg-sheet" aria-label="Panel permainan">
         ${activeScreenAlert}

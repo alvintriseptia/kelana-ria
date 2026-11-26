@@ -54,7 +54,24 @@
 }
 
 .room-activity-list li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
   border-bottom: 1px solid #b2c6bc;
   padding: 8px 0;
   overflow-wrap: anywhere;
+}
+
+.room-activity-text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.room-activity-age {
+  flex: 0 0 auto;
+  font-size: 0.74rem;
+  font-weight: 650;
+  color: #3d5f53;
+  white-space: nowrap;
 }

@@ -691,7 +691,189 @@ try {
   await pageCreator.getByRole("alert").filter({ hasText: "Edisi ini tidak tersedia" }).waitFor();
   await ctxCreator.close();
 
-  console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Unified Studio + One-Time Pack Ownership & Restore)");
+  // Live multiplayer Claim rival presence (SSE event: presence, freshness/stale cues, check-in fallback, polling fallback, activity timestamps, 390x844 & 320x640)
+  const presHostCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const presGuestCtx = await browser.newContext({ viewport: { width: 320, height: 640 } });
+  const presHostPage = await presHostCtx.newPage();
+  const presGuestPage = await presGuestCtx.newPage();
+  try {
+    // Allow Host to push simulated watchPosition updates and Guest to deny GPS + shift clock for staleness verification
+    await presHostPage.addInitScript(() => {
+      let cb = null;
+      window.__pushWatchFix = (latitude, longitude, accuracy = 10) => {
+        if (cb) cb({ coords: { latitude, longitude, accuracy }, timestamp: Date.now() });
+      };
+      Object.defineProperty(navigator, "geolocation", {
+        configurable: true,
+        value: {
+          watchPosition(success) {
+            cb = success;
+            return 1;
+          },
+          clearWatch() {
+            cb = null;
+          },
+          getCurrentPosition(success) {
+            success({ coords: { latitude: -6.2442, longitude: 106.7991, accuracy: 10 }, timestamp: Date.now() });
+          },
+        },
+      });
+    });
+    await presGuestPage.addInitScript(() => {
+      window.__clockSkewMs = 0;
+      const RealDateNow = Date.now.bind(Date);
+      Date.now = () => RealDateNow() + window.__clockSkewMs;
+      Object.defineProperty(navigator, "geolocation", {
+        configurable: true,
+        value: {
+          watchPosition(_success, error) {
+            error?.({ code: 1 });
+            return 1;
+          },
+          clearWatch() {},
+          getCurrentPosition(_success, error) {
+            error?.({ code: 1 });
+          },
+        },
+      });
+    });
+
+    const listingsRes = await presHostCtx.request.get(`${baseUrl}/api/rulebooks?format=claim-the-city`);
+    const officialClaim = (await listingsRes.json()).listings.find((l) => l.isOfficial && l.priceIdr === 0);
+    const createdPres = await presHostCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "create-free-room", packId: officialClaim.packId, version: officialClaim.version, mode: "group", hostName: "Alvin" },
+    });
+    const presCode = (await createdPres.json()).roomCode;
+    await presGuestCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "join-room", roomCode: presCode, name: "Dina" },
+    });
+
+    await presHostPage.goto(`${baseUrl}/?play=rulebook-claim&room=${presCode}`);
+    await presGuestPage.goto(`${baseUrl}/?play=rulebook-claim&room=${presCode}`);
+    await presHostPage.getByText("Lokasi dibagikan ke pemain di ruang selama ronde aktif.").waitFor();
+    assert.ok(await presGuestPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow in 320x640 Claim lobby");
+
+    // Start match via API for speed, then verify live active board
+    const roomMetaRes = await presHostCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${presCode}`);
+    const roomMeta = await roomMetaRes.json();
+    const sp = roomMeta.publicBoard.startPoint;
+    const lm0 = roomMeta.publicBoard.landmarks[0];
+    const lm1 = roomMeta.publicBoard.landmarks[1] ?? lm0;
+    const nowStart = roomMeta.room.now;
+    for (const [idx, ctx] of [presHostCtx, presGuestCtx].entries()) {
+      await ctx.request.post(`${baseUrl}/api/rulebooks`, {
+        data: { type: "room-action", roomCode: presCode, action: { type: "check-in-start", actionId: `p-ci-${idx}`, fix: { latitude: sp.latitude, longitude: sp.longitude, accuracy: 10, timestamp: nowStart } } },
+      });
+      await ctx.request.post(`${baseUrl}/api/rulebooks`, {
+        data: { type: "room-action", roomCode: presCode, action: { type: "ready", actionId: `p-rdy-${idx}`, ready: true } },
+      });
+    }
+    await presHostCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "room-action", roomCode: presCode, action: { type: "start", actionId: "p-start" } },
+    });
+
+    await presHostPage.locator("#rb-claim-map-host .maplibregl-canvas").waitFor();
+    await presGuestPage.locator("#rb-claim-map-host .maplibregl-canvas").waitFor();
+    await presGuestPage.evaluate(() => {
+      window.__guestCanvasRef = document.querySelector("#rb-claim-map-host .maplibregl-canvas");
+    });
+
+    // Track GET /api/rulebooks/rooms/${presCode} count on Guest while receiving live SSE presence
+    let guestRoomGetsDuringPresence = 0;
+    presGuestPage.on("request", (req) => {
+      if (req.method() === "GET" && req.url().includes(`/api/rulebooks/rooms/${presCode}`) && !req.url().endsWith("/events")) {
+        guestRoomGetsDuringPresence += 1;
+      }
+    });
+
+    // Host emits live GPS fix via watchPosition -> Guest receives rival pin in < 1.5s without GET refetch or canvas remount
+    const pingSentAt = Date.now();
+    await presHostPage.evaluate(({ lat, lng }) => window.__pushWatchFix(lat, lng, 12), {
+      lat: lm0.latitude + 0.00015,
+      lng: lm0.longitude - 0.00012,
+    });
+    const hostPinOnGuest = presGuestPage.locator('[data-rival-seat="seat-1"]');
+    await hostPinOnGuest.waitFor({ timeout: 2500 });
+    assert.ok(Date.now() - pingSentAt < 2500, "Rival pin must render quickly via SSE presence");
+    assert.equal(await hostPinOnGuest.getAttribute("data-freshness"), "fresh");
+    assert.equal(await hostPinOnGuest.getAttribute("data-source"), "gps");
+    assert.equal(guestRoomGetsDuringPresence, 0, "SSE presence update must not trigger redundant room GET refetch");
+    assert.equal(
+      await presGuestPage.evaluate(() => document.querySelector("#rb-claim-map-host .maplibregl-canvas") === window.__guestCanvasRef),
+      true,
+      "MapLibre canvas must update in-place without teardown on presence updates",
+    );
+
+    // Fold the bottom sheet on 320x640 so the map pin is unobstructed, then tap the rival pin -> opens rival card
+    await presGuestPage.locator('button[data-action="fold"]').click();
+    await hostPinOnGuest.click();
+    const rivalCard = presGuestPage.getByTestId("claim-rival-card");
+    await rivalCard.waitFor();
+    assert.match(await rivalCard.innerText(), /Alvin/);
+    assert.match(await rivalCard.innerText(), /Baru saja|dtk lalu/);
+    assert.ok(await presGuestPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on 320x640 with rival card open");
+
+    // Advance Guest's local clock by 3 minutes -> pin and rival card transition smoothly to stale ("Terakhir dilihat ...")
+    await presGuestPage.evaluate(() => {
+      window.__clockSkewMs = 185_000;
+    });
+    await presGuestPage.waitForFunction(() => {
+      const pin = document.querySelector('[data-rival-seat="seat-1"]');
+      return pin?.getAttribute("data-freshness") === "stale" && pin.classList.contains("board-map-pin-stale");
+    });
+    assert.match(await rivalCard.innerText(), /Terakhir dilihat 3 mnt lalu/);
+
+    // Guest has GPS denied -> verified landmark check-in populates source="checkin" pin on Host
+    const guestCiRes = await presGuestCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: {
+        type: "room-action",
+        roomCode: presCode,
+        action: {
+          type: "check-in-landmark",
+          actionId: "guest-fallback-ci",
+          landmarkId: lm1.id,
+          fix: { latitude: lm1.latitude, longitude: lm1.longitude, accuracy: 10, timestamp: now },
+        },
+      },
+    });
+    assert.equal(guestCiRes.status(), 200);
+    const guestPinOnHost = presHostPage.locator('[data-rival-seat="seat-2"]');
+    await guestPinOnHost.waitFor({ timeout: 2500 });
+    assert.equal(await guestPinOnHost.getAttribute("data-source"), "checkin");
+
+    // Check Aktivitas terbaru relative timestamps and Skor player positions on both 390x844 and 320x640
+    await presHostPage.locator('.sg-nav button[data-panel="score"]').click();
+    await presHostPage.getByRole("list", { name: "Posisi Pemain" }).waitFor();
+    assert.match(await presHostPage.getByRole("list", { name: "Posisi Pemain" }).innerText(), /Dina/);
+    await presHostPage.locator(".sg-room-menu summary").click();
+    await presHostPage.locator('.sg-room-menu-actions button[data-panel="activity"]').click();
+    await presHostPage.locator("[data-activity-at]").first().waitFor();
+    assert.match(await presHostPage.locator("[data-activity-at]").first().innerText(), /Baru saja|dtk lalu|mnt lalu/);
+    assert.ok(await presHostPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on 390x844 Claim activity panel");
+
+    // Abort /events on Guest -> polling fallback still picks up updated Host position
+    await presGuestPage.evaluate(() => {
+      window.__clockSkewMs = 0;
+    });
+    await presGuestCtx.route("**/events", (route) => route.abort("failed"));
+    await presGuestPage.reload();
+    await presGuestPage.locator("#rb-claim-map-host .maplibregl-canvas").waitFor();
+    now += 12_000;
+    const pollPing = await presHostCtx.request.post(`${baseUrl}/api/rulebooks/rooms/${presCode}/presence`, {
+      data: { fix: { latitude: lm1.latitude + 0.0002, longitude: lm1.longitude + 0.0002, accuracy: 10, timestamp: now } },
+    });
+    assert.equal(pollPing.status(), 200);
+    await presGuestPage.waitForFunction(
+      () => document.querySelector('[data-rival-seat="seat-1"]')?.getAttribute("data-source") === "gps",
+      undefined,
+      { timeout: 6000 },
+    );
+  } finally {
+    await presHostCtx.close();
+    await presGuestCtx.close();
+  }
+
+  console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Live Presence + Unified Studio + One-Time Pack Ownership & Restore)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
