@@ -311,6 +311,12 @@ export function rulebookRecapStore(db: DatabaseSync) {
   `);
   const insert = db.prepare("INSERT OR IGNORE INTO rulebook_recaps (match_id, completed_at, payload) VALUES (?, ?, ?)");
   const addParticipant = db.prepare("INSERT OR IGNORE INTO rulebook_recap_participants (credential_hash, match_id) VALUES (?, ?)");
+  const copyParticipants = db.prepare(
+    "INSERT OR IGNORE INTO rulebook_recap_participants (credential_hash, match_id) SELECT ?, match_id FROM rulebook_recap_participants WHERE credential_hash = ?",
+  );
+  const deleteParticipants = db.prepare(
+    "DELETE FROM rulebook_recap_participants WHERE credential_hash = ?",
+  );
   const read = db.prepare(`SELECT payload FROM rulebook_recaps JOIN rulebook_recap_participants USING (match_id)
     WHERE match_id = ? AND credential_hash = ?`);
   const list = db.prepare(`SELECT r.payload, s.share_id, s.published_at
@@ -479,6 +485,14 @@ export function rulebookRecapStore(db: DatabaseSync) {
     },
     has(matchId: string) {
       return Boolean(exists.get(matchId));
+    },
+    migrateParticipant(fromHash: string, toHash: string): number {
+      if (fromHash === toHash) return 0;
+      return runInTx(() => {
+        copyParticipants.run(toHash, fromHash);
+        const deleted = deleteParticipants.run(fromHash);
+        return Number(deleted.changes);
+      });
     },
   };
 }

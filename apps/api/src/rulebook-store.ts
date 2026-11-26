@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -186,21 +186,6 @@ export type ClaimPublicListing = {
 };
 
 export type RulebookPublicListing = HideSeekPublicListing | ClaimPublicListing;
-
-const RESTORE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
-const RESTORE_RATE_LIMIT_MAX = 5;
-const RESTORE_RATE_LIMIT_WINDOW_MS = 15 * 60_000;
-
-function generateRestoreCode(): string {
-  const part = () => Array.from({ length: 4 }, () => RESTORE_ALPHABET[randomInt(0, RESTORE_ALPHABET.length)]).join("");
-  return `KLR-${part()}-${part()}`;
-}
-
-function normalizeRestoreCode(raw: string): string | null {
-  const stripped = raw.trim().toUpperCase().replace(/[\s-]+/g, "");
-  if (!/^KLR[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{8}$/.test(stripped)) return null;
-  return `${stripped.slice(0, 3)}-${stripped.slice(3, 7)}-${stripped.slice(7, 11)}`;
-}
 
 export type RoomStreamEvent =
   | { type: "rev"; stateRev: number; now: number }
@@ -443,9 +428,8 @@ export function rulebookStore(
       pack_id TEXT NOT NULL,
       order_id TEXT UNIQUE NOT NULL,
       owner_hash TEXT NOT NULL,
-      restore_code_hash TEXT UNIQUE NOT NULL,
       created_at INTEGER NOT NULL,
-      restored_at INTEGER
+      UNIQUE (owner_hash, pack_id)
     );
     CREATE INDEX IF NOT EXISTS idx_rulebook_entitlements_owner_pack
       ON rulebook_entitlements (owner_hash, pack_id);
@@ -491,6 +475,7 @@ export function rulebookStore(
   `);
   const getVersionStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE pack_id = ? AND version = ?");
   const listVersionsStmt = db.prepare("SELECT payload FROM rulebook_versions ORDER BY is_official DESC, pack_id ASC, version DESC");
+  const listVersionsByOwnerStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE owner_hash = ? AND is_official = 0");
   const latestVersionStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE pack_id = ? ORDER BY version DESC LIMIT 1");
   const upsertOrderStmt = db.prepare(`
     INSERT INTO rulebook_orders (order_id, buyer_hash, pack_id, version, payload)
@@ -503,6 +488,8 @@ export function rulebookStore(
   `);
   const getOrderStmt = db.prepare("SELECT payload, buyer_hash FROM rulebook_orders WHERE order_id = ?");
   const listOrdersStmt = db.prepare("SELECT payload FROM rulebook_orders ORDER BY order_id DESC");
+  const migrateOrdersStmt = db.prepare("UPDATE rulebook_orders SET buyer_hash = ? WHERE buyer_hash = ?");
+  const migratePendingOrdersStmt = db.prepare("UPDATE rulebook_pending_orders SET buyer_hash = ? WHERE buyer_hash = ?");
   const getEarningByOrderStmt = db.prepare("SELECT payload FROM rulebook_earnings WHERE order_id = ?");
   const insertEarningStmt = db.prepare("INSERT OR IGNORE INTO rulebook_earnings (earnings_entry_id, order_id, pack_id, version, payload) VALUES (?, ?, ?, ?, ?)");
   const listEarningsStmt = db.prepare("SELECT payload FROM rulebook_earnings ORDER BY earnings_entry_id DESC");
@@ -511,25 +498,24 @@ export function rulebookStore(
   const insertPassStmt = db.prepare("INSERT OR IGNORE INTO rulebook_passes (pass_id, order_id, room_code, payload) VALUES (?, ?, ?, ?)");
 
   const insertEntitlementStmt = db.prepare(`
-    INSERT INTO rulebook_entitlements (entitlement_id, pack_id, order_id, owner_hash, restore_code_hash, created_at, restored_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO rulebook_entitlements (entitlement_id, pack_id, order_id, owner_hash, created_at)
+    VALUES (?, ?, ?, ?, ?)
   `);
   const getEntitlementByOrderStmt = db.prepare(
-    "SELECT entitlement_id, pack_id, order_id, owner_hash, created_at, restored_at FROM rulebook_entitlements WHERE order_id = ?",
+    "SELECT entitlement_id, pack_id, order_id, owner_hash, created_at FROM rulebook_entitlements WHERE order_id = ?",
   );
   const getEntitlementByOwnerPackStmt = db.prepare(
-    "SELECT entitlement_id, pack_id, order_id, owner_hash, created_at, restored_at FROM rulebook_entitlements WHERE owner_hash = ? AND pack_id = ? ORDER BY created_at DESC LIMIT 1",
-  );
-  const getEntitlementByCodeHashStmt = db.prepare(
-    "SELECT entitlement_id, pack_id, order_id, owner_hash, created_at, restored_at FROM rulebook_entitlements WHERE restore_code_hash = ?",
+    "SELECT entitlement_id, pack_id, order_id, owner_hash, created_at FROM rulebook_entitlements WHERE owner_hash = ? AND pack_id = ? ORDER BY created_at DESC LIMIT 1",
   );
   const listEntitlementsByOwnerStmt = db.prepare(
-    "SELECT entitlement_id, pack_id, order_id, created_at, restored_at FROM rulebook_entitlements WHERE owner_hash = ? ORDER BY created_at DESC",
+    "SELECT entitlement_id, pack_id, order_id, created_at FROM rulebook_entitlements WHERE owner_hash = ? ORDER BY created_at DESC",
   );
-  const rebindEntitlementOwnerStmt = db.prepare(
-    "UPDATE rulebook_entitlements SET owner_hash = ?, restored_at = ? WHERE entitlement_id = ?",
+  const transferEntitlementOwnerStmt = db.prepare(
+    "UPDATE rulebook_entitlements SET owner_hash = ? WHERE entitlement_id = ?",
   );
-  const restoreFailuresByCred = new Map<string, number[]>();
+  const deleteEntitlementByIdStmt = db.prepare(
+    "DELETE FROM rulebook_entitlements WHERE entitlement_id = ?",
+  );
 
   const getLiveRoomStmt = db.prepare("SELECT 1 FROM rulebook_live_rooms WHERE room_code = ?");
   const deleteLiveRoomStmt = db.prepare("DELETE FROM rulebook_live_rooms WHERE room_code = ?");
@@ -948,7 +934,6 @@ export function rulebookStore(
     order_id: string;
     owner_hash?: string;
     created_at: number;
-    restored_at: number | null;
   };
 
   function findActiveRoomForEntitlement(entitlementId: string, orderId: string, currentNow: number): string | null {
@@ -975,7 +960,6 @@ export function rulebookStore(
       packId: row.pack_id,
       orderId: row.order_id,
       purchasedAt: row.created_at,
-      restoredAt: row.restored_at ?? null,
       activeRoomCode: findActiveRoomForEntitlement(row.entitlement_id, row.order_id, currentNow),
     }));
   }
@@ -1274,7 +1258,6 @@ export function rulebookStore(
         duplicate: boolean;
         order: PackOrderSummary;
         pass?: RulebookRoomPass;
-        restoreCode?: string;
         entitlement?: RulebookEntitlementSummary;
       }
     | { ok: false; error: string }
@@ -1355,26 +1338,17 @@ export function rulebookStore(
       const rec = getRecord(freshOrder.packId, freshOrder.version);
       if (!rec) return { ok: false as const, error: "pack-not-found" };
 
-      const existingEntitlement = getEntitlementByOrderStmt.get(orderId) as EntitlementRow | undefined;
+      const existingEntitlement = (getEntitlementByOrderStmt.get(orderId) ??
+        getEntitlementByOwnerPackStmt.get(freshRow.buyer_hash, rec.packId)) as EntitlementRow | undefined;
       let entitlementId = existingEntitlement?.entitlement_id;
-      let restoreCode: string | undefined;
       if (!entitlementId) {
         entitlementId = `ent-${randomBytes(6).toString("hex")}`;
-        let candidate: string;
-        let candidateHash: string;
-        do {
-          candidate = generateRestoreCode();
-          candidateHash = digest(candidate);
-        } while (getEntitlementByCodeHashStmt.get(candidateHash));
-        restoreCode = candidate;
         insertEntitlementStmt.run(
           entitlementId,
           rec.packId,
           orderId,
           freshRow.buyer_hash,
-          candidateHash,
           now,
-          null,
         );
       }
 
@@ -1417,7 +1391,6 @@ export function rulebookStore(
         packId: rec.packId,
         orderId,
         purchasedAt: existingEntitlement?.created_at ?? now,
-        restoredAt: existingEntitlement?.restored_at ?? null,
         activeRoomCode: pass.roomCode,
       };
       return {
@@ -1425,68 +1398,75 @@ export function rulebookStore(
         duplicate: false,
         order: freshOrder,
         pass,
-        ...(restoreCode ? { restoreCode } : {}),
         entitlement,
       };
     });
   }
 
-  function restoreEntitlement(
-    credential: string,
-    rawRestoreCode: string,
+  function migrateOwner(
+    fromCredential: string,
+    toCredential: string,
     now: number,
-  ):
-    | {
-        ok: true;
-        packId: string;
-        orderId: string;
-        restoredAt: number;
-        ownedPackIds: string[];
-        entitlements: RulebookEntitlementSummary[];
-      }
-    | { ok: false; error: string } {
-    const callerHash = digest(credential);
-    const recentFailures = (restoreFailuresByCred.get(callerHash) ?? []).filter(
-      (ts) => now - ts < RESTORE_RATE_LIMIT_WINDOW_MS,
-    );
-    if (recentFailures.length >= RESTORE_RATE_LIMIT_MAX) {
-      restoreFailuresByCred.set(callerHash, recentFailures);
-      return { ok: false, error: "restore-rate-limited" };
+  ): { migrated: boolean; entitlements: number; drafts: number; recaps: number; rooms: number } {
+    const fromHash = digest(fromCredential);
+    const toHash = digest(toCredential);
+    if (fromHash === toHash) {
+      return { migrated: false, entitlements: 0, drafts: 0, recaps: 0, rooms: 0 };
     }
-    const recordFailure = () => {
-      recentFailures.push(now);
-      restoreFailuresByCred.set(callerHash, recentFailures);
-    };
-
-    const normalized = normalizeRestoreCode(rawRestoreCode);
-    if (!normalized) {
-      recordFailure();
-      return { ok: false, error: "invalid-restore-code" };
-    }
-    const codeHash = digest(normalized);
-
     return transact(() => {
-      const row = getEntitlementByCodeHashStmt.get(codeHash) as EntitlementRow | undefined;
-      if (!row) {
-        recordFailure();
-        return { ok: false as const, error: "invalid-restore-code" };
-      }
-      if (row.owner_hash !== callerHash) {
-        const existingForPack = getEntitlementByOwnerPackStmt.get(callerHash, row.pack_id) as EntitlementRow | undefined;
-        if (existingForPack) {
-          return { ok: false as const, error: "pack-already-owned" };
+      let entitlements = 0;
+      const guestEntitlements = listEntitlementsByOwnerStmt.all(fromHash) as EntitlementRow[];
+      for (const row of guestEntitlements) {
+        const alreadyOwned = getEntitlementByOwnerPackStmt.get(toHash, row.pack_id) as EntitlementRow | undefined;
+        if (alreadyOwned) {
+          deleteEntitlementByIdStmt.run(row.entitlement_id);
+        } else {
+          transferEntitlementOwnerStmt.run(toHash, row.entitlement_id);
+          entitlements += 1;
         }
       }
-      rebindEntitlementOwnerStmt.run(callerHash, now, row.entitlement_id);
-      const ownership = getCallerOwnership(credential, now);
-      return {
-        ok: true as const,
-        packId: row.pack_id,
-        orderId: row.order_id,
-        restoredAt: now,
-        ownedPackIds: ownership.ownedPackIds,
-        entitlements: ownership.entitlements,
-      };
+
+      let drafts = 0;
+      const guestVersions = (listVersionsByOwnerStmt.all(fromHash) as { payload: string }[]).map(
+        (row) => JSON.parse(row.payload) as StoredRulebookRecord,
+      );
+      for (const rec of guestVersions) {
+        rec.ownerHash = toHash;
+        saveRecord(rec);
+        drafts += 1;
+      }
+
+      const migratedOrders = Number(migrateOrdersStmt.run(toHash, fromHash).changes);
+      migratePendingOrdersStmt.run(toHash, fromHash);
+      onCommit(() => {
+        for (const [id, entry] of pendingOrderRecords) {
+          if (entry.buyerHash === fromHash) {
+            pendingOrderRecords.set(id, { ...entry, buyerHash: toHash });
+          }
+        }
+      });
+
+      const migratedRecaps = recaps.migrateParticipant(fromHash, toHash);
+
+      let rooms = 0;
+      for (const session of liveRooms.values()) {
+        const seats = session.match.seats;
+        const alreadyInRoom = seats.some((s) => s.credentialHash === toHash);
+        let roomChanged = false;
+        for (const seat of seats) {
+          if (seat.credentialHash === fromHash && !alreadyInRoom) {
+            seat.credentialHash = toHash;
+            roomChanged = true;
+          }
+        }
+        if (roomChanged) {
+          persistLiveSession(session, now, false);
+          rooms += 1;
+        }
+      }
+
+      const migrated = entitlements > 0 || drafts > 0 || migratedOrders > 0 || migratedRecaps > 0 || rooms > 0;
+      return { migrated, entitlements, drafts, recaps: migratedRecaps, rooms };
     });
   }
 
@@ -2267,7 +2247,7 @@ export function rulebookStore(
     reviewVersion,
     createFreeRoomFromRulebook,
     createOwnedRoomFromRulebook,
-    restoreEntitlement,
+    migrateOwner,
     createOrder,
     viewCatalogOrder,
     settleVerifiedOrder,

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,8 +13,10 @@ async function startServer(databasePath, clockRef, midtrans = api.createRecorded
     databasePath,
     now: () => clockRef.now,
     midtrans,
+    emailAdapter: api.createRecordedEmailOtpAdapter(),
     allowRulebookSandboxCheckout: true,
     allowHideSeekQa: true,
+    allowSandboxAuthOtp: true,
     rulebookReviewerKey: "entitlement-reviewer-key",
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -23,55 +24,83 @@ async function startServer(databasePath, clockRef, midtrans = api.createRecorded
   return { server, baseUrl, midtrans };
 }
 
-function makeClient(baseUrl, initialCookie = "") {
-  let cookie = initialCookie;
+function makeClient(baseUrl, initialCookies = {}) {
+  const cookies = new Map(Object.entries(initialCookies));
+  function mergeCookies(res) {
+    const rawList = typeof res.headers.getSetCookie === "function"
+      ? res.headers.getSetCookie()
+      : res.headers.get("set-cookie")
+        ? [res.headers.get("set-cookie")]
+        : [];
+    for (const raw of rawList) {
+      const [pair] = raw.split(";");
+      const eq = pair.indexOf("=");
+      if (eq < 0) continue;
+      const name = pair.slice(0, eq).trim();
+      const value = pair.slice(eq + 1).trim();
+      if (!value || /Max-Age=0/i.test(raw)) cookies.delete(name);
+      else cookies.set(name, value);
+    }
+  }
+  function cookieHeader() {
+    return [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
   return {
-    get cookie() {
-      return cookie;
+    get cookieMap() {
+      return Object.fromEntries(cookies);
+    },
+    async signIn(email, displayName) {
+      const req = await this.post("/api/auth/request-otp", { email });
+      assert.equal(req.status, 200, JSON.stringify(req.body));
+      const ver = await this.post("/api/auth/verify-otp", {
+        challengeId: req.body.challengeId,
+        code: req.body.sandboxCode,
+        ...(displayName ? { displayName } : {}),
+      });
+      assert.equal(ver.status, 200, JSON.stringify(ver.body));
+      return ver.body;
     },
     async get(path, extraHeaders = {}) {
+      const hdr = cookieHeader();
       const res = await fetch(`${baseUrl}${path}`, {
-        headers: { ...(cookie ? { cookie } : {}), ...extraHeaders },
+        headers: { ...(hdr ? { cookie: hdr } : {}), ...extraHeaders },
       });
-      const setCookie = res.headers.get("set-cookie");
-      if (setCookie) cookie = setCookie.split(";")[0];
+      mergeCookies(res);
       return { status: res.status, headers: res.headers, body: await res.json() };
     },
     async post(path, body, extraHeaders = {}) {
+      const hdr = cookieHeader();
       const res = await fetch(`${baseUrl}${path}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(cookie ? { cookie } : {}),
+          ...(hdr ? { cookie: hdr } : {}),
           ...extraHeaders,
         },
         body: JSON.stringify(body),
       });
-      const setCookie = res.headers.get("set-cookie");
-      if (setCookie) cookie = setCookie.split(";")[0];
+      mergeCookies(res);
       return { status: res.status, headers: res.headers, body: await res.json() };
     },
   };
 }
 
-test("Paid pack settlement grants durable one-time ownership with hashed restore code, replayable Solo/Group rooms, 1-active-room guard, and restart persistence", async (t) => {
+test("Paid pack settlement grants durable account-bound ownership, replayable Solo/Group rooms, 1-active-room guard, and cross-device persistence across restarts", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "kelana-entitlements-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const dbPath = join(dir, "entitlements.sqlite");
   const clock = { now: T0 };
 
   const packId = "comm-owned-claim-v1";
-  let restoreCode;
   let orderId;
   let room1Code;
-  let buyerCookie;
-  let creatorCookie;
+  let buyerCookies;
+  let creatorCookies;
 
-  // Phase 1: Creator publishes v1 and v2 of a paid Claim pack; Buyer purchases once via Midtrans
+  // Phase 1: Signed-in creator publishes v1 and v2; signed-in buyer purchases once via Midtrans
   {
     const { server, baseUrl, midtrans } = await startServer(dbPath, clock);
     try {
-      // Verify SQLite WAL + synchronous=FULL (2)
       const inspectDb = new DatabaseSync(dbPath, { timeout: 5000 });
       try {
         assert.equal(String(inspectDb.prepare("PRAGMA journal_mode").get().journal_mode).toLowerCase(), "wal");
@@ -82,9 +111,10 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
       }
 
       const creator = makeClient(baseUrl);
+      await creator.signIn("creator-ent@kelana.test", "Studio Selatan");
       const buyer = makeClient(baseUrl);
+      await buyer.signIn("buyer-ent@kelana.test", "Pembeli Satu");
 
-      // Publish v1 (paid, supports both solo and group because cloned from official-jakarta-compact-claim)
       const cloned = await creator.post("/api/rulebooks", {
         type: "clone-official",
         templatePackId: "official-jakarta-compact-claim",
@@ -100,7 +130,6 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
         200,
       );
 
-      // Publish v2 of the same packId
       const v2Pack = structuredClone(cloned.body.record.pack);
       v2Pack.meta.version = 2;
       v2Pack.meta.title = "Tur Blok M Premium v2";
@@ -115,7 +144,7 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
         (await creator.post("/api/rulebooks", { type: "publish-version", packId, version: 2 }, { authorization: "Bearer entitlement-reviewer-key" })).status,
         200,
       );
-      creatorCookie = creator.cookie;
+      creatorCookies = creator.cookieMap;
 
       // Non-owner cannot launch paid pack for free
       const deniedPlay = await buyer.post("/api/rulebooks/catalog", {
@@ -128,7 +157,7 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
       assert.equal(deniedPlay.status, 400);
       assert.equal(deniedPlay.body.error, "payment-required");
 
-      // Buyer creates order and settles via Midtrans webhook
+      // Buyer creates order and settles via Midtrans sandbox
       const buyRes = await buyer.post("/api/rulebooks/catalog", {
         type: "buy",
         edition: packId,
@@ -138,7 +167,7 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
       });
       assert.equal(buyRes.status, 200);
       orderId = buyRes.body.order.orderId;
-      buyerCookie = buyer.cookie;
+      buyerCookies = buyer.cookieMap;
 
       const settled = await buyer.post("/api/rulebooks/catalog", {
         type: "simulate-payment",
@@ -151,26 +180,22 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
       assert.equal(settled.body.ok, true);
       assert.equal(settled.body.duplicate, false);
       assert.ok(settled.body.pass?.roomCode);
-      assert.match(settled.body.restoreCode, /^KLR-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTUVWXYZ]{4}$/);
-      restoreCode = settled.body.restoreCode;
+      assert.equal(settled.body.restoreCode, undefined, "Superseded restoreCode must not be emitted");
       room1Code = settled.body.pass.roomCode;
 
-      // Duplicate Midtrans webhook delivery stays idempotent: 1 entitlement, 1 earning, no plaintext restoreCode re-exposed
+      // Duplicate Midtrans webhook delivery stays idempotent: 1 entitlement, 1 earning
       const webhookPayload = midtrans.signNotification({ orderId, transactionStatus: "settlement", grossAmount: "25000.00" });
       const dupWebhook = await makeClient(baseUrl).post("/api/rulebooks/midtrans-notification", webhookPayload);
       assert.equal(dupWebhook.status, 200);
       assert.equal(dupWebhook.body.duplicate, true);
       assert.equal(dupWebhook.body.restoreCode, undefined);
 
-      // Verify SQLite stores SHA-256 hash ONLY (never plaintext restore code), 1 entitlement row, 1 earnings row
       const inspectDb2 = new DatabaseSync(dbPath, { timeout: 5000 });
       try {
         const entRows = inspectDb2.prepare("SELECT * FROM rulebook_entitlements").all();
         assert.equal(entRows.length, 1);
         assert.equal(entRows[0].pack_id, packId);
         assert.equal(entRows[0].order_id, orderId);
-        assert.equal(entRows[0].restore_code_hash, createHash("sha256").update(restoreCode).digest("hex"));
-        assert.equal(JSON.stringify(entRows).includes(restoreCode), false);
         const earnCount = inspectDb2.prepare("SELECT count(*) AS count FROM rulebook_earnings").get().count;
         assert.equal(earnCount, 1);
       } finally {
@@ -188,7 +213,7 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
       assert.equal(doubleBuy.status, 409);
       assert.equal(doubleBuy.body.error, "pack-already-owned");
 
-      // Caller-scoped ownership exposed on GET /api/rulebooks/catalog and GET /api/rulebooks without secrets
+      // Caller-scoped ownership exposed on GET /api/rulebooks/catalog and GET /api/rulebooks
       const buyerCatalog = await buyer.get("/api/rulebooks/catalog");
       assert.equal(buyerCatalog.status, 200);
       assert.deepEqual(buyerCatalog.body.ownedPackIds, [packId]);
@@ -196,9 +221,6 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
       assert.equal(buyerCatalog.body.entitlements[0].packId, packId);
       assert.equal(buyerCatalog.body.entitlements[0].orderId, orderId);
       assert.equal(buyerCatalog.body.entitlements[0].activeRoomCode, room1Code);
-      const codeHash = createHash("sha256").update(restoreCode).digest("hex");
-      assert.equal(JSON.stringify(buyerCatalog.body).includes(restoreCode), false);
-      assert.equal(JSON.stringify(buyerCatalog.body).includes(codeHash), false);
 
       const buyerPublicList = await buyer.get("/api/rulebooks");
       assert.deepEqual(buyerPublicList.body.ownedPackIds, [packId]);
@@ -206,8 +228,6 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
 
       const writerView = await creator.get("/api/rulebooks?role=writer");
       assert.deepEqual(writerView.body.ownedPackIds, []);
-      assert.equal(JSON.stringify(writerView.body).includes(restoreCode), false);
-      assert.equal(JSON.stringify(writerView.body).includes(codeHash), false);
 
       // Anonymous visitor sees empty ownership
       const anonCatalog = await makeClient(baseUrl).get("/api/rulebooks/catalog");
@@ -243,6 +263,7 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
       );
       assert.equal(pauseV1.status, 200);
       const blockedBuyer = makeClient(baseUrl);
+      await blockedBuyer.signIn("blocked-buyer@kelana.test", "Pembeli Dua");
       const buyPaused = await blockedBuyer.post("/api/rulebooks/catalog", {
         type: "buy",
         edition: packId,
@@ -259,11 +280,11 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
 
   // Phase 2: Restart server against the exact same SQLite file!
   {
-    clock.now = T0 + 30_000;
+    clock.now = T0 + 120_000;
     const { server, baseUrl } = await startServer(dbPath, clock);
     try {
-      const buyer = makeClient(baseUrl, buyerCookie);
-      const creator = makeClient(baseUrl, creatorCookie);
+      const buyer = makeClient(baseUrl, buyerCookies);
+      const creator = makeClient(baseUrl, creatorCookies);
 
       // Ownership survived restart; activeRoomCode is null since room #1 ended
       const catAfterRestart = await buyer.get("/api/rulebooks/catalog");
@@ -310,33 +331,18 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
       const writerAfter = await creator.get("/api/rulebooks?role=writer");
       assert.equal(writerAfter.body.earnings.length, 1);
 
-      // Exit room #2 so we can test cross-device restore cleanly
+      // Exit room #2 so a brand-new phone signing in with the same email can launch room #3 cleanly
       await buyer.post("/api/rulebooks", {
         type: "room-action",
         roomCode: room2Code,
         action: { type: "leave", actionId: "leave-room-2" },
       });
 
-      // Phase 3: Brand-new device (fresh cookie) restores pack using normalized restore code (lowercase + spaces)!
+      // Phase 3: Brand-new isolated device signs in with the same email -> owns pack automatically!
       const newPhone = makeClient(baseUrl);
-      // Invalid code rejected consistently
-      const badRestore = await newPhone.post("/api/rulebooks/entitlements/restore", { restoreCode: "not-a-valid-code" });
-      assert.equal(badRestore.status, 400);
-      assert.equal(badRestore.body.error, "invalid-restore-code");
-
-      const messyCode = `  ${restoreCode.toLowerCase().replace(/-/g, "  ")} `;
-      const restored = await newPhone.post("/api/rulebooks/entitlements/restore", { restoreCode: messyCode });
-      assert.equal(restored.status, 200);
-      assert.equal(restored.body.ok, true);
-      assert.equal(restored.body.packId, packId);
-      assert.equal(restored.body.orderId, orderId);
-      assert.equal(restored.body.restoredAt, clock.now);
-      assert.deepEqual(restored.body.ownedPackIds, [packId]);
-      assert.equal(JSON.stringify(restored.body).includes(restoreCode), false);
-
-      // Old device no longer owns the pack; new device launches room #3 in Group mode!
-      const oldPhoneCatalog = await buyer.get("/api/rulebooks/catalog");
-      assert.deepEqual(oldPhoneCatalog.body.ownedPackIds, []);
+      await newPhone.signIn("BUYER-ENT@KELANA.TEST");
+      const newPhoneCat = await newPhone.get("/api/rulebooks/catalog");
+      assert.deepEqual(newPhoneCat.body.ownedPackIds, [packId]);
 
       const room3Res = await newPhone.post("/api/rulebooks", {
         type: "create-owned-room",
@@ -351,24 +357,19 @@ test("Paid pack settlement grants durable one-time ownership with hashed restore
       assert.equal(room3Res.body.room.isSolo, false);
       assert.equal(room3Res.body.pass.paid, true);
 
-      // Brute-force protection: rate limit invalid restore attempts from an attacker credential
-      const attacker = makeClient(baseUrl);
-      for (let i = 0; i < 5; i++) {
-        const attempt = await attacker.post("/api/rulebooks/entitlements/restore", {
-          restoreCode: `KLR-2345-678${RESTORE_DIGITS[i]}`,
-        });
-        assert.equal(attempt.status, 400);
-        assert.equal(attempt.body.error, "invalid-restore-code");
-      }
-      const blocked = await attacker.post("/api/rulebooks/entitlements/restore", {
-        restoreCode,
+      // Concurrency anti-sharing guard still applies across devices signed into the same account!
+      const concurrentOldPhone = await buyer.post("/api/rulebooks/catalog", {
+        type: "play",
+        edition: packId,
+        version: 2,
+        mode: "solo",
+        requestId: "req-old-phone-concurrent-0001",
       });
-      assert.equal(blocked.status, 429);
-      assert.equal(blocked.body.error, "restore-rate-limited");
+      assert.equal(concurrentOldPhone.status, 409);
+      assert.equal(concurrentOldPhone.body.error, "entitlement-active-room-exists");
+      assert.equal(concurrentOldPhone.body.roomCode, room3Res.body.roomCode);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
   }
 });
-
-const RESTORE_DIGITS = ["A", "B", "C", "D", "E"];

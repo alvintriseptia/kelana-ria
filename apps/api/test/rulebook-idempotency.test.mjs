@@ -11,6 +11,7 @@ async function startServer(nowRef) {
     midtrans: api.createRecordedMidtransAdapter(),
     allowRulebookSandboxCheckout: true,
     allowHideSeekQa: true,
+    allowSandboxAuthOtp: true,
     rulebookReviewerKey: "test-reviewer-key",
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -19,28 +20,47 @@ async function startServer(nowRef) {
 }
 
 function makeClient(baseUrl) {
-  let cookie = "";
+  const cookies = new Map();
+  function mergeCookies(res) {
+    const rawList = typeof res.headers.getSetCookie === "function"
+      ? res.headers.getSetCookie()
+      : res.headers.get("set-cookie")
+        ? [res.headers.get("set-cookie")]
+        : [];
+    for (const raw of rawList) {
+      const [pair] = raw.split(";");
+      const eq = pair.indexOf("=");
+      if (eq < 0) continue;
+      const name = pair.slice(0, eq).trim();
+      const value = pair.slice(eq + 1).trim();
+      if (!value || /Max-Age=0/i.test(raw)) cookies.delete(name);
+      else cookies.set(name, value);
+    }
+  }
+  function cookieHeader() {
+    return [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
   return {
     async get(path) {
+      const hdr = cookieHeader();
       const res = await fetch(`${baseUrl}${path}`, {
-        headers: cookie ? { cookie } : undefined,
+        headers: hdr ? { cookie: hdr } : undefined,
       });
-      const setCookie = res.headers.get("set-cookie");
-      if (setCookie) cookie = setCookie.split(";")[0];
+      mergeCookies(res);
       return { status: res.status, body: await res.json() };
     },
     async post(path, body, extraHeaders = {}) {
+      const hdr = cookieHeader();
       const res = await fetch(`${baseUrl}${path}`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(cookie ? { cookie } : {}),
+          ...(hdr ? { cookie: hdr } : {}),
           ...extraHeaders,
         },
         body: JSON.stringify(body),
       });
-      const setCookie = res.headers.get("set-cookie");
-      if (setCookie) cookie = setCookie.split(";")[0];
+      mergeCookies(res);
       return { status: res.status, body: await res.json() };
     },
   };
@@ -69,6 +89,15 @@ test("POST /api/rulebooks create-free-room and create-order deduplicate retries 
     assert.equal(r1.status, 200);
     assert.equal(r2.status, 200);
     assert.equal(r1.body.roomCode, r2.body.roomCode, "Retried create-free-room must not create a second room");
+
+    // Sign in before Studio authoring and paid checkout
+    const otpReq = await client.post("/api/auth/request-otp", { email: "idemp@kelana.test" });
+    assert.equal(otpReq.status, 200);
+    const otpVer = await client.post("/api/auth/verify-otp", {
+      challengeId: otpReq.body.challengeId,
+      code: otpReq.body.sandboxCode,
+    });
+    assert.equal(otpVer.status, 200);
 
     // Publish a paid pack and confirm create-order deduplicates by requestId
     const cloned = await client.post("/api/rulebooks", {

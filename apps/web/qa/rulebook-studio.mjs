@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
-import { buyPublishedDraft, openDraft, openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
+import { buyPublishedDraft, openDraft, openReview, reviewerKey, signInQaContext, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -18,6 +18,7 @@ const server = createSoloServer({
   midtrans: createRecordedMidtransAdapter(),
   allowSimulatedLocation: true,
   allowRulebookSandboxCheckout: true,
+  allowSandboxAuthOtp: true,
   rulebookReviewerKey: reviewerKey,
 });
 
@@ -132,6 +133,7 @@ async function checkValidationSpacing(page, format) {
 
 try {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await signInQaContext(ctx, baseUrl, "studio-creator@kelana.test", "Kreator Studio");
   const page = await ctx.newPage();
 
   await page.goto(baseUrl, { waitUntil: "networkidle" });

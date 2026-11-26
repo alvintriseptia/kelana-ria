@@ -3,30 +3,47 @@ import { test } from "node:test";
 import { createSoloServer } from "../dist/index.js";
 
 async function studioServer(t, key) {
-  const server = createSoloServer({ databasePath: ":memory:", rulebookReviewerKey: key });
+  const server = createSoloServer({
+    databasePath: ":memory:",
+    rulebookReviewerKey: key,
+    allowSandboxAuthOtp: true,
+  });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const endpoint = `http://127.0.0.1:${server.address().port}/api/rulebooks`;
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  const endpoint = `${baseUrl}/api/rulebooks`;
   const get = (query = "", headers) => fetch(endpoint + query, { headers });
   const post = (body, headers) => fetch(endpoint, {
     method: "POST",
     headers: { ...headers, "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  return { get, post };
+  const signIn = async (email) => {
+    const req = await fetch(`${baseUrl}/api/auth/request-otp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    assert.equal(req.status, 200);
+    const { challengeId, sandboxCode } = await req.json();
+    const ver = await fetch(`${baseUrl}/api/auth/verify-otp`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ challengeId, code: sandboxCode }),
+    });
+    assert.equal(ver.status, 200);
+    return { cookie: ver.headers.get("set-cookie").split(";")[0] };
+  };
+  return { get, post, signIn };
 }
 
 test("rulebook Studio scopes draft ownership and independently authorizes editorial actions", async t => {
   const key = "rulebook-review-test-fixture";
-  const { get, post } = await studioServer(t, key);
+  const { get, post, signIn } = await studioServer(t, key);
   const reviewer = { authorization: `Bearer ${key}` };
-  const writer = async () => {
-    const response = await get("?role=writer");
-    assert.equal(response.status, 200);
-    return { cookie: response.headers.get("set-cookie").split(";")[0] };
-  };
-  const owner = await writer();
-  const outsider = await writer();
+  assert.equal((await get("?role=writer")).status, 401);
+  const owner = await signIn("studio-owner@kelana.test");
+  const outsider = await signIn("studio-outsider@kelana.test");
   const clone = {
     type: "clone-official", templatePackId: "official-jakarta-compact-claim",
     packId: "test-creator-owned", title: "Studio private draft", byline: "Test Creator", priceIdr: 0,
@@ -64,8 +81,9 @@ test("rulebook Studio scopes draft ownership and independently authorizes editor
 });
 
 test("rulebook editorial access is disabled when the server has no reviewer key", async t => {
-  const { get, post } = await studioServer(t);
-  assert.equal((await (await get("?role=writer")).json()).reviewEnabled, false);
+  const { get, post, signIn } = await studioServer(t);
+  const writer = await signIn("studio-noreview@kelana.test");
+  assert.equal((await (await get("?role=writer", writer)).json()).reviewEnabled, false);
   assert.equal((await get("?role=reviewer", { authorization: "Bearer test" })).status, 403);
   assert.equal((await post({ type: "publish-version" }, { authorization: "Bearer test" })).status, 403);
 });

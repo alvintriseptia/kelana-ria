@@ -187,8 +187,14 @@ test("SSE rejects unauthenticated and non-member requests without leaking room e
     assert.equal(created.status, 200);
     const roomCode = created.body.roomCode;
 
-    // Issue a valid cookie for outsider by visiting writer studio (not a member of roomCode)
-    await outsider.get("/api/rulebooks?role=writer");
+    // Issue a valid guest cookie for outsider by creating an unrelated free room (not a member of roomCode)
+    await outsider.post("/api/rulebooks", {
+      type: "create-free-room",
+      packId: "official-jakarta-compact-claim",
+      version: 1,
+      hostName: "Outsider",
+      mode: "solo",
+    });
     assert.ok(outsider.cookie.includes("kelana_rulebook="));
 
     const unauth = await fetch(`${baseUrl}/api/rulebooks/rooms/${roomCode}/events`);

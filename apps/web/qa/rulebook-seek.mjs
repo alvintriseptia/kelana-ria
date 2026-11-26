@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { openEdition } from "./catalog.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
-import { buyPublishedDraft, openDraft, openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
+import { buyPublishedDraft, openDraft, openReview, reviewerKey, signInQaContext, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -24,6 +24,7 @@ const server = createSoloServer({
   midtrans: createRecordedMidtransAdapter(),
   allowSimulatedLocation: true,
   allowRulebookSandboxCheckout: true,
+  allowSandboxAuthOtp: true,
   rulebookReviewerKey: reviewerKey,
 });
 
@@ -49,6 +50,7 @@ try {
 
   // 1. Creator opens Studio from /, selects Hide & Seek, clones Official pack, exercises 4-step stepper + JSON export/import + revision note + publish
   const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 }, recordVideo });
+  await signInQaContext(ctxCreator, baseUrl, "seek-creator@kelana.test", "Kreator Seek");
   const pageCreator = await ctxCreator.newPage();
   pageCreator.setDefaultTimeout(20_000);
   await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
