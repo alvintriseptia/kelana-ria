@@ -804,8 +804,9 @@ try {
       "MapLibre canvas must update in-place without teardown on presence updates",
     );
 
-    // Tap rival pin on Guest -> shows rival card with name, zone, and Baru saja
-    await hostPinOnGuest.click({ force: true });
+    // Fold the bottom sheet on 320x640 so the map pin is unobstructed, then tap the rival pin -> opens rival card
+    await presGuestPage.locator('button[data-action="fold"]').click();
+    await hostPinOnGuest.click();
     const rivalCard = presGuestPage.getByTestId("claim-rival-card");
     await rivalCard.waitFor();
     assert.match(await rivalCard.innerText(), /Alvin/);
