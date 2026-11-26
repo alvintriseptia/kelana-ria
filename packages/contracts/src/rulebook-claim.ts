@@ -463,6 +463,8 @@ export type ClaimEngineActionReply = {
 
 export type ClaimPublicBoard = {
   startPoint: GeoStartPoint;
+  checkInRadiusMeters: number;
+  maxGpsAccuracyMeters: number;
   landmarks: {
     id: string;
     name: string;

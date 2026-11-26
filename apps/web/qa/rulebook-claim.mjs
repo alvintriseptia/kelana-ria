@@ -1018,7 +1018,149 @@ try {
     await lG3Ctx.close();
   }
 
-  console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Live Presence + Unified Studio + One-Time Pack Ownership + Lobby Teams/QR/Leave)");
+  // #143: Self-location blue dot, accuracy halo, target ring, ◎ re-center, live distance meter, Terdekat sort, Google Maps directions, and Lobby Titik Awal mini-map (390x844 & 320x640)
+  const navCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const navNarrowCtx = await browser.newContext({ viewport: { width: 320, height: 640 } });
+  const navPage = await navCtx.newPage();
+  const navNarrow = await navNarrowCtx.newPage();
+  try {
+    await navPage.addInitScript(() => {
+      let cb = null;
+      window.__pushNavFix = (latitude, longitude, accuracy = 12) => {
+        if (cb) cb({ coords: { latitude, longitude, accuracy }, timestamp: Date.now() });
+      };
+      Object.defineProperty(navigator, "permissions", {
+        configurable: true,
+        value: {
+          query: async () => ({ state: "prompt", addEventListener() {} }),
+        },
+      });
+      Object.defineProperty(navigator, "geolocation", {
+        configurable: true,
+        value: {
+          watchPosition(success) {
+            cb = success;
+            return 42;
+          },
+          clearWatch() {
+            cb = null;
+          },
+          getCurrentPosition(success) {
+            success({ coords: { latitude: -6.2442, longitude: 106.7991, accuracy: 12 }, timestamp: Date.now() });
+          },
+        },
+      });
+    });
+
+    const listingsRes = await navCtx.request.get(`${baseUrl}/api/rulebooks?format=claim-the-city`);
+    const officialClaim = (await listingsRes.json()).listings.find((l) => l.isOfficial && l.priceIdr === 0);
+    const createdNav = await navCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "create-free-room", packId: officialClaim.packId, version: officialClaim.version, mode: "solo", hostName: "NavSolo" },
+    });
+    const navCode = (await createdNav.json()).roomCode;
+    const navRoomData = await (await navCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${navCode}`)).json();
+    const sp = navRoomData.publicBoard.startPoint;
+    const lmList = navRoomData.publicBoard.landmarks;
+    const targetLm = lmList[lmList.length - 1];
+    const checkRadius = navRoomData.publicBoard.checkInRadiusMeters;
+    const maxAcc = navRoomData.publicBoard.maxGpsAccuracyMeters;
+    assert.ok(checkRadius > 0 && maxAcc > 0, "Claim publicBoard must expose data-driven GPS thresholds");
+
+    await navPage.goto(`${baseUrl}/?play=rulebook-claim&room=${navCode}`, { waitUntil: "networkidle" });
+    await navPage.getByTestId("lobby-start-card").waitFor();
+    const lobbyDirHref = await navPage.getByTestId("lobby-directions-link").getAttribute("href");
+    assert.ok(lobbyDirHref?.startsWith("https://www.google.com/maps/dir/?api=1&destination="), `Expected valid Google Maps URL, got ${lobbyDirHref}`);
+    assert.ok(!lobbyDirHref.includes("travelmode="), "Google Maps directions link must omit fixed travelmode");
+
+    // Permission-friendly startup: shows 1-tap Aktifkan Lokasi chip when permission is "prompt"
+    await navPage.getByTestId("enable-live-location-btn").click();
+    await navPage.getByTestId("lobby-start-map-toggle").click();
+    await navPage.locator('#cg-start-minimap [data-map-ready="true"], #cg-start-minimap .maplibregl-canvas').first().waitFor();
+    await navPage.evaluate(({ lat, lng }) => window.__pushNavFix(lat + 0.002, lng, 12), { lat: sp.latitude, lng: sp.longitude });
+    await navPage.getByTestId("lobby-distance-meter").waitFor();
+    assert.equal(await navPage.getByTestId("lobby-distance-meter").getAttribute("data-proximity-state"), "out-of-range");
+    assert.match(await navPage.getByTestId("lobby-distance-meter").innerText(), new RegExp(`m lagi · butuh ≤ ${checkRadius} m`));
+    await navPage.locator('#cg-start-minimap [data-testid="map-self-dot"]').waitFor();
+    assert.ok(await navPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Claim lobby with Titik Awal mini-map (390x844)");
+
+    // Move inside start radius -> lobby distance meter turns ready
+    await navPage.evaluate(({ lat, lng }) => window.__pushNavFix(lat, lng, 10), { lat: sp.latitude, lng: sp.longitude });
+    await navPage.waitForFunction(() => document.querySelector('[data-testid="lobby-distance-meter"]')?.getAttribute("data-proximity-state") === "ready");
+    assert.match(await navPage.getByTestId("lobby-distance-meter").innerText(), /Dalam jangkauan/);
+
+    // Start solo match -> active map shows self-dot, recenter button, and landmark list with live distances + Terdekat sort
+    await navPage.locator('button[data-action="sim-start-checkin"]').click();
+    await navPage.locator('button[data-action="mark-ready"]').click();
+    await navPage.locator('button[data-action="start-match"]').click();
+    await navPage.locator("#rb-claim-map-host .maplibregl-canvas").waitFor();
+    await navPage.locator('#rb-claim-map-host [data-testid="map-self-dot"]').waitFor();
+    await navPage.locator('#rb-claim-map-host [data-testid="map-recenter-btn"]').waitFor();
+    await navPage.evaluate(() => {
+      window.__navCanvas = document.querySelector("#rb-claim-map-host .maplibregl-canvas");
+      window.__navSelfDot = document.querySelector('#rb-claim-map-host [data-testid="map-self-dot"]');
+    });
+
+    // Position player right next to the LAST landmark, toggle Terdekat -> targetLm sorts first!
+    await navPage.evaluate(({ lat, lng }) => window.__pushNavFix(lat + 0.0001, lng, 12), {
+      lat: targetLm.latitude,
+      lng: targetLm.longitude,
+    });
+    await navPage.getByTestId("claim-sort-nearest").click();
+    await navPage.waitForFunction(
+      (expectedId) => document.querySelector('[data-testid="claim-landmark-list"] [data-landmark-list-item]')?.getAttribute("data-landmark-list-item") === expectedId,
+      targetLm.id,
+    );
+    const firstDistText = await navPage.locator('[data-testid="claim-landmark-list"] .cg-landmark-dist-pill').first().innerText();
+    assert.match(firstDistText, /^~\d+/);
+
+    // Select targetLm -> shows dashed check-in ring on map, Google Maps directions, and live distance transitions: out-of-range -> noisy GPS -> ready
+    await navPage.locator(`[data-action="select-landmark"][data-landmark="${targetLm.id}"]`).click();
+    await navPage.getByTestId("claim-landmark-directions").waitFor();
+    const lmDirHref = await navPage.getByTestId("claim-landmark-directions").getAttribute("href");
+    assert.ok(lmDirHref?.includes(`${targetLm.latitude}`), `Expected landmark coordinates in Google Maps URL, got ${lmDirHref}`);
+    assert.equal(await navPage.locator("#rb-claim-map-host").getAttribute("data-check-in-target"), String(checkRadius));
+
+    // Out of range
+    await navPage.evaluate(({ lat, lng }) => window.__pushNavFix(lat + 0.003, lng, 15), { lat: targetLm.latitude, lng: targetLm.longitude });
+    await navPage.waitForFunction(() => document.querySelector('[data-testid="claim-landmark-distance-meter"]')?.getAttribute("data-proximity-state") === "out-of-range");
+    assert.match(await navPage.getByTestId("claim-landmark-distance-meter").innerText(), /m lagi/);
+
+    // Noisy GPS accuracy (> maxGpsAccuracyMeters)
+    await navPage.evaluate(({ lat, lng, badAcc }) => window.__pushNavFix(lat, lng, badAcc), {
+      lat: targetLm.latitude,
+      lng: targetLm.longitude,
+      badAcc: maxAcc + 50,
+    });
+    await navPage.waitForFunction(() => document.querySelector('[data-testid="claim-landmark-distance-meter"]')?.getAttribute("data-proximity-state") === "low-accuracy");
+    assert.match(await navPage.getByTestId("claim-landmark-distance-meter").innerText(), /Akurasi GPS/);
+
+    // Inside radius with clean accuracy -> ready + Check-in button emphasized
+    await navPage.evaluate(({ lat, lng }) => window.__pushNavFix(lat, lng, 12), { lat: targetLm.latitude, lng: targetLm.longitude });
+    await navPage.waitForFunction(() => document.querySelector('[data-testid="claim-landmark-distance-meter"]')?.getAttribute("data-proximity-state") === "ready");
+    assert.match(await navPage.getByTestId("claim-landmark-distance-meter").innerText(), /Dalam jangkauan/);
+    await navPage.locator('#rb-claim-map-host [data-testid="map-recenter-btn"]').click();
+
+    // Persistent map & self-dot updated strictly in-place (zero canvas or self-dot teardown)
+    assert.equal(
+      await navPage.evaluate(() =>
+        document.querySelector("#rb-claim-map-host .maplibregl-canvas") === window.__navCanvas &&
+        document.querySelector('#rb-claim-map-host [data-testid="map-self-dot"]') === window.__navSelfDot,
+      ),
+      true,
+      "Claim MapLibre canvas and self-location dot must update in-place without recreation",
+    );
+    assert.ok(await navPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Claim active board with distance meter (390x844)");
+
+    // Verify 320x640 narrow mobile overflow on Claim active landmark sheet
+    await navNarrow.goto(`${baseUrl}/?play=rulebook-claim&room=${navCode}`, { waitUntil: "networkidle" });
+    await navNarrow.waitForTimeout(400);
+    assert.ok(await navNarrow.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on 320x640 Claim");
+  } finally {
+    await navCtx.close();
+    await navNarrowCtx.close();
+  }
+
+  console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Live Presence + Unified Studio + One-Time Pack Ownership + Lobby Teams/QR/Leave + Self-Location/Distance/Directions)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

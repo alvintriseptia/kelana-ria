@@ -6,13 +6,24 @@ import type {
   ClaimCardInstance,
   ClaimEngineRoomView,
   ClaimLandmarkState,
+  ClaimPublicBoard,
   ClaimSanitizedLeafChallenge,
   GeoCoordinate,
+  LocationFix,
   RulebookEntitlementSummary,
   RulebookPlayMode,
 } from "@kelana-ria/contracts";
 import type { BoardMapHandle, BoardMapUpdateOptions } from "./board-map";
 import { getLocation } from "./device-location";
+import {
+  createLiveLocationWatcher,
+  formatDistanceShort,
+  haversineMeters,
+  renderDirectionsLink,
+  renderDistanceMeter,
+  renderStartPointCard,
+  type LiveLocationStatus,
+} from "./live-location";
 import { fetchMapConfig } from "./map-config";
 import { fetchApiJson, resolvePlayerError, type PlayerErrorSurface, type PlayerErrorTone } from "./player-errors";
 import { createPlayerToast, renderInlineAlert } from "./player-toast";
@@ -59,25 +70,12 @@ type ClaimPublicListing = {
   tacticalDeckSummary: { enabled: boolean; totalCards: number; maxHandSize: number };
 };
 
-type PublicLandmark = {
-  id: string;
-  name: string;
-  zoneId: string;
-  latitude: number;
-  longitude: number;
-  transitSummary: string;
-  accessNotes: string;
-};
-
 type ClaimRoomPayload = {
   activity: RoomActivityFeed;
   format: "claim-the-city";
   stateRev?: number;
   room: ClaimEngineRoomView;
-  publicBoard: {
-    startPoint: GeoCoordinate & { id: string; name: string };
-    landmarks: PublicLandmark[];
-  };
+  publicBoard: ClaimPublicBoard;
   pass: {
     roomCode: string; packId: string; version: number; maxPlayers: number; paid: boolean;
     minPlayers?: number; mode?: RulebookPlayMode;
@@ -186,16 +184,6 @@ function zoneLabelFor(room: ClaimEngineRoomView, zoneId?: string): string {
   return zone?.name || zone?.label || "";
 }
 
-function approxMeters(a: GeoCoordinate, b: GeoCoordinate): number {
-  const rad = Math.PI / 180;
-  const dLat = (b.latitude - a.latitude) * rad;
-  const dLng = (b.longitude - a.longitude) * rad;
-  const s =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLng / 2) ** 2;
-  return 12_742_000 * Math.asin(Math.sqrt(Math.min(1, s)));
-}
-
 function clockLabel(ms: number): string {
   const seconds = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -249,12 +237,18 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   const wakeLockSupported = typeof navigator !== "undefined" && "wakeLock" in navigator;
   let wakeLockWanted = false;
   let wakeLockSentinel: { release: () => Promise<void>; addEventListener?: (type: string, cb: () => void) => void } | null = null;
-  let presenceWatchId: number | null = null;
   let presenceInFlight = false;
   let forcePresenceCatchUp = true;
   let lastPresenceSentAt = 0;
   let lastPresenceCoord: GeoCoordinate | null = null;
   let selectedRivalPinSeatId = "";
+  let selfFix: LocationFix | null = null;
+  let liveLocationStatus: LiveLocationStatus = "prompt";
+  let startMapExpanded = false;
+  let startMiniMapHandle: BoardMapHandle | undefined;
+  let startMiniMapRoomCode = "";
+  let startMiniMapReq = 0;
+  let landmarkSort: "zone" | "nearest" = "zone";
 
   function updateConnectionPill() {
     const pill = root.querySelector<HTMLElement>("[data-cg-conn-pill]");
@@ -301,15 +295,127 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     }
   }
 
-  function stopPresenceWatch() {
-    if (presenceWatchId !== null && typeof navigator !== "undefined" && typeof navigator.geolocation?.clearWatch === "function") {
-      try {
-        navigator.geolocation.clearWatch(presenceWatchId);
-      } catch {
-        // Ignore clearWatch errors on mocked geolocation objects.
-      }
+  function destroyStartMiniMap() {
+    startMiniMapReq++;
+    startMiniMapHandle?.destroy();
+    startMiniMapHandle = undefined;
+    startMiniMapRoomCode = "";
+  }
+
+  function buildStartMiniMapState(payload: ClaimRoomPayload): BoardMapUpdateOptions {
+    const sp = payload.publicBoard.startPoint;
+    return {
+      start: {
+        id: sp.id,
+        name: sp.name,
+        latitude: sp.latitude,
+        longitude: sp.longitude,
+        x: 50,
+        y: 50,
+      },
+      startLabel: "Awal",
+      checkpoints: [],
+      selfLocation: selfFix ? { latitude: selfFix.latitude, longitude: selfFix.longitude, accuracy: selfFix.accuracy } : undefined,
+      checkInTarget: { center: sp, radiusMeters: payload.publicBoard.checkInRadiusMeters },
+      onRequestSelfLocation: () => liveLocation.start(),
+    };
+  }
+
+  async function syncStartMiniMap(host: HTMLElement, payload: ClaimRoomPayload) {
+    if (startMiniMapHandle && startMiniMapRoomCode === payload.room.code) {
+      startMiniMapHandle.update(buildStartMiniMapState(payload));
+      return;
     }
-    presenceWatchId = null;
+    const reqId = ++startMiniMapReq;
+    startMiniMapHandle?.destroy();
+    startMiniMapHandle = undefined;
+    startMiniMapRoomCode = payload.room.code;
+    try {
+      const [{ mountBoardMap }, mapCfg] = await Promise.all([
+        import("./board-map"),
+        fetchMapConfig(lifetime.signal),
+      ]);
+      if (reqId !== startMiniMapReq || !host.isConnected || !live || live.room.code !== payload.room.code || live.room.phase !== "lobby" || !startMapExpanded) {
+        return;
+      }
+      const handle = mountBoardMap({
+        container: host,
+        config: mapCfg,
+        camera: { center: [payload.publicBoard.startPoint.longitude, payload.publicBoard.startPoint.latitude], zoom: 15.2 },
+        ...buildStartMiniMapState(live),
+      });
+      if (reqId !== startMiniMapReq) handle.destroy();
+      else startMiniMapHandle = handle;
+    } catch {
+      if (reqId === startMiniMapReq) destroyStartMiniMap();
+    }
+  }
+
+  function updateLobbyProximityInPlace() {
+    if (!live || live.room.phase !== "lobby") return;
+    const card = root.querySelector<HTMLElement>('[data-testid="lobby-start-card"]');
+    if (!card) return;
+    const meter = renderDistanceMeter({
+      fix: selfFix,
+      target: live.publicBoard.startPoint,
+      checkInRadiusMeters: live.publicBoard.checkInRadiusMeters,
+      maxGpsAccuracyMeters: live.publicBoard.maxGpsAccuracyMeters,
+      status: liveLocationStatus,
+      testId: "lobby-distance-meter",
+      showEnableChip: true,
+    });
+    const prev = card.querySelector('[data-testid="lobby-distance-meter"], [data-testid="enable-live-location-btn"], .loc-meter-row');
+    if (prev && meter.html) {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = meter.html;
+      const nextEl = tmp.firstElementChild;
+      if (nextEl) prev.replaceWith(nextEl);
+    }
+    const checkBtn = root.querySelector<HTMLButtonElement>('button[data-action="sim-start-checkin"]');
+    if (checkBtn) {
+      checkBtn.classList.toggle("loc-btn-ready", meter.proximity.state === "ready");
+    }
+    if (startMiniMapHandle && startMiniMapRoomCode === live.room.code) {
+      startMiniMapHandle.update(buildStartMiniMapState(live));
+    }
+  }
+
+  let isRendering = false;
+  const liveLocation = createLiveLocationWatcher({
+    signal: lifetime.signal,
+    onFix: (fix) => {
+      selfFix = fix;
+      if (canPublishPresence()) {
+        publishPresenceFix(fix, fix.accuracy);
+      }
+      if (!live || lifetime.signal.aborted || isRendering) return;
+      if (live.room.phase === "lobby") {
+        updateLobbyProximityInPlace();
+        return;
+      }
+      if (live.room.phase === "active" && !live.room.outcome) {
+        if (claimMapHandle && claimMapRoomCode === live.room.code && !mapFailed) {
+          claimMapHandle.update(buildClaimMapState(live));
+        }
+        if (panel === "challenge" || mapFailed) {
+          render();
+        }
+      }
+    },
+    onStatusChange: (nextStatus) => {
+      liveLocationStatus = nextStatus;
+      if (!live || lifetime.signal.aborted || isRendering) return;
+      if (live.room.phase === "lobby") {
+        updateLobbyProximityInPlace();
+      } else if (live.room.phase === "active" && (panel === "challenge" || mapFailed)) {
+        render();
+      }
+    },
+  });
+  liveLocationStatus = liveLocation.getStatus();
+
+  function stopPresenceWatch() {
+    liveLocation.stop();
   }
 
   function canPublishPresence(): boolean {
@@ -332,7 +438,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     const minThrottleMs = 3_200;
     const intervalMs = Math.max(minThrottleMs, Math.min(8_000, live.room.opponentTracking?.intervalMs ?? 10_000));
     const elapsed = nowWall - lastPresenceSentAt;
-    const moved = lastPresenceCoord ? approxMeters(lastPresenceCoord, coord) : Infinity;
+    const moved = lastPresenceCoord ? haversineMeters(lastPresenceCoord, coord) : Infinity;
     const shouldSend =
       forcePresenceCatchUp ||
       !lastPresenceCoord ||
@@ -362,34 +468,19 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   }
 
   function syncPresenceWatch() {
-    if (!canPublishPresence()) {
-      stopPresenceWatch();
+    if (!live || live.room.outcome || live.room.phase === "canceled") {
+      liveLocation.stop();
       return;
     }
-    if (presenceWatchId !== null) return;
-    if (typeof navigator === "undefined" || typeof navigator.geolocation?.watchPosition !== "function") return;
-    try {
-      presenceWatchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          publishPresenceFix(
-            { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
-            pos.coords.accuracy,
-          );
-        },
-        () => {
-          // Silently fall back to verified check-in markers if GPS is denied or unavailable.
-        },
-        { enableHighAccuracy: true, maximumAge: 5_000, timeout: 15_000 },
-      );
-    } catch {
-      presenceWatchId = null;
+    liveLocation.checkPermissionAndAutoStart();
+    if (canPublishPresence() && liveLocation.getStatus() === "prompt") {
+      liveLocation.start();
     }
   }
 
   document.addEventListener("visibilitychange", () => {
     if (lifetime.signal.aborted) return;
     if (document.hidden) {
-      stopPresenceWatch();
       releaseWakeLock();
       return;
     }
@@ -398,13 +489,12 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     void syncWakeLock();
   }, { signal: lifetime.signal });
 
-  window.addEventListener("offline", () => {
-    stopPresenceWatch();
-  }, { signal: lifetime.signal });
-
   window.addEventListener("online", () => {
     if (lifetime.signal.aborted) return;
     forcePresenceCatchUp = true;
+    if (selfFix && canPublishPresence()) {
+      publishPresenceFix(selfFix, selfFix.accuracy);
+    }
     syncPresenceWatch();
   }, { signal: lifetime.signal });
 
@@ -919,6 +1009,23 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
               };
             })
         : [];
+    const activeSubPoint = room.ownActiveAttempt
+      ? (() => {
+          const leaf = getActiveLeaf(room.ownActiveAttempt);
+          return leaf?.primitive === "timed_micro_task" && leaf.taskType === "sub_point_gps" && leaf.subPoint
+            ? leaf.subPoint
+            : undefined;
+        })()
+      : undefined;
+    const selectedLandmarkMeta =
+      !selectedRivalPinSeatId && selectedId
+        ? publicBoard.landmarks.find((lm) => lm.id === selectedId)
+        : undefined;
+    const checkInTarget = activeSubPoint
+      ? { center: activeSubPoint, radiusMeters: activeSubPoint.radiusMeters }
+      : selectedLandmarkMeta
+        ? { center: selectedLandmarkMeta, radiusMeters: publicBoard.checkInRadiusMeters }
+        : undefined;
     return {
       start: {
         id: payload.publicBoard.startPoint.id,
@@ -931,6 +1038,9 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       startLabel: "Awal",
       fitPadding: { top: 145, bottom: 205, left: 34, right: 34 },
       selectedId: selectedRivalPinSeatId ? `rival:${selectedRivalPinSeatId}` : selectedId,
+      selfLocation: selfFix ? { latitude: selfFix.latitude, longitude: selfFix.longitude, accuracy: selfFix.accuracy } : undefined,
+      checkInTarget,
+      onRequestSelfLocation: () => liveLocation.start(),
       onSelect: selectLandmark,
       checkpoints: [
         ...payload.publicBoard.landmarks.map((lm) => {
@@ -1002,6 +1112,9 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       claimMapHandle.update(buildClaimMapState(payload));
       return;
     }
+    if (!claimMapHandle && claimMapRoomCode === payload.room.code && host.isConnected) {
+      return;
+    }
     const reqId = ++claimMapReq;
     claimMapHandle?.destroy();
     claimMapHandle = undefined;
@@ -1011,7 +1124,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         import("./board-map"),
         fetchMapConfig(lifetime.signal),
       ]);
-      if (reqId !== claimMapReq || !host.isConnected || !live || live.room.code !== payload.room.code) return;
+      if (reqId !== claimMapReq || !host.isConnected || !live || live.room.code !== payload.room.code) {
+        if (reqId === claimMapReq) claimMapRoomCode = "";
+        return;
+      }
       const handle = mountBoardMap({
         container: host,
         config: mapCfg,
@@ -1338,7 +1454,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   }
 
   function renderLobby(payload: ClaimRoomPayload): string {
-    const { room, pass } = payload;
+    const { room, pass, publicBoard } = payload;
     const invite = `${location.origin}/?play=rulebook-claim&room=${encodeURIComponent(room.code)}`;
     const isGroupLobby = pass.mode !== "solo" && pass.maxPlayers > 1;
     const enoughPlayers = !pass.minPlayers || room.seats.length >= pass.minPlayers;
@@ -1348,6 +1464,15 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     const enoughTeams = !isGroupLobby || (pass.mode === undefined && room.seats.length <= 1) || teams.length >= 2;
     const ownTeamMembers = ownSeat ? room.seats.filter((s) => s.teamId === ownSeat.teamId).length : 0;
     const exitSpec = destructiveExitSpec(payload);
+    const startCard = renderStartPointCard({
+      startPoint: publicBoard.startPoint,
+      fix: selfFix,
+      checkInRadiusMeters: publicBoard.checkInRadiusMeters,
+      maxGpsAccuracyMeters: publicBoard.maxGpsAccuracyMeters,
+      status: liveLocationStatus,
+      mapExpanded: startMapExpanded,
+      mapHostId: "cg-start-minimap",
+    });
 
     return `<section class="rb-shell" aria-label="Ruang Claim the City">
       <div class="rb-card">
@@ -1365,6 +1490,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         </div>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${slotAlert("lobby")}
+        ${startCard.html}
         ${isGroupLobby ? renderLobbyInviteCard({ roomCode: room.code, inviteUrl: invite, copiedCode, copiedLink }) : ""}
         <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
         <ul class="rb-list">
@@ -1424,7 +1550,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         ${pass.mode !== "solo" ? '<p class="cg-presence-notice">Lokasi dibagikan ke pemain di ruang selama ronde aktif.</p>' : ""}
         ${slotAlert("lobby-checkin")}
         <div class="rb-actions">
-          <button type="button" class="secondary" data-action="sim-start-checkin">${demoLocation ? "Simulasikan Check-in Titik Awal" : "Check-in Titik Awal"}</button>
+          <button type="button" class="secondary${startCard.proximity.state === "ready" ? " loc-btn-ready" : ""}" data-action="sim-start-checkin">${demoLocation ? "Simulasikan Check-in Titik Awal" : "Check-in Titik Awal"}</button>
           ${ownSeat?.ready
             ? `<button type="button" class="secondary" data-action="unmark-ready">Batal Siap</button>`
             : `<button type="button" class="primary" data-action="mark-ready">Tandai Siap</button>`}
@@ -1459,13 +1585,81 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     </details>`;
   }
 
+  function renderLandmarkList(payload: ClaimRoomPayload, targets: string[] = [], listLabel = "Pilih Landmark"): string {
+    const { room, publicBoard } = payload;
+    const stateById = new Map(room.landmarks.map(item => [item.landmarkId, item]));
+    const zoneLabelById = new Map(room.zones.map(z => [z.zoneId, z.label || z.name]));
+    const distById = new Map<string, number>();
+    if (selfFix) {
+      for (const lm of publicBoard.landmarks) {
+        distById.set(lm.id, Math.round(haversineMeters(selfFix, lm)));
+      }
+    }
+
+    const renderRow = (lm: ClaimPublicBoard["landmarks"][number]) => {
+      const state = stateById.get(lm.id);
+      const dist = distById.get(lm.id);
+      const zoneText = zoneLabelById.get(lm.zoneId) ?? lm.zoneId;
+      return `<li data-landmark-list-item="${escapeText(lm.id)}">
+        <button type="button" class="cg-landmark-row" data-action="select-landmark" data-landmark="${escapeText(lm.id)}" aria-pressed="${lm.id === selectedId}">
+          <span class="cg-landmark-row-main">
+            <strong>${escapeText(lm.name)}</strong>
+            <small>${targets.includes(lm.id) ? "Target · " : ""}${escapeText(zoneText)}${state ? ` · ${landmarkStatus(state)}` : ""}</small>
+          </span>
+          ${dist !== undefined ? `<span class="cg-landmark-dist-pill" data-landmark-distance="${dist}">${formatDistanceShort(dist)}</span>` : ""}
+        </button>
+      </li>`;
+    };
+
+    const toolbar = `<div class="cg-landmark-toolbar">
+      <h2>${escapeText(listLabel)}</h2>
+      <div class="cg-sort-pills" role="group" aria-label="Urutkan landmark">
+        <button type="button" data-action="sort-landmarks" data-sort="zone" data-testid="claim-sort-zone" aria-pressed="${landmarkSort === "zone"}">Zona</button>
+        <button type="button" data-action="sort-landmarks" data-sort="nearest" data-testid="claim-sort-nearest" aria-pressed="${landmarkSort === "nearest"}">Terdekat</button>
+      </div>
+    </div>`;
+
+    if (landmarkSort === "nearest") {
+      const sorted = [...publicBoard.landmarks].sort((a, b) => {
+        const da = distById.get(a.id);
+        const db = distById.get(b.id);
+        if (da !== undefined && db !== undefined && da !== db) return da - db;
+        return 0;
+      });
+      return `${toolbar}
+        ${!selfFix && liveLocationStatus !== "unavailable" ? `<div class="cg-selected-meta-actions">
+          ${liveLocationStatus === "requesting" || liveLocationStatus === "watching"
+            ? `<span class="loc-meter loc-meter--pending" role="status">◎ Mencari posisi GPS…</span>`
+            : `<button type="button" class="loc-enable-chip" data-loc-action="enable-live-location" data-testid="enable-live-location-btn">◎ Aktifkan Lokasi untuk urutkan Terdekat</button>`}
+        </div>` : ""}
+        <ul class="cg-landmark-drawer-list" aria-label="${escapeText(listLabel)}" data-testid="claim-landmark-list" data-sort-mode="nearest">
+          ${sorted.map(renderRow).join("")}
+        </ul>`;
+    }
+
+    const groupedItems = room.zones.flatMap(zone => {
+      const items = publicBoard.landmarks.filter(lm => lm.zoneId === zone.zoneId);
+      if (items.length === 0) return [];
+      return [
+        `<li class="cg-landmark-group-title" role="presentation">${escapeText(zone.name || zone.label)}</li>`,
+        ...items.map(renderRow),
+      ];
+    }).join("");
+
+    return `${toolbar}
+      <ul class="cg-landmark-drawer-list" aria-label="${escapeText(listLabel)}" data-testid="claim-landmark-list" data-sort-mode="zone">${groupedItems}</ul>`;
+  }
+
   function renderLandmark(payload: ClaimRoomPayload): string {
     const { room, publicBoard } = payload;
     const meta = publicBoard.landmarks.find(lm => lm.id === selectedId);
     const lm = room.landmarks.find(lm => lm.landmarkId === selectedId);
     if (!lm || !meta) {
-      return `<div class="cg-section-title"><h2>Tantangan</h2></div>
-        <p>Pilih landmark di ${mapFailed ? "daftar" : "peta"} untuk melihat status dan check-in.</p>`;
+      if (mapFailed) {
+        return `<div class="cg-section-title"><h2>Tantangan</h2></div>
+          <p>Pilih landmark di daftar untuk melihat status dan check-in.</p>`;
+      }
+      return renderLandmarkList(payload);
     }
     const escapedId = escapeText(lm.landmarkId);
     const rival = lm.ownerTeamId && lm.ownerTeamId !== room.teamId;
@@ -1480,18 +1674,34 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     else if (rival && shielded) blocked = `Perisai lawan aktif selama <strong data-cg-countdown="${lm.shieldUntil}">${clockLabel(lm.shieldUntil! - room.now)}</strong>.`;
     const canAttempt = room.phase === "active" && lm.status !== "locked";
     const hand = room.ownChallengeHand;
+    const meter = renderDistanceMeter({
+      fix: selfFix,
+      target: meta,
+      checkInRadiusMeters: publicBoard.checkInRadiusMeters,
+      maxGpsAccuracyMeters: publicBoard.maxGpsAccuracyMeters,
+      status: liveLocationStatus,
+      testId: "claim-landmark-distance-meter",
+      showEnableChip: true,
+    });
     return `<div class="cg-selected" data-landmark-id="${escapedId}">
-      <div class="rb-badges">
-        <span class="rb-badge">${escapeText(room.zones.find(zone => zone.zoneId === lm.zoneId)?.label ?? lm.zoneId)}</span>
-        <span class="rb-badge">${landmarkStatus(lm)}</span>
-        ${lm.ownerTeamId ? `<span class="rb-badge">${escapeText(teamName(room, lm.ownerTeamId))}</span>` : ""}
-        ${shielded ? '<span class="rb-badge rb-badge-warn">Perisai aktif</span>' : ""}
-        ${lm.doubleWeighted ? '<span class="rb-badge rb-badge-paid">2× Bobot</span>' : ""}
+      <div class="cg-section-title">
+        <div class="rb-badges">
+          <span class="rb-badge">${escapeText(room.zones.find(zone => zone.zoneId === lm.zoneId)?.label ?? lm.zoneId)}</span>
+          <span class="rb-badge">${landmarkStatus(lm)}</span>
+          ${lm.ownerTeamId ? `<span class="rb-badge">${escapeText(teamName(room, lm.ownerTeamId))}</span>` : ""}
+          ${shielded ? '<span class="rb-badge rb-badge-warn">Perisai aktif</span>' : ""}
+          ${lm.doubleWeighted ? '<span class="rb-badge rb-badge-paid">2× Bobot</span>' : ""}
+        </div>
+        <button type="button" class="sg-quiet" data-action="clear-selected-landmark" data-testid="claim-back-to-list">← Daftar</button>
       </div>
       <h2>${escapeText(meta.name)}</h2>
       ${room.ownLearningExplanation?.landmarkId === lm.landmarkId ? learningExplanation(room.ownLearningExplanation.text) : ""}
       ${meta.transitSummary ? `<p>${escapeText(meta.transitSummary)}</p>` : ""}
       ${meta.accessNotes ? `<small>${escapeText(meta.accessNotes)}</small>` : ""}
+      <div class="cg-selected-meta-actions">
+        ${meter.html}
+        ${renderDirectionsLink(meta, { testId: "claim-landmark-directions" })}
+      </div>
       ${scouted ? `<p>Hasil Intai · <strong>${escapeText(scouted.title)}</strong></p>` : ""}
       ${canAttempt && blocked ? `<p>${blocked}</p>` : ""}
       ${canAttempt && !blocked && hand?.length ? `<label class="rb-field"><span>Pilih tantangan</span><select data-claim-hand>
@@ -1499,7 +1709,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       </select></label>` : ""}
       ${canAttempt && !blocked && hand?.length === 0 ? "<p>Belum ada kartu tantangan yang dapat digunakan.</p>" : ""}
       ${slotAlert("landmark-checkin", lm.landmarkId)}
-      ${canAttempt && !blocked && hand?.length !== 0 ? `<button type="button" class="sg-main" data-action="checkin-landmark" data-landmark="${escapedId}">${rival ? "Check-in &amp; Rebut Landmark" : "Check-in Landmark"}</button>` : ""}
+      ${canAttempt && !blocked && hand?.length !== 0 ? `<button type="button" class="sg-main${meter.proximity.state === "ready" ? " loc-btn-ready" : ""}" data-action="checkin-landmark" data-landmark="${escapedId}">${rival ? "Check-in &amp; Rebut Landmark" : "Check-in Landmark"}</button>` : ""}
     </div>`;
   }
 
@@ -1624,11 +1834,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       <p role="status">Peta tidak tersedia.</p>
       <button type="button" class="sg-quiet" data-action="retry-map">Coba Lagi</button>
     </div>
-    <ul class="cg-landmark-list" aria-label="Daftar Landmark">${payload.publicBoard.landmarks.map(lm => {
-      const state = room.landmarks.find(item => item.landmarkId === lm.id);
-      return `<li><button type="button" class="sg-pick" data-action="select-landmark" data-landmark="${escapeText(lm.id)}"
-        aria-pressed="${lm.id === selectedId}">${escapeText(lm.name)}<small>${targets.includes(lm.id) ? "Target · " : ""}${state ? landmarkStatus(state) : ""}</small></button></li>`;
-    }).join("")}</ul>
+    ${renderLandmarkList(payload, targets, "Daftar Landmark")}
     ${renderRivalPositionsList(room)}`;
   }
 
@@ -1679,7 +1885,12 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
   function render() {
     if (lifetime.signal.aborted) return;
-    syncPresenceWatch();
+    isRendering = true;
+    try {
+      syncPresenceWatch();
+    } finally {
+      isRendering = false;
+    }
     void syncWakeLock();
     activityUi.update(live?.room, live?.activity);
     const effects = liveEffects;
@@ -1689,12 +1900,14 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       clearActiveRoom(live.room.code);
       activityUi.mount(null);
       destroyClaimMap();
+      destroyStartMiniMap();
       root.innerHTML = renderCanceledRoomCard({ roomCode: live.room.code, title: live.room.packMeta.title });
       return;
     }
     if (!live || live.room.phase === "lobby") {
       activityUi.mount(null);
       destroyClaimMap();
+      destroyStartMiniMap();
       const focusedInput = document.activeElement instanceof HTMLInputElement && root.contains(document.activeElement)
         ? { id: document.activeElement.id, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd }
         : null;
@@ -1702,6 +1915,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         ? { ...document.activeElement.dataset }
         : null;
       root.innerHTML = live ? renderLobby(live) : renderCatalog();
+      if (live && startMapExpanded) {
+        const miniHost = root.querySelector<HTMLElement>("#cg-start-minimap");
+        if (miniHost) void syncStartMiniMap(miniHost, live);
+      }
       if (!busy) {
         if (focusedInput) {
           const el = root.querySelector<HTMLInputElement>(`#${CSS.escape(focusedInput.id)}`);
@@ -1717,6 +1934,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       }
       return;
     }
+    destroyStartMiniMap();
     if (!root.querySelector(".cg-game")) {
       root.innerHTML = `<section class="sg-game cg-game" aria-label="Permainan Claim the City">
         <div id="rb-claim-map-host" class="sg-board cg-board"></div>
@@ -1859,7 +2077,9 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     if (demoLocation && target && live) {
       return { latitude: target.latitude, longitude: target.longitude, accuracy: 10, timestamp: live.room.now };
     }
-    return getLocation();
+    const fix = await getLocation();
+    liveLocation.setManualFix(fix);
+    return fix;
   }
 
   root.addEventListener("input", event => {
@@ -1934,6 +2154,16 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   root.addEventListener("click", (event) => {
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
     if (!btn || busy) return;
+    const locAction = btn.dataset.locAction;
+    if (locAction === "enable-live-location") {
+      liveLocation.start();
+      return;
+    }
+    if (locAction === "toggle-start-map" && live) {
+      startMapExpanded = !startMapExpanded;
+      render();
+      return;
+    }
     const lobbyAction = btn.dataset.lobbyAction;
     if (lobbyAction && live) {
       const inviteUrl = `${location.origin}/?play=rulebook-claim&room=${encodeURIComponent(live.room.code)}`;
@@ -1995,6 +2225,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       roomCode = "";
       joinCode = "";
       selectedId = selectedCardId = selectedRivalId = selectedRivalPinSeatId = challengeHandId = "";
+      startMapExpanded = false;
+      destroyStartMiniMap();
       stopPresenceWatch();
       releaseWakeLock();
       panel = "challenge";
@@ -2014,6 +2246,19 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
     const action = btn.dataset.action;
     if (!action) return;
+    if (action === "sort-landmarks") {
+      const nextSort = btn.dataset.sort === "nearest" ? "nearest" : "zone";
+      landmarkSort = nextSort;
+      if (nextSort === "nearest" && !selfFix) liveLocation.start();
+      render();
+      return;
+    }
+    if (action === "clear-selected-landmark") {
+      selectedId = "";
+      selectedRivalPinSeatId = "";
+      render();
+      return;
+    }
     if (action === "confirm-leave" && live) {
       btn.closest<HTMLDetailsElement>(".sg-room-menu")?.removeAttribute("open");
       const spec = destructiveExitSpec(live);
@@ -2389,5 +2634,6 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     root.removeAttribute("aria-busy");
     window.clearInterval(clock);
     destroyClaimMap();
+    destroyStartMiniMap();
   };
 }

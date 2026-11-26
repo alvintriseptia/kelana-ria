@@ -172,6 +172,8 @@ export type SeekMapPreview = {
 
 export type SeekPublicBoard = {
   startPoint: SeekBoardPoint;
+  checkInRadiusMeters: number;
+  maxGpsAccuracyMeters: number;
   stations: (SeekBoardPoint & { transitLines: string[] })[];
   boundaryPolygon: GeoCoordinate[];
   pois: { id: string; name: string }[];

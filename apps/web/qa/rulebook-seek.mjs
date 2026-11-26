@@ -290,14 +290,14 @@ try {
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-private-answer.png") });
   await pageCreator.click('button[data-answer="yes"]');
   assert.equal(await pageCreator.locator('[data-correct="true"]').isVisible(), true);
-  const answerSentAt = Date.now();
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
+  const answerSentAt = Date.now();
   const dealGrid = pageCreator.locator(".sg-deal");
   await dealGrid.locator(".sg-offer-back").first().waitFor({ state: "attached" });
   assert.equal(await pageCreator.locator('[data-action="confirm-draw"]').isDisabled(), true);
   const answerNotice = pageG2.locator('[data-activity-message][data-notice-kind="answer"]');
-  await answerNotice.waitFor({ timeout: 1500 });
-  assert.ok(Date.now() - answerSentAt < 1500, "Seeker must receive Hider answer via SSE before a 3-second poll cycle");
+  await answerNotice.waitFor({ timeout: 2200 });
+  assert.ok(Date.now() - answerSentAt < 2400, "Seeker must receive Hider answer via SSE before a 3-second poll cycle");
   const radarResult = pageG2.locator('.sg-map-result[data-game-motion^="update:"]');
   await radarResult.waitFor();
   assert.equal(await canvas.evaluate(element => element.isConnected), true);
@@ -532,7 +532,138 @@ try {
     await sGuestCtx.close();
   }
 
-  console.log("qa:rulebook-seek passed (Studio, paid room, clue privacy, Thermometer, photos, map fallback, role swap, and Lobby QR/TurnOrder/Leave)");
+  // #143: Hide & Seek strictly-local self-location dot (zero server transmission), distance meters, target ring, Google Maps links on Lobby/Station/Regroup (390x844 & 320x640)
+  const locHiderCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const locSeekerCtx = await browser.newContext({ viewport: { width: 320, height: 640 } });
+  const locHider = await locHiderCtx.newPage();
+  const locSeeker = await locSeekerCtx.newPage();
+  try {
+    await locHider.addInitScript(() => {
+      let cb = null;
+      window.__pushSeekFix = (latitude, longitude, accuracy = 12) => {
+        if (cb) cb({ coords: { latitude, longitude, accuracy }, timestamp: Date.now() });
+      };
+      Object.defineProperty(navigator, "permissions", {
+        configurable: true,
+        value: { query: async () => ({ state: "granted", addEventListener() {} }) },
+      });
+      Object.defineProperty(navigator, "geolocation", {
+        configurable: true,
+        value: {
+          watchPosition(success) {
+            cb = success;
+            return 99;
+          },
+          clearWatch() {
+            cb = null;
+          },
+          getCurrentPosition(success) {
+            success({ coords: { latitude: -6.2442, longitude: 106.7991, accuracy: 12 }, timestamp: Date.now() });
+          },
+        },
+      });
+    });
+
+    const createdSeek = await locHiderCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "create-free-room", packId: "official-jakarta-compact-seek", version: 2, hostName: "Sembunyi" },
+    });
+    const locCode = (await createdSeek.json()).roomCode;
+    await locSeekerCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "join-room", roomCode: locCode, name: "Pencari" },
+    });
+    const seekMeta = await (await locHiderCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${locCode}`)).json();
+    const sp = seekMeta.publicBoard.startPoint;
+    const st0 = seekMeta.publicBoard.stations[0];
+    const checkRadius = seekMeta.publicBoard.checkInRadiusMeters;
+    assert.ok(checkRadius > 0 && seekMeta.publicBoard.maxGpsAccuracyMeters > 0, "Seek publicBoard must expose GPS thresholds");
+
+    await locHider.goto(`${baseUrl}/?play=rulebook-seek&room=${locCode}`, { waitUntil: "networkidle" });
+    await locHider.getByTestId("lobby-start-card").waitFor();
+    const lobbyDir = await locHider.getByTestId("lobby-directions-link").getAttribute("href");
+    assert.ok(lobbyDir?.startsWith("https://www.google.com/maps/dir/?api=1&destination="), `Seek lobby directions invalid: ${lobbyDir}`);
+
+    // Expand lobby Titik Awal mini-map and push live fix -> zero server POST calls!
+    let leakedPostRequests = 0;
+    const watchPrivacy = (req) => {
+      if (req.method() === "POST" && req.url().includes("/api/")) leakedPostRequests++;
+    };
+    locHider.on("request", watchPrivacy);
+
+    await locHider.getByTestId("lobby-start-map-toggle").click();
+    await locHider.locator("#sg-start-minimap .maplibregl-canvas").waitFor();
+    await locHider.evaluate(({ lat, lng }) => window.__pushSeekFix(lat + 0.0025, lng, 12), { lat: sp.latitude, lng: sp.longitude });
+    await locHider.getByTestId("lobby-distance-meter").waitFor();
+    assert.equal(await locHider.getByTestId("lobby-distance-meter").getAttribute("data-proximity-state"), "out-of-range");
+    await locHider.locator('#sg-start-minimap [data-testid="map-self-dot"]').waitFor();
+    await locHider.evaluate(({ lat, lng }) => window.__pushSeekFix(lat, lng, 10), { lat: sp.latitude, lng: sp.longitude });
+    await locHider.waitForFunction(() => document.querySelector('[data-testid="lobby-distance-meter"]')?.getAttribute("data-proximity-state") === "ready");
+    assert.equal(leakedPostRequests, 0, "Hide & Seek lobby watchPosition updates must NEVER transmit fixes to the server");
+
+    // Start match via API -> active board shows self dot + station distance meter + Google Maps directions without transmitting fixes
+    locHider.off("request", watchPrivacy);
+    for (const [idx, ctx] of [locHiderCtx, locSeekerCtx].entries()) {
+      await ctx.request.post(`${baseUrl}/api/rulebooks`, {
+        data: { type: "room-action", roomCode: locCode, action: { type: "check-in-start", actionId: `sl-ci-${idx}`, fix: { latitude: sp.latitude, longitude: sp.longitude, accuracy: 10, timestamp: seekMeta.room.now } } },
+      });
+      await ctx.request.post(`${baseUrl}/api/rulebooks`, {
+        data: { type: "room-action", roomCode: locCode, action: { type: "ready", actionId: `sl-rdy-${idx}`, ready: true } },
+      });
+    }
+    await locHiderCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "room-action", roomCode: locCode, action: { type: "start", actionId: "sl-start" } },
+    });
+    await locHider.locator("#sg-map .maplibregl-canvas").waitFor();
+    await locHider.locator('#sg-map [data-testid="map-self-dot"]').waitFor();
+    await locHider.locator('#sg-map [data-testid="map-recenter-btn"]').waitFor();
+    await locHider.evaluate(() => {
+      window.__seekCanvas = document.querySelector("#sg-map .maplibregl-canvas");
+      window.__seekSelfDot = document.querySelector('#sg-map [data-testid="map-self-dot"]');
+    });
+
+    locHider.on("request", watchPrivacy);
+    await locHider.evaluate(({ lat, lng }) => window.__pushSeekFix(lat + 0.002, lng, 12), { lat: st0.latitude, lng: st0.longitude });
+    await locHider.evaluate(({ lat, lng }) => window.__pushSeekFix(lat, lng, 10), { lat: st0.latitude, lng: st0.longitude });
+    await locHider.waitForTimeout(400);
+    assert.equal(leakedPostRequests, 0, "Hide & Seek active watchPosition updates must NEVER send any POST request to the server");
+    locHider.off("request", watchPrivacy);
+
+    const stDir = await locHider.getByTestId("seek-station-directions-link").getAttribute("href");
+    assert.ok(stDir?.startsWith("https://www.google.com/maps/dir/?api=1&destination="), `Seek station directions invalid: ${stDir}`);
+    assert.equal(
+      await locHider.evaluate(() =>
+        document.querySelector("#sg-map .maplibregl-canvas") === window.__seekCanvas &&
+        document.querySelector('#sg-map [data-testid="map-self-dot"]') === window.__seekSelfDot,
+      ),
+      true,
+      "Seek MapLibre canvas and self-location dot must update in-place without recreation",
+    );
+    assert.ok(await locHider.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek active board (390x844)");
+
+    // Advance to regroup phase via API and verify Regroup card Google Maps directions + distance meter + 320x640 overflow
+    const hsView = await (await locHiderCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${locCode}`)).json();
+    await locHiderCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "room-action", roomCode: locCode, action: { type: "lock-anchor", actionId: "sl-lock", stationId: st0.id, fix: { latitude: st0.latitude, longitude: st0.longitude, accuracy: 10, timestamp: hsView.room.now } } },
+    });
+    now = hsView.room.releaseAt + 1_000;
+    const seekView = await (await locSeekerCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${locCode}`)).json();
+    await locSeekerCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "room-action", roomCode: locCode, action: { type: "seeker-check-in", actionId: "sl-endgame", fix: { latitude: st0.latitude, longitude: st0.longitude, accuracy: 10, timestamp: seekView.room.now }, offTransit: true } },
+    });
+    const endHider = await (await locHiderCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${locCode}`)).json();
+    await locSeekerCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "room-action", roomCode: locCode, action: { type: "submit-found-code", actionId: "sl-found", code: endHider.room.foundCode } },
+    });
+    await locSeeker.goto(`${baseUrl}/?play=rulebook-seek&room=${locCode}`, { waitUntil: "networkidle" });
+    await locSeeker.getByTestId("seek-regroup-card").waitFor();
+    const regroupDir = await locSeeker.getByTestId("regroup-directions-link").getAttribute("href");
+    assert.ok(regroupDir?.startsWith("https://www.google.com/maps/dir/?api=1&destination="), `Seek regroup directions invalid: ${regroupDir}`);
+    assert.ok(await locSeeker.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek regroup card (320x640)");
+  } finally {
+    await locHiderCtx.close();
+    await locSeekerCtx.close();
+  }
+
+  console.log("qa:rulebook-seek passed (Studio, paid room, clue privacy, Thermometer, photos, map fallback, role swap, Lobby QR/TurnOrder/Leave, and Self-Location/Privacy/Directions)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

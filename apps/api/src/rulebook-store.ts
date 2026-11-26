@@ -2028,6 +2028,8 @@ export function rulebookStore(
           ? {
               publicBoard: {
                 startPoint: session.match.snapshot.startPoint,
+                checkInRadiusMeters: session.match.pack.geography.checkInRadiusMeters,
+                maxGpsAccuracyMeters: session.match.pack.geography.maxGpsAccuracyMeters,
                 landmarks: session.match.pack.geography.landmarks.map((l) => ({
                   id: l.id,
                   name: l.name,
@@ -2060,6 +2062,8 @@ export function rulebookStore(
         ? {
             publicBoard: {
               startPoint: session.match.snapshot.startPoint,
+              checkInRadiusMeters: session.match.pack.geography.checkInRadiusMeters,
+              maxGpsAccuracyMeters: session.match.pack.geography.maxGpsAccuracyMeters,
               boundaryPolygon: session.match.snapshot.boundaryPolygon,
               pois: session.match.snapshot.pois.map(({ id, name }) => ({ id, name })),
               stations: session.match.snapshot.stations
