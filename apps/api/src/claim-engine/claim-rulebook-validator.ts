@@ -181,11 +181,11 @@ export function validateClaimRulebook(
   if (!session || typeof session !== "object") {
     addError("invalid-session", "session", "Session rules are required.");
   } else {
-    if (!isPositiveInt(session.minPlayers) || session.minPlayers < 1 || session.minPlayers > 6) {
-      addError("invalid-player-range", "session.minPlayers", "minPlayers must be between 1 and 6.");
+    if (!isPositiveInt(session.minPlayers) || session.minPlayers < 1 || session.minPlayers > 12) {
+      addError("invalid-player-range", "session.minPlayers", "minPlayers must be between 1 and 12.");
     }
-    if (!isPositiveInt(session.maxPlayers) || session.maxPlayers < 1 || session.maxPlayers > 6) {
-      addError("invalid-player-range", "session.maxPlayers", "maxPlayers must be between 1 and 6.");
+    if (!isPositiveInt(session.maxPlayers) || session.maxPlayers < 1 || session.maxPlayers > 12) {
+      addError("invalid-player-range", "session.maxPlayers", "maxPlayers must be between 1 and 12.");
     }
     if (
       isPositiveInt(session.minPlayers) &&
