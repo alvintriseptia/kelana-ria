@@ -596,7 +596,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         <label class="rb-field"><span>ID Paket Baru</span><input id="st-pack-id" value="${escapeText(fields.packId)}"></label>
         <label class="rb-field"><span>Judul Paket</span><input id="st-title" value="${escapeText(fields.title)}"></label>
         <label class="rb-field"><span>Nama Kreator</span><input id="st-byline" value="${escapeText(fields.byline)}"></label>
-        <label class="rb-field"><span>Harga Sesi (IDR)</span><input id="st-price" type="number" value="${escapeText(fields.priceIdr)}" min="0" step="1000"></label>
+        <label class="rb-field"><span>Harga Paket (IDR)</span><input id="st-price" type="number" value="${escapeText(fields.priceIdr)}" min="0" step="1000"><small>Setelah terbit, paket bisa dijual sekali beli di katalog.</small></label>
       </div>
       <div class="rb-actions">
         <button type="button" class="primary" data-action="clone" ${busy ? "disabled" : ""}>Buat draf</button>
@@ -619,7 +619,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           <label class="rb-field"><span>Judul Paket</span><input id="ed-meta-title" value="${escapeText(active.pack.meta.title)}" ${disabled}></label>
           <label class="rb-field"><span>Nama Kreator</span><input id="ed-meta-byline" value="${escapeText(active.pack.meta.byline)}" ${disabled}></label>
           <label class="rb-field"><span>Kota / Wilayah</span><input id="ed-meta-city" value="${escapeText(active.pack.meta.cityLabel)}" ${disabled}></label>
-          <label class="rb-field"><span>Harga Sesi (IDR)</span><input id="ed-meta-price" type="number" min="0" step="1000" value="${active.pack.meta.priceIdr}" ${disabled}></label>
+          <label class="rb-field"><span>Harga Paket (IDR)</span><input id="ed-meta-price" type="number" min="0" step="1000" value="${active.pack.meta.priceIdr}" ${disabled}><small>Setelah terbit, paket bisa dijual sekali beli di katalog.</small></label>
         </div>
         <label class="rb-field"><span>Ringkasan Paket</span><input id="ed-meta-summary" value="${escapeText(active.pack.meta.summary)}" ${disabled}></label>
         <div class="rb-sticky-footer">

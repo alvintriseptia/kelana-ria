@@ -167,6 +167,13 @@
   border-color: var(--rb-border);
 }
 
+.rb-badge-owned {
+  background: #104a40;
+  color: #f7fff1;
+  border-color: #0b3029;
+  font-weight: 800;
+}
+
 .rb-actions {
   display: flex;
   flex-wrap: wrap;

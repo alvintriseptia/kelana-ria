@@ -528,6 +528,7 @@ try {
   assert.equal(catalogData.editions.filter(item => item.packId === fixture.meta.packId).length, 2);
   assert.equal(JSON.stringify(catalogData).includes("rahasia-jawaban-senopati"), false);
 
+  let savedRestoreCodeForV1 = "";
   for (const version of [1, 2]) {
     const buyer = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const shop = await buyer.newPage();
@@ -536,17 +537,25 @@ try {
       const group = shop.getByRole("region", { name: "Claim the City" });
       await group.locator('.cat-card[data-pack-id="official-jakarta-compact-claim"]').waitFor();
       const paid = group.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="${version}"]`);
+      const paidCardText = await paid.innerText();
+      assert.match(paidCardText, /Beli sekali/, "Paid catalog card must show one-time pricing");
+      assert.ok(await shop.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on catalog home");
       await paid.click();
       const editionUrl = shop.url();
       const detail = shop.getByRole("article", { name: "Detail edisi" });
       await detail.waitFor();
       assert.equal(new URL(editionUrl).searchParams.get("version"), String(version));
+      const detailText = await detail.innerText();
+      assert.match(detailText, /Harga paket/);
+      assert.match(detailText, /Beli sekali/);
+      assert.doesNotMatch(detailText, /Harga per sesi/i);
+      assert.ok(await shop.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on paid edition detail");
       if (version === 2) {
-        assert.match(await detail.innerText(), /105 menit/);
-        assert.match(await detail.innerText(), /Kota Contoh/);
+        assert.match(detailText, /105 menit/);
+        assert.match(detailText, /Kota Contoh/);
       }
       const orderRequest = shop.waitForRequest(req => req.url().endsWith("/api/rulebooks/catalog") && req.method() === "POST");
-      await shop.getByRole("button", { name: "Beli sesi · Uji pembayaran" }).click();
+      await shop.getByRole("button", { name: "Beli paket · Uji pembayaran" }).click();
       const checkout = (await orderRequest).postDataJSON();
       await shop.getByRole("button", { name: "Cek status pembayaran" }).waitFor();
       await shop.reload();
@@ -554,6 +563,16 @@ try {
       await shop.getByRole("alert").filter({ hasText: "masih menunggu" }).waitFor();
       assert.equal(new URL(shop.url()).searchParams.get("room"), null);
       await shop.getByRole("button", { name: "Simulasikan pembayaran berhasil" }).click();
+
+      // Confirmation card displays one-time Kode Pemulihan with copy CTA before entering room #1
+      const restoreCard = shop.getByTestId("restore-code-card");
+      await restoreCard.waitFor();
+      const restoreCode = (await shop.getByTestId("restore-code-value").innerText()).trim();
+      assert.match(restoreCode, /^KLR-[A-Z0-9]{4}-[A-Z0-9]{4}$/, "Restore code must match KLR-XXXX-XXXX format");
+      assert.ok(await shop.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on restore-code card");
+      await shop.getByRole("button", { name: "Salin kode" }).click();
+      await shop.getByRole("button", { name: "Masuk Ruang" }).click();
+
       await shop.getByText("Pass Berbayar").waitFor();
       const roomCode = new URL(shop.url()).searchParams.get("room");
       const roomResponse = await buyer.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`);
@@ -570,6 +589,34 @@ try {
       }
       await shop.reload();
       await shop.getByText("Pass Berbayar").waitFor();
+      if (version === 1) {
+        savedRestoreCodeForV1 = restoreCode;
+        // Return to catalog while room #1 is still active -> shows Dimiliki badge and resume CTA
+        await shop.goto(baseUrl);
+        const ownedCard = shop.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="1"]`);
+        await ownedCard.waitFor();
+        await ownedCard.getByTestId("owned-badge").waitFor();
+        assert.match(await ownedCard.innerText(), /Dimiliki/);
+        assert.ok(await shop.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on owned catalog card");
+        await ownedCard.click();
+        await shop.getByRole("button", { name: `Lanjutkan Ruang (${roomCode})` }).waitFor();
+
+        // Close room #1 (leave lobby) -> returning to catalog lets owner launch room #2 without paying again
+        const leaveResp = await buyer.request.post(`${baseUrl}/api/rulebooks`, {
+          data: { type: "room-action", roomCode, action: { type: "leave", actionId: "leave-paid-room-1" } },
+        });
+        assert.equal(leaveResp.status(), 200);
+        await shop.goto(`${baseUrl}/?edition=${fixture.meta.packId}&version=1`);
+        await shop.getByTestId("owned-badge").waitFor();
+        await shop.getByRole("button", { name: "Main Solo", exact: true }).click();
+        await shop.getByText("Pass Berbayar").waitFor();
+        const replayRoomCode = new URL(shop.url()).searchParams.get("room");
+        assert.ok(replayRoomCode && replayRoomCode !== roomCode, "Owner must launch a brand new room #2 without re-paying");
+        // Close room #2 so restored device can launch room #3 cleanly
+        await buyer.request.post(`${baseUrl}/api/rulebooks`, {
+          data: { type: "room-action", roomCode: replayRoomCode, action: { type: "leave", actionId: "leave-paid-room-2" } },
+        });
+      }
       if (version === 2) {
         const { publicBoard: { startPoint }, room } = await roomResponse.json();
         await shop.evaluate(({ latitude, longitude, timestamp }) => {
@@ -595,12 +642,42 @@ try {
       await buyer.close();
     }
   }
+
+  // Fresh isolated browser profile (new cookie): invalid restore code shows toast, valid code unlocks pack & launches room
+  assert.ok(savedRestoreCodeForV1, "Expected saved restore code from v1 purchase");
+  const newPhone = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const phonePage = await newPhone.newPage();
+  try {
+    await phonePage.goto(baseUrl);
+    await phonePage.getByRole("button", { name: "Pulihkan paket" }).click();
+    await phonePage.getByTestId("restore-modal").waitFor();
+    assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow in restore modal");
+    await phonePage.fill("#cat-restore-input", "KLR-ZZZZ-9999");
+    await phonePage.getByRole("button", { name: "Pulihkan", exact: true }).click();
+    const errToast = phonePage.getByTestId("player-toast");
+    await errToast.waitFor();
+    assert.match(await errToast.innerText(), /Kode Pemulihan tidak cocok/);
+
+    await phonePage.fill("#cat-restore-input", savedRestoreCodeForV1);
+    await phonePage.getByRole("button", { name: "Pulihkan", exact: true }).click();
+    await phonePage.getByTestId("restore-modal").waitFor({ state: "hidden" });
+    const restoredCard = phonePage.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="1"]`);
+    await restoredCard.getByTestId("owned-badge").waitFor();
+    await restoredCard.click();
+    await phonePage.getByRole("button", { name: "Main Solo", exact: true }).click();
+    await phonePage.getByText("Pass Berbayar").waitFor();
+    const restoredRoomCode = new URL(phonePage.url()).searchParams.get("room");
+    assert.ok(restoredRoomCode && restoredRoomCode.startsWith("RC-"), "Restored device must launch paid room cleanly");
+  } finally {
+    await newPhone.close();
+  }
+
   await author({ type: "pause-version", packId: fixture.meta.packId, version: 2, reason: "Edisi latihan selesai" });
   await pageCreator.goto(`${baseUrl}/?edition=${fixture.meta.packId}&version=2`);
   await pageCreator.getByRole("alert").filter({ hasText: "Edisi ini tidak tersedia" }).waitFor();
   await ctxCreator.close();
 
-  console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Unified Studio + Midtrans Pass)");
+  console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Unified Studio + One-Time Pack Ownership & Restore)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

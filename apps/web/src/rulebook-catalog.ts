@@ -5,6 +5,7 @@ import type {
   HideSeekQuestionFamily,
   PackOrderSummary,
   PublicMatchRecapSummary,
+  RulebookEntitlementSummary,
   RulebookFormat,
   RulebookPlayMode,
 } from "@kelana-ria/contracts";
@@ -21,6 +22,7 @@ import jakartaCover from "./assets/jakarta.webp";
 import "./rulebook-catalog.css";
 
 const endpoint = "/api/rulebooks/catalog";
+const restoreEndpoint = "/api/rulebooks/entitlements/restore";
 const cacheKey = "kelana-rulebook-catalog";
 const formatNames = { "claim-the-city": "Claim the City", "hide-and-seek": "Hide & Seek" } as const;
 const resumePhaseLabels: Record<ActiveRulebookRoomPhase, string> = {
@@ -90,10 +92,31 @@ type Catalog = {
   editions: Edition[];
   sharedRecaps?: PublicMatchRecapSummary[];
   activeRooms?: ActiveRulebookRoomSummary[];
+  ownedPackIds?: string[];
+  entitlements?: RulebookEntitlementSummary[];
   allowSandboxCheckout: boolean;
 };
 type Attempt = { id: string; order?: PackOrderSummary };
-type CheckoutReply = { error?: string; roomCode?: string; order?: PackOrderSummary; pass?: { roomCode: string } };
+type UnlockedPack = {
+  packId: string;
+  version: number;
+  format: RulebookFormat;
+  roomCode: string;
+  restoreCode: string;
+};
+type CheckoutReply = {
+  error?: string;
+  roomCode?: string;
+  order?: PackOrderSummary;
+  pass?: { roomCode: string; entitlementId?: string };
+  entitlement?: RulebookEntitlementSummary;
+  restoreCode?: string;
+};
+type RestoreReply = {
+  ok?: boolean;
+  error?: string;
+  entitlement?: RulebookEntitlementSummary;
+};
 type Options = {
   navigate: (href: string) => void;
   openRoom: (format: RulebookFormat, code: string) => void;
@@ -185,19 +208,33 @@ function cover(item: Edition) {
     : "";
 }
 
-function catalogCard(item: Edition) {
+function keyIconSvg() {
+  return `<svg class="cat-icon" width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true"><circle cx="7" cy="10" r="3.5" stroke="currentColor" stroke-width="2"/><path d="M10.5 10H18M15 10V13M17.5 10V12.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
+}
+
+function ownedBadge(extraClass = "") {
+  const cls = extraClass ? `cat-owned-badge ${extraClass}` : "cat-owned-badge";
+  return `<span class="${cls}" data-testid="owned-badge"><span class="cat-owned-mark" aria-hidden="true">✓</span> Dimiliki</span>`;
+}
+
+function catalogCard(item: Edition, owned: boolean) {
+  const footerPrice = item.priceIdr === 0
+    ? "Gratis"
+    : owned
+      ? "Dimiliki"
+      : `${price(item)} · Beli sekali`;
   return `<a class="cat-card" href="${escapeText(detailHref(item))}" data-catalog-link
       data-pack-id="${escapeText(item.packId)}" data-version="${item.version}">
-    <div class="cat-cover ${item.format}">${cover(item)}<span>${escapeText(item.cityLabel)}</span></div>
+    <div class="cat-cover ${item.format}">${cover(item)}<div class="cat-cover-tags"><span class="cat-cover-city">${escapeText(item.cityLabel)}</span>${item.priceIdr > 0 && owned ? ownedBadge() : ""}</div></div>
     <div class="cat-card-copy">
       <h3>${escapeText(editionTitle(item))}</h3>
       <p>v${item.version} · ${playerRange(item.minPlayers, item.maxPlayers)}</p>
-      <div class="cat-card-footer"><span>${roundTime(item)}</span><strong>${price(item)} <span aria-hidden="true">›</span></strong></div>
+      <div class="cat-card-footer"><span>${roundTime(item)}</span><strong>${escapeText(footerPrice)} <span aria-hidden="true">›</span></strong></div>
     </div>
   </a>`;
 }
 
-function facts(item: Edition, mode: RulebookPlayMode) {
+function facts(item: Edition, mode: RulebookPlayMode, owned: boolean) {
   const players = mode === "solo" ? "1 pemain · Solo" : playerRange(Math.max(2, item.minPlayers), item.maxPlayers);
   const durations = item.format === "claim-the-city"
     ? [["Durasi ronde", `${item.durationMinutes} menit`]]
@@ -217,7 +254,12 @@ function facts(item: Edition, mode: RulebookPlayMode) {
   if (item.format === "hide-and-seek" && item.questionFamilies?.length) {
     mechanics.push(["Petunjuk", item.questionFamilies.map(({ family }) => clueNames[family]).filter(Boolean).join(", ")]);
   }
-  return [["Titik awal", item.startName], ["Pemain", players], ...durations, ...mechanics, ["Harga per sesi", price(item)]]
+  const priceFact = item.priceIdr === 0
+    ? "Gratis"
+    : owned
+      ? `${price(item)} · Dimiliki`
+      : `${price(item)} · Beli sekali`;
+  return [["Titik awal", item.startName], ["Pemain", players], ...durations, ...mechanics, ["Harga paket", priceFact]]
     .map(([label, value]) => `<div><dt>${label}</dt><dd>${escapeText(value)}</dd></div>`).join("");
 }
 
@@ -231,6 +273,31 @@ function objective(item: Edition, mode: RulebookPlayMode) {
 
 function action(type: string, label: string, style = "secondary", disabled = false) {
   return `<button type="button" class="${style}" data-cat-action="${type}" ${disabled ? "disabled" : ""}>${label}</button>`;
+}
+
+async function copyText(value: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch {
+    // Fall back to execCommand copy below when clipboard API is blocked.
+  }
+  try {
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 function communityResults(item: Edition, sharedRecaps: PublicMatchRecapSummary[] | undefined) {
@@ -273,8 +340,15 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
   let failed = false;
   let inlineError: { message: string; tone: PlayerErrorTone; area: "payment" | "screen" } | null = null;
   let loadSequence = 0;
+  let restoreOpen = false;
+  let restoreBusy = false;
+  let restoreCodeDraft = "";
+  let copiedRestore = false;
 
   const selected = () => catalog?.editions.find(item => item.packId === pack && item.version === version);
+  const isOwned = (packId: string) => Boolean(catalog?.ownedPackIds?.includes(packId));
+  const entitlementFor = (packId: string) => catalog?.entitlements?.find(entry => entry.packId === packId);
+
   const attemptKey = () => `kelana-catalog-attempt:${JSON.stringify([pack, version, mode])}`;
   const attempts = new Map<string, Attempt>();
   const getAttempt = () => attempts.get(attemptKey()) ?? readStored<Attempt>(attemptKey());
@@ -285,12 +359,61 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     store(key, value);
   }
 
+  const unlockedKey = () => `kelana-catalog-unlocked:${JSON.stringify([pack, version])}`;
+  let unlockedPack: UnlockedPack | undefined = pack ? readStored<UnlockedPack>(unlockedKey()) : undefined;
+  function setUnlockedPack(value?: UnlockedPack) {
+    unlockedPack = value;
+    copiedRestore = false;
+    if (pack) store(unlockedKey(), value);
+  }
+
+  function renderRestoreModal() {
+    if (!restoreOpen) return "";
+    return `<div class="cat-modal-backdrop" data-cat-backdrop data-testid="restore-modal">
+      <section class="cat-modal" role="dialog" aria-modal="true" aria-labelledby="cat-restore-title">
+        <div class="cat-modal-head">
+          <h2 id="cat-restore-title">${keyIconSvg()} Pulihkan paket</h2>
+          <button type="button" class="secondary cat-modal-close" data-cat-action="close-restore" aria-label="Tutup dialog pemulihan" ${restoreBusy ? "disabled" : ""}>×</button>
+        </div>
+        <p class="cat-modal-note">Masukkan Kode Pemulihan dari pembelian sebelumnya untuk membuka paket di perangkat ini.</p>
+        <form class="cat-restore-form" data-cat-restore-form>
+          <label class="cat-restore-field">
+            <span>Kode Pemulihan</span>
+            <input id="cat-restore-input" name="restoreCode" type="text" autocomplete="off" spellcheck="false" placeholder="KLR-XXXX-XXXX" value="${escapeText(restoreCodeDraft)}" ${restoreBusy ? "disabled" : ""}>
+          </label>
+          <div class="cat-modal-actions">
+            <button type="button" class="secondary" data-cat-action="close-restore" ${restoreBusy ? "disabled" : ""}>Batal</button>
+            <button type="submit" class="primary" data-cat-action="submit-restore" ${restoreBusy ? "disabled" : ""}>${restoreBusy ? "Memeriksa…" : "Pulihkan"}</button>
+          </div>
+        </form>
+      </section>
+    </div>`;
+  }
+
+  function renderUnlockedCard(unlocked: UnlockedPack) {
+    return `<section class="cat-box cat-unlocked" aria-label="Paket berhasil dibuka" data-testid="restore-code-card">
+      <div class="cat-unlocked-head">${ownedBadge("cat-owned-badge--inline")}</div>
+      <h2>Simpan Kode Pemulihan</h2>
+      <p class="cat-unlocked-note">Paket ini sekarang milikmu dan bisa dimainkan ulang kapan saja. Simpan kode ini sebelum masuk ruang agar bisa memulihkan paket di perangkat lain.</p>
+      <div class="cat-restore-code-row">
+        <code class="cat-restore-code" data-testid="restore-code-value">${escapeText(unlocked.restoreCode)}</code>
+        <button type="button" class="secondary cat-copy-btn" data-cat-action="copy-restore-code" data-testid="copy-restore-code">${copiedRestore ? "✓ Tersalin" : "Salin kode"}</button>
+      </div>
+      <div class="cat-unlocked-actions">
+        ${action("enter-unlocked-room", "Masuk Ruang", "primary", false)}
+      </div>
+    </section>`;
+  }
+
   function payment(item: Edition) {
+    const restoreBtn = `<button type="button" class="secondary cat-restore-trigger" data-cat-action="open-restore" ${busy ? "disabled" : ""}>${keyIconSvg()}<span>Pulihkan paket</span></button>`;
     if (!catalog?.allowSandboxCheckout) {
-      return fresh ? '<p class="cat-message" role="status">Edisi berbayar belum bisa dibeli pada uji publik ini.</p>' : "";
+      return `${fresh ? '<p class="cat-message" role="status">Edisi berbayar belum bisa dibeli pada uji publik ini.</p>' : ""}${restoreBtn}`;
     }
     const order = getAttempt()?.order;
-    if (!order) return action("buy", "Beli sesi · Uji pembayaran", "primary", busy || !fresh);
+    if (!order) {
+      return `${action("buy", "Beli paket · Uji pembayaran", "primary", busy || !fresh)}${restoreBtn}`;
+    }
     const redirect = order.snapRedirectUrl;
     const payLink = order.paymentMode === "midtrans-sandbox" && redirect?.startsWith("https://")
       ? `<a class="cat-link" href="${escapeText(redirect)}" target="_blank" rel="noopener noreferrer">Buka pembayaran uji</a>`
@@ -300,12 +423,29 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       : "";
     return `<section class="cat-box" aria-label="Pembayaran uji">
       <h2>Pembayaran uji</h2>
-      <p role="status">${price(item)} · Menunggu konfirmasi pembayaran</p>
+      <p role="status">${escapeText(price(item))} · Beli sekali · Menunggu konfirmasi pembayaran</p>
       ${paymentAlert}
       ${payLink}
       ${action("check-payment", "Cek status pembayaran", "secondary", busy || !fresh)}
       ${order.paymentMode === "recorded-sandbox" ? action("simulate-payment", "Simulasikan pembayaran berhasil", "primary", busy || !fresh) : ""}
-    </section>`;
+    </section>${restoreBtn}`;
+  }
+
+  function renderDetailActions(item: Edition, owned: boolean) {
+    if (unlockedPack && unlockedPack.packId === item.packId && unlockedPack.version === item.version) {
+      return renderUnlockedCard(unlockedPack);
+    }
+    if (item.priceIdr === 0) {
+      return `${action("practice", "Coba Panduan")}${action("play", mode === "solo" ? "Main Solo" : "Main Grup", "primary", busy || !fresh)}`;
+    }
+    if (owned) {
+      const ent = entitlementFor(item.packId);
+      const launchCta = ent?.activeRoomCode
+        ? `<button type="button" class="primary" data-cat-action="resume-room" data-room-code="${escapeText(ent.activeRoomCode)}" data-format="${item.format}" ${busy || !fresh ? "disabled" : ""}>Lanjutkan Ruang (${escapeText(ent.activeRoomCode)})</button>`
+        : action("play", mode === "solo" ? "Main Solo" : "Main Grup", "primary", busy || !fresh);
+      return `${action("practice", "Coba Panduan")}${launchCta}`;
+    }
+    return `${action("practice", "Coba Panduan")}${payment(item)}`;
   }
 
   function render() {
@@ -313,20 +453,21 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     const item = selected();
     if (item?.format === "hide-and-seek" || (item && item.minPlayers > 1)) mode = "group";
     if (item?.maxPlayers === 1) mode = "solo";
+    const owned = item ? isOwned(item.packId) : false;
     const offline = failed
       ? `<div class="cat-message" role="status">Katalog belum bisa diperbarui. Periksa koneksi. ${action("retry", "Coba lagi")}</div>`
       : "";
-    const hasPaymentOrder = Boolean(item && item.priceIdr > 0 && catalog?.allowSandboxCheckout && getAttempt()?.order);
+    const hasPaymentOrder = Boolean(item && item.priceIdr > 0 && !owned && catalog?.allowSandboxCheckout && getAttempt()?.order);
     const screenAlert = inlineError && !(inlineError.area === "payment" && hasPaymentOrder)
       ? renderInlineAlert(inlineError.message, inlineError.tone)
       : "";
     if (pack) {
       const back = '<a class="cat-back" href="/" data-catalog-link>‹ Katalog</a>';
       document.title = item ? `${item.title} · Kelana Ria` : "Edisi · Kelana Ria";
-      root.innerHTML = item ? `<article class="cat-detail" aria-label="Detail edisi">
+      root.innerHTML = (item ? `<article class="cat-detail" aria-label="Detail edisi">
         ${back}
         <div class="cat-cover cat-hero ${item.format}">${cover(item)}
-          <div class="cat-hero-copy"><span>${escapeText(formatNames[item.format])} · v${item.version}</span>
+          <div class="cat-hero-copy"><div class="cat-hero-badges"><span class="cat-hero-tag">${escapeText(formatNames[item.format])} · v${item.version}</span>${item.priceIdr > 0 && owned ? ownedBadge("cat-owned-badge--hero") : ""}</div>
           <h1>${escapeText(editionTitle(item))}</h1><p>${escapeText(item.cityLabel)}</p></div>
         </div>
         ${item.format === "claim-the-city" && item.minPlayers === 1 && item.maxPlayers > 1 ? `<div class="cat-modes" role="group" aria-label="Mode permainan">
@@ -338,18 +479,15 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
         ${item.byline ? `<p class="cat-byline">Oleh ${escapeText(item.byline)}</p>` : ""}
         <section class="cat-rules" aria-label="Aturan edisi">
           <h2>Aturan edisi</h2><p>${objective(item, mode)}</p>
-          <dl class="cat-facts">${facts(item, mode)}</dl>
+          <dl class="cat-facts">${facts(item, mode, owned)}</dl>
         </section>
         ${offline}${screenAlert}
         <div class="cat-actions" aria-busy="${busy}">
-          ${action("practice", "Coba Panduan")}
-          ${item.priceIdr === 0
-            ? action("play", mode === "solo" ? "Main Solo" : "Main Grup", "primary", busy || !fresh)
-            : payment(item)}
+          ${renderDetailActions(item, owned)}
         </div>
         ${communityResults(item, catalog?.sharedRecaps)}
       </article>` : `<article class="cat-detail">${back}<h1>Edisi permainan</h1>
-        ${loading ? '<p role="status">Memuat edisi…</p>' : offline || renderInlineAlert("Edisi ini tidak tersedia. Pilih edisi lain dari katalog.", "warn")}</article>`;
+        ${loading ? '<p role="status">Memuat edisi…</p>' : offline || renderInlineAlert("Edisi ini tidak tersedia. Pilih edisi lain dari katalog.", "warn")}</article>`) + renderRestoreModal();
       focusTitle();
       return;
     }
@@ -358,6 +496,7 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     root.innerHTML = `<div class="catalog-top"><div><h1>Pilih permainan</h1>
       <p class="intro">Jelajahi kota lewat misi dan kartu.</p></div>
       <div class="catalog-links"><a class="cat-link" href="/?recaps=1">Riwayat pertandingan</a>
+      <button type="button" class="secondary cat-restore-trigger" data-cat-action="open-restore">${keyIconSvg()}<span>Pulihkan paket</span></button>
       <button type="button" id="chooser-studio" class="secondary" data-cat-action="studio">Studio Kreator</button></div></div>
       ${activeRoom ? renderResumeBanner(activeRoom) : ""}
       ${offline}
@@ -365,10 +504,10 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
         const cards = editions.filter(edition => edition.format === format);
         return cards.length ? `<section class="catalog-group" aria-labelledby="catalog-${format}">
           <h2 id="catalog-${format}"><span aria-hidden="true" class="cat-mark ${format}">${format === "claim-the-city" ? "◆" : "◎"}</span>${escapeText(formatNames[format])}</h2>
-          <div class="catalog-grid">${cards.map(catalogCard).join("")}</div>
+          <div class="catalog-grid">${cards.map(edition => catalogCard(edition, isOwned(edition.packId))).join("")}</div>
         </section>` : "";
       }).join("") + (editions.length ? "" : '<p role="status">Belum ada edisi yang bisa dimainkan.</p>')
-        : loading ? '<p class="catalog-loading" role="status">Memuat katalog…</p>' : ""}`;
+        : loading ? '<p class="catalog-loading" role="status">Memuat katalog…</p>' : ""}${renderRestoreModal()}`;
     focusTitle();
   }
 
@@ -422,6 +561,66 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     }
   }
 
+  async function submitRestore() {
+    if (restoreBusy || signal.aborted) return;
+    const code = restoreCodeDraft.trim();
+    if (!code) {
+      toast.resetDedupe();
+      toast.show(resolvePlayerError("invalid-restore-code", { surface: "catalog", action: "restore-entitlement" }));
+      root.querySelector<HTMLInputElement>("#cat-restore-input")?.focus({ preventScroll: true });
+      return;
+    }
+    restoreBusy = true;
+    render();
+    try {
+      const { ok, status, data: reply } = await fetchApiJson<RestoreReply>(restoreEndpoint, {
+        signal,
+        body: { restoreCode: code },
+      });
+      if (signal.aborted) return;
+      if (!ok || !reply.ok || reply.error) {
+        toast.resetDedupe();
+        const resolved = resolvePlayerError({ error: reply.error ?? "invalid-restore-code", status }, {
+          surface: "catalog",
+          action: "restore-entitlement",
+        });
+        toast.show(resolved);
+        if (reply.error === "pack-already-owned") {
+          restoreOpen = false;
+          restoreCodeDraft = "";
+          await load();
+        }
+        return;
+      }
+      restoreOpen = false;
+      restoreCodeDraft = "";
+      setAttempt();
+      await load();
+      if (signal.aborted) return;
+      toast.resetDedupe();
+      toast.show({
+        message: "Paket berhasil dipulihkan! Kamu sekarang bisa langsung memainkannya.",
+        tone: "info",
+        dedupeKey: "catalog:restore-entitlement:success",
+      });
+    } catch (error) {
+      if (!signal.aborted) {
+        toast.resetDedupe();
+        toast.show(resolvePlayerError(error, { surface: "catalog", action: "restore-entitlement" }));
+      }
+    } finally {
+      if (!signal.aborted) {
+        restoreBusy = false;
+        render();
+        if (restoreOpen) {
+          root.querySelector<HTMLInputElement>("#cat-restore-input")?.focus({ preventScroll: true });
+        } else {
+          root.querySelector<HTMLElement>('[data-cat-action="play"], [data-cat-action="resume-room"], [data-cat-action="open-restore"]')?.focus({ preventScroll: true });
+        }
+      }
+    }
+  }
+
   async function submit(type: string, item: Edition) {
     if (!fresh || busy) return;
     let attempt = getAttempt();
@@ -439,7 +638,11 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       });
       if (signal.aborted) return;
       if (reply.error || !ok) {
+        if (reply.error === "pack-already-owned") setAttempt();
         applyCatalogError({ error: reply.error, status }, item, type);
+        if (reply.error === "pack-already-owned" || reply.error === "entitlement-active-room-exists") {
+          void load();
+        }
         return;
       }
       toast.clear();
@@ -456,6 +659,27 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
           phase: "lobby",
           role: item.format === "claim-the-city" ? mode : "none",
         });
+        if (reply.restoreCode) {
+          setUnlockedPack({
+            packId: item.packId,
+            version: item.version,
+            format: item.format,
+            roomCode: code,
+            restoreCode: reply.restoreCode,
+          });
+          if (catalog) {
+            const ownedIds = new Set(catalog.ownedPackIds ?? []);
+            ownedIds.add(item.packId);
+            const nextEnts = [...(catalog.entitlements ?? []).filter(entry => entry.packId !== item.packId)];
+            if (reply.entitlement) {
+              nextEnts.push({ ...reply.entitlement, activeRoomCode: code });
+            }
+            catalog = { ...catalog, ownedPackIds: [...ownedIds], entitlements: nextEnts };
+            store(cacheKey, catalog);
+          }
+          void load();
+          return;
+        }
         options.openRoom(item.format, code);
       } else if (reply.order) {
         setAttempt({ ...attempt, order: reply.order });
@@ -468,15 +692,49 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       if (!signal.aborted) {
         busy = false;
         render();
-        (root.querySelector<HTMLElement>(`[data-cat-action="${type}"]:not([disabled])`) ??
-          root.querySelector<HTMLElement>('[data-cat-action="check-payment"]'))?.focus({ preventScroll: true });
+        if (unlockedPack && unlockedPack.packId === item.packId) {
+          root.querySelector<HTMLElement>('[data-cat-action="copy-restore-code"]')?.focus({ preventScroll: true });
+        } else {
+          (root.querySelector<HTMLElement>(`[data-cat-action="${type}"]:not([disabled])`) ??
+            root.querySelector<HTMLElement>('[data-cat-action="check-payment"]'))?.focus({ preventScroll: true });
+        }
       }
     }
   }
 
+  root.addEventListener("input", event => {
+    const target = event.target;
+    if (target instanceof HTMLInputElement && target.id === "cat-restore-input") {
+      restoreCodeDraft = target.value;
+    }
+  }, { signal });
+
+  root.addEventListener("submit", event => {
+    const target = event.target;
+    if (target instanceof HTMLFormElement && target.hasAttribute("data-cat-restore-form")) {
+      event.preventDefault();
+      void submitRestore();
+    }
+  }, { signal });
+
+  document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && restoreOpen && !restoreBusy && !toast.isVisible()) {
+      event.preventDefault();
+      restoreOpen = false;
+      render();
+      root.querySelector<HTMLElement>('[data-cat-action="open-restore"]')?.focus({ preventScroll: true });
+    }
+  }, { signal });
+
   root.addEventListener("click", event => {
     const target = event.target;
     if (!(target instanceof Element)) return;
+    if (restoreOpen && target.hasAttribute("data-cat-backdrop") && !restoreBusy) {
+      restoreOpen = false;
+      render();
+      root.querySelector<HTMLElement>('[data-cat-action="open-restore"]')?.focus({ preventScroll: true });
+      return;
+    }
     const link = target.closest<HTMLAnchorElement>("[data-catalog-link]");
     if (link && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
       event.preventDefault();
@@ -487,6 +745,45 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     const type = control?.dataset.catAction;
     if (type === "studio") return options.openStudio();
     if (type === "retry") return void load();
+    if (type === "open-restore") {
+      restoreOpen = true;
+      render();
+      root.querySelector<HTMLInputElement>("#cat-restore-input")?.focus({ preventScroll: true });
+      return;
+    }
+    if (type === "close-restore") {
+      if (restoreBusy) return;
+      restoreOpen = false;
+      render();
+      root.querySelector<HTMLElement>('[data-cat-action="open-restore"]')?.focus({ preventScroll: true });
+      return;
+    }
+    if (type === "submit-restore") {
+      return;
+    }
+    if (type === "copy-restore-code" && unlockedPack) {
+      void copyText(unlockedPack.restoreCode).then(ok => {
+        if (signal.aborted) return;
+        copiedRestore = ok;
+        render();
+        toast.resetDedupe();
+        toast.show({
+          message: ok
+            ? "Kode Pemulihan disalin. Simpan di catatanmu agar aman."
+            : "Salin otomatis tidak tersedia. Catat kode pemulihan yang tampil di layar.",
+          tone: "info",
+          dedupeKey: "catalog:copy-restore",
+        });
+        root.querySelector<HTMLElement>('[data-cat-action="enter-unlocked-room"]')?.focus({ preventScroll: true });
+      });
+      return;
+    }
+    if (type === "enter-unlocked-room" && unlockedPack) {
+      const { format: unlockedFormat, roomCode: unlockedRoom } = unlockedPack;
+      setUnlockedPack();
+      options.openRoom(unlockedFormat, unlockedRoom);
+      return;
+    }
     if (type === "resume-room") {
       const code = control?.dataset.roomCode ?? activeRoom?.roomCode;
       const fmt = (control?.dataset.format as RulebookFormat | undefined) ?? activeRoom?.format;

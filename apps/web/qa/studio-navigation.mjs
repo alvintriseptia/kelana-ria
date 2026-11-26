@@ -26,6 +26,15 @@ export async function openReview(page) {
 
 export async function buyPublishedDraft(page, packId, version = 1) {
   await page.locator(`.cat-card[data-pack-id="${packId}"][data-version="${version}"]`).click();
-  await page.getByRole("button", { name: "Beli sesi · Uji pembayaran" }).click();
+  await page.getByRole("button", { name: "Beli paket · Uji pembayaran" }).click();
   await page.getByRole("button", { name: "Simulasikan pembayaran berhasil" }).click();
+  const restoreCard = page.getByTestId("restore-code-card");
+  await restoreCard.waitFor();
+  const restoreCode = (await page.getByTestId("restore-code-value").innerText()).trim();
+  if (!/^KLR-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(restoreCode)) {
+    throw new Error(`Unexpected restore code format: ${restoreCode}`);
+  }
+  await page.getByRole("button", { name: "Salin kode" }).click();
+  await page.getByRole("button", { name: "Masuk Ruang" }).click();
+  return restoreCode;
 }

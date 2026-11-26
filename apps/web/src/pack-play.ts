@@ -275,7 +275,7 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
           <div>
             <span class="pack-badge ${badgeClass}">v${ver.version} · ${escapeText(statusLabels[ver.status])}</span>
             <h3>${escapeText(ver.title)} (v${ver.version})</h3>
-            <p>Oleh <strong>${escapeText(ver.byline)}</strong> · ${formatIdr(ver.priceIdr)} / sesi · Solo &amp; Berdua (1–2 pemain)</p>
+            <p>Oleh <strong>${escapeText(ver.byline)}</strong> · ${formatIdr(ver.priceIdr)} · Beli sekali · Solo &amp; Berdua (1–2 pemain)</p>
           </div>
           ${ver.reviewNote ? `<p class="pack-note"><strong>Catatan peninjau:</strong> ${escapeText(ver.reviewNote)}</p>` : ""}
           ${ver.pausedReason ? `<p class="pack-note pack-error"><strong>Alasan jeda penjualan:</strong> ${escapeText(ver.pausedReason)}</p>` : ""}
@@ -340,7 +340,7 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
             <input id="pack-title-input" name="title" type="text" value="${escapeText(draftTitle)}" required>
           </div>
           <div class="pack-field">
-            <label for="pack-price-input">Harga satu sesi (IDR)</label>
+            <label for="pack-price-input">Harga Paket (IDR)</label>
             <input id="pack-price-input" name="priceIdr" type="number" min="1000" step="1000" value="${draftPrice}" required>
           </div>
           <div class="pack-field">
@@ -405,7 +405,7 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
                   <h3>${escapeText(item.title)}</h3>
                   <p>Oleh <strong>${escapeText(item.byline)}</strong></p>
                   <dl>
-                    <dt>Harga satu sesi</dt><dd>${formatIdr(item.priceIdr)} (Test payment)</dd>
+                    <dt>Harga paket</dt><dd>${formatIdr(item.priceIdr)} · Beli sekali (Test payment)</dd>
                     <dt>Titik awal</dt><dd>${escapeText(item.startName)}</dd>
                     <dt>Area &amp; durasi</dt><dd>${escapeText(item.areaSummary)} · ${item.durationMinutes} menit</dd>
                     <dt>Ukuran grup</dt><dd>Solo atau Berdua (${item.supportedPlayers.join("–")} pemain)</dd>
@@ -420,7 +420,7 @@ export function mountPackPlay(root: HTMLElement, returnToSetup: () => void) {
                       .join("")}
                   </ul>
                   <div class="pack-actions">
-                    ${action(`Beli sesi uji coba (v${item.version})`, `order-${item.packId}-${item.version}`, "primary", busy)}
+                    ${action(`Beli paket uji coba (v${item.version})`, `order-${item.packId}-${item.version}`, "primary", busy)}
                     ${action(`Laporkan penutupan titik (v${item.version})`, `closure-${item.packId}-${item.version}`, "secondary", busy)}
                   </div>
                 </article>`,
