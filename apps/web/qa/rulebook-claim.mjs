@@ -546,12 +546,18 @@ try {
 
   for (const version of [1, 2]) {
     const buyer = await browser.newContext({ viewport: { width: 390, height: 844 } });
-    await signInQaContext(buyer, baseUrl, `buyer-v${version}@kelana.test`, `Pembeli ${version}`);
+    if (version === 2) {
+      await signInQaContext(buyer, baseUrl, `buyer-v${version}@kelana.test`, `Pembeli ${version}`);
+    }
     const shop = await buyer.newPage();
     try {
       await shop.goto(baseUrl);
       const group = shop.getByRole("region", { name: "Claim the City" });
       await group.locator('.cat-card[data-pack-id="official-jakarta-compact-claim"]').waitFor();
+      assert.equal(await shop.getByRole("button", { name: /Pulihkan paket/i }).count(), 0, "Superseded Pulihkan paket button must be deleted");
+      if (version === 1) {
+        await shop.getByTestId("auth-chip-signin").waitFor();
+      }
       const paid = group.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="${version}"]`);
       const paidCardText = await paid.innerText();
       assert.match(paidCardText, /Beli sekali/, "Paid catalog card must show one-time pricing");
@@ -570,9 +576,45 @@ try {
         assert.match(detailText, /105 menit/);
         assert.match(detailText, /Kota Contoh/);
       }
-      const orderRequest = shop.waitForRequest(req => req.url().endsWith("/api/rulebooks/catalog") && req.method() === "POST");
-      await shop.getByRole("button", { name: "Beli paket · Uji pembayaran" }).click();
-      const checkout = (await orderRequest).postDataJSON();
+      let checkout;
+      if (version === 1) {
+        // Guest tapping Beli paket opens the 2-step Email OTP modal with contextual copy
+        await shop.getByRole("button", { name: "Beli paket · Uji pembayaran" }).click();
+        const authModal = shop.getByTestId("auth-modal");
+        await authModal.waitFor();
+        assert.match(await authModal.innerText(), /tersimpan permanen di akunmu/i);
+        assert.ok(await shop.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on auth modal (390x844)");
+        await shop.fill("#auth-email-input", "buyer-v1@kelana.test");
+        await shop.getByTestId("auth-send-otp").click();
+        const sandboxCodeEl = shop.getByTestId("auth-sandbox-code");
+        await sandboxCodeEl.waitFor();
+        const validOtp = (await sandboxCodeEl.innerText()).trim();
+        assert.match(validOtp, /^\d{6}$/, "Sandbox OTP helper must show 6-digit code");
+        assert.equal(await shop.locator("#auth-otp-input").getAttribute("inputmode"), "numeric");
+        assert.equal(await shop.locator("#auth-otp-input").getAttribute("autocomplete"), "one-time-code");
+        // Wrong OTP triggers Indonesian error toast without leaking raw error code
+        const wrongOtp = validOtp === "000000" ? "999999" : "000000";
+        await shop.fill("#auth-otp-input", wrongOtp);
+        await shop.getByTestId("auth-verify-otp").click();
+        const otpToast = shop.getByTestId("player-toast");
+        await otpToast.waitFor();
+        const otpToastText = await otpToast.innerText();
+        assert.match(otpToastText, /Kode 6 digit tidak cocok/);
+        assert.doesNotMatch(otpToastText, /otp-invalid|401/i);
+        // Valid OTP signs in and proceeds directly into checkout order creation
+        const orderRequest = shop.waitForRequest(req => req.url().endsWith("/api/rulebooks/catalog") && req.method() === "POST");
+        await shop.fill("#auth-otp-input", validOtp);
+        await shop.fill("#auth-name-input", "Pembeli 1");
+        await shop.getByTestId("auth-verify-otp").click();
+        await authModal.waitFor({ state: "hidden" });
+        checkout = (await orderRequest).postDataJSON();
+        await shop.getByTestId("auth-chip-account").waitFor();
+        assert.match(await shop.getByTestId("auth-chip-account").innerText(), /Pembeli 1/);
+      } else {
+        const orderRequest = shop.waitForRequest(req => req.url().endsWith("/api/rulebooks/catalog") && req.method() === "POST");
+        await shop.getByRole("button", { name: "Beli paket · Uji pembayaran" }).click();
+        checkout = (await orderRequest).postDataJSON();
+      }
       await shop.getByRole("button", { name: "Cek status pembayaran" }).waitFor();
       await shop.reload();
       await shop.getByRole("button", { name: "Cek status pembayaran" }).click();
@@ -580,8 +622,9 @@ try {
       assert.equal(new URL(shop.url()).searchParams.get("room"), null);
       await shop.getByRole("button", { name: "Simulasikan pembayaran berhasil" }).click();
 
-      // Settlement binds pack permanently to the signed-in account and enters room #1 directly
+      // Settlement binds pack permanently to the signed-in account and enters room #1 directly (no restore-code card)
       await shop.getByText("Pass Berbayar").waitFor();
+      assert.equal(await shop.getByTestId("restore-code-card").count(), 0, "Superseded restore-code-card must not render");
       const roomCode = new URL(shop.url()).searchParams.get("room");
       const roomResponse = await buyer.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`);
       const { pass } = await roomResponse.json();
@@ -650,15 +693,34 @@ try {
     }
   }
 
-  // Fresh isolated browser profile (new cookie jar): signing in with the same email unlocks owned pack immediately!
+  // Fresh isolated browser profile (new cookie jar): signing in through the 2-step Email OTP UI unlocks owned pack immediately!
   now += 61_000;
-  const newPhone = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await signInQaContext(newPhone, baseUrl, "buyer-v1@kelana.test", "Pembeli 1");
+  const newPhone = await browser.newContext({ viewport: { width: 320, height: 640 } });
   const phonePage = await newPhone.newPage();
   try {
     await phonePage.goto(baseUrl);
     const ownedCardOnNewPhone = phonePage.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="1"]`);
+    await ownedCardOnNewPhone.waitFor();
+    assert.equal(await ownedCardOnNewPhone.getByTestId("owned-badge").count(), 0, "Guest on fresh device must not see Dimiliki before sign-in");
+    await phonePage.getByTestId("auth-chip-signin").click();
+    const phoneAuthModal = phonePage.getByTestId("auth-modal");
+    await phoneAuthModal.waitFor();
+    assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on auth modal at 320x640");
+    await phonePage.fill("#auth-email-input", "buyer-v1@kelana.test");
+    await phonePage.getByTestId("auth-send-otp").click();
+    const phoneOtpCode = (await phonePage.getByTestId("auth-sandbox-code").innerText()).trim();
+    assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on OTP step at 320x640");
+    await phonePage.fill("#auth-otp-input", phoneOtpCode);
+    await phonePage.getByTestId("auth-verify-otp").click();
+    await phoneAuthModal.waitFor({ state: "hidden" });
     await ownedCardOnNewPhone.getByTestId("owned-badge").waitFor();
+    await phonePage.getByTestId("auth-chip-account").click();
+    await phonePage.getByTestId("auth-owned-count").waitFor();
+    assert.match(await phonePage.getByTestId("auth-owned-count").innerText(), /1 paket dimiliki/);
+    assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on account sheet at 320x640");
+    await phonePage.keyboard.press("Escape");
+    await phoneAuthModal.waitFor({ state: "hidden" });
+    assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on signed-in catalog at 320x640");
     await ownedCardOnNewPhone.click();
     await phonePage.getByRole("button", { name: "Main Solo", exact: true }).click();
     await phonePage.getByText("Pass Berbayar").waitFor();

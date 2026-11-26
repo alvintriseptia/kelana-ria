@@ -22,6 +22,7 @@ import { fetchApiJson, resolvePlayerError, type PlayerErrorSurface, type PlayerE
 import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { clearActiveRoom, saveActiveRoom } from "./active-room-storage";
+import { fetchAuthMe, getCachedAuth, onAuthChange, openAuthModal } from "./auth-modal";
 import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
 import { answerText, incomingQuestion, questionDeck, questionNames, questionOptions, rewardCard } from "./seek-game-panels";
 import "./rulebook-seek-play.css";
@@ -192,10 +193,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let listings: PublicListing[] = [];
   let ownedPackIds: string[] = [];
   let entitlements: RulebookEntitlementSummary[] = [];
-  let settledRestore: { roomCode: string; restoreCode: string; copied: boolean } | null = null;
   let roomCode = new URLSearchParams(location.search).get("room") ?? "";
   let joinCode = roomCode;
-  let joinName = "Pemain Baru";
+  let joinName = getCachedAuth()?.user?.displayName || "Pemain Baru";
+  let joinNameEdited = false;
   let foundCodeDraft = "";
   let live: RoomPayload | null = null;
   let cachedBoard: { code: string; board: SeekPublicBoard } | null = null;
@@ -1033,21 +1034,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         .join("")}
 
       ${
-        settledRestore
-          ? `<div class="rb-card" data-testid="restore-code-card">
-              <div class="rb-badges"><span class="rb-badge rb-badge-owned"><span aria-hidden="true">✓</span> Dimiliki</span></div>
-              <h3>Simpan Kode Pemulihan</h3>
-              <p>Paket ini sekarang milikmu dan bisa dimainkan ulang kapan saja. Simpan kode ini sebelum masuk ruang:</p>
-              <p><code data-testid="restore-code-value">${escapeText(settledRestore.restoreCode)}</code></p>
-              <div class="rb-actions">
-                <button type="button" class="secondary" data-action="copy-settled-restore">${settledRestore.copied ? "✓ Tersalin" : "Salin kode"}</button>
-                <button type="button" class="primary" data-action="enter-settled-room">Masuk Ruang (${escapeText(settledRestore.roomCode)})</button>
-              </div>
-            </div>`
-          : ""
-      }
-
-      ${
         activeOrderId
           ? `<div class="rb-card">
               <h3>Pembayaran Uji Midtrans</h3>
@@ -1555,7 +1541,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) return;
     if (target.id === "rb-join-code") joinCode = target.value;
-    if (target.id === "rb-join-name") joinName = target.value;
+    if (target.id === "rb-join-name") {
+      joinName = target.value;
+      joinNameEdited = true;
+    }
     if (target.id === "rb-found-input") foundCodeDraft = target.value;
     if (target.id === "sg-radius") {
       radiusDraft = target.value;
@@ -1646,24 +1635,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
     const action = btn.dataset.action;
     if (!action) return;
-    if (action === "copy-settled-restore" && settledRestore) {
-      const codeToCopy = settledRestore.restoreCode;
-      void (async () => {
-        let copied = false;
-        try {
-          if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(codeToCopy);
-            copied = true;
-          }
-        } catch {
-          copied = false;
-        }
-        if (lifecycle.signal.aborted || !settledRestore) return;
-        settledRestore = { ...settledRestore, copied };
-        render();
-      })();
-      return;
-    }
     if (action === "refresh") {
       const menu = btn.closest<HTMLDetailsElement>(".sg-room-menu");
       if (menu) {
@@ -1821,7 +1792,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           });
           clearPendingAction(persistKey);
           if (ok && res.ok && res.roomCode) {
-            settledRestore = null;
             roomCode = res.roomCode;
             joinCode = res.roomCode;
             statusMsg = `Ruang ${roomCode} berhasil dibuat.`;
@@ -1847,7 +1817,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
           busy = true;
           render();
           try {
-            settledRestore = null;
             roomCode = targetRoom;
             joinCode = targetRoom;
             toast.clear();
@@ -1857,21 +1826,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             busy = false;
             render();
           }
-        }
-      } else if (action === "enter-settled-room" && settledRestore) {
-        const targetRoom = settledRestore.roomCode;
-        busy = true;
-        render();
-        try {
-          settledRestore = null;
-          roomCode = targetRoom;
-          joinCode = targetRoom;
-          toast.clear();
-          toast.resetDedupe();
-          await refreshRoom(false, false, true);
-        } finally {
-          busy = false;
-          render();
         }
       } else if (action === "buy-pack") {
         busy = true;
@@ -1896,6 +1850,13 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             statusMsg = `Order ${activeOrderId} dibuat (Uji Pembayaran).`;
             toast.clear();
             toast.resetDedupe();
+          } else if (status === 401 || res.error === "auth-required") {
+            openAuthModal({
+              reason: "Masuk dengan email agar paket tersimpan permanen di akunmu.",
+              onSignedIn: () => {
+                if (!lifecycle.signal.aborted) void loadCatalog();
+              },
+            });
           } else {
             reportError({ error: res.error ?? "invalid-request", status }, { surface: "checkout", action: "buy-pack", target: packId }, "catalog");
             if (res.error === "pack-already-owned") void loadCatalog();
@@ -1914,7 +1875,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         render();
         const orderId = btn.dataset.order ?? "";
         try {
-          const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; pass?: { roomCode: string }; restoreCode?: string; error?: string }>("/api/rulebooks", {
+          const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; pass?: { roomCode: string }; error?: string }>("/api/rulebooks", {
             signal: lifecycle.signal,
             body: {
               type: "verify-settlement",
@@ -1929,16 +1890,17 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             activeOrderId = null;
             toast.clear();
             toast.resetDedupe();
-            if (res.restoreCode) {
-              settledRestore = { roomCode: res.pass.roomCode, restoreCode: res.restoreCode, copied: false };
-              statusMsg = "Pembayaran lunas! Simpan Kode Pemulihan sebelum masuk ruang.";
-              void loadCatalog();
-            } else {
-              roomCode = res.pass.roomCode;
-              joinCode = res.pass.roomCode;
-              statusMsg = `Pembayaran lunas! Ruang ${roomCode} terbuka.`;
-              await refreshRoom(false, false, true);
-            }
+            roomCode = res.pass.roomCode;
+            joinCode = res.pass.roomCode;
+            statusMsg = `Pembayaran lunas! Ruang ${roomCode} terbuka.`;
+            await refreshRoom(false, false, true);
+          } else if (status === 401 || res.error === "auth-required") {
+            openAuthModal({
+              reason: "Masuk dengan email agar paket tersimpan permanen di akunmu.",
+              onSignedIn: () => {
+                if (!lifecycle.signal.aborted) void loadCatalog();
+              },
+            });
           } else {
             reportError({ error: res.error ?? "payment-pending", status }, { surface: "checkout", action: "settle-order", target: orderId }, "catalog");
           }
@@ -2140,6 +2102,24 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     menu.querySelector("summary")?.focus({ preventScroll: true });
     event.preventDefault();
   }, { signal: lifecycle.signal });
+
+  function applySignedInJoinName(displayName?: string | null) {
+    if (!displayName || joinNameEdited) return;
+    joinName = displayName;
+    const nameInput = root.querySelector<HTMLInputElement>("#rb-join-name");
+    if (nameInput) nameInput.value = joinName;
+  }
+
+  onAuthChange((next) => {
+    applySignedInJoinName(next.user?.displayName);
+    if (!live) void loadCatalog();
+  }, lifecycle.signal);
+
+  if (!getCachedAuth()) {
+    void fetchAuthMe(lifecycle.signal).then((fresh) => {
+      if (!lifecycle.signal.aborted) applySignedInJoinName(fresh.user?.displayName);
+    });
+  }
 
   const ticker = window.setInterval(updateClock, 1000);
   void loadCatalog().catch((error) => {
