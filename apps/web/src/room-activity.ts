@@ -19,11 +19,30 @@ function readCursor(key: string): Cursor | undefined {
   return undefined;
 }
 
-export function renderRoomActivity(feed: RoomActivityFeed): string {
+export type PositionFreshness = "fresh" | "aging" | "stale";
+
+export function freshnessBucket(at: number, now: number): PositionFreshness {
+  const ageMs = Math.max(0, now - at);
+  if (ageMs < 30_000) return "fresh";
+  if (ageMs <= 120_000) return "aging";
+  return "stale";
+}
+
+export function formatRelativeAge(at: number, now: number, stalePrefix = false): string {
+  const seconds = Math.floor(Math.max(0, now - at) / 1000);
+  if (seconds < 10) return "Baru saja";
+  if (seconds < 60) return `${seconds} dtk lalu`;
+  const minutes = Math.floor(seconds / 60);
+  const label = minutes < 60 ? `${minutes} mnt lalu` : `${Math.floor(minutes / 60)} jam lalu`;
+  return stalePrefix && seconds > 120 ? `Terakhir dilihat ${label}` : label;
+}
+
+export function renderRoomActivity(feed: RoomActivityFeed, now?: number): string {
+  const refNow = now ?? Date.now();
   return `<section aria-label="Aktivitas terbaru">
     <h2 tabindex="-1" data-activity-heading>Aktivitas terbaru</h2>
     ${feed.events.length ? `<ol class="room-activity-list">${feed.events.slice().reverse().map(event =>
-    `<li data-activity-event="${event.sequence}">${escapeText(event.text)}</li>`).join("")}</ol>`
+    `<li data-activity-event="${event.sequence}"><span class="room-activity-text">${escapeText(event.text)}</span><time class="room-activity-age" data-activity-at="${event.at}">${escapeText(formatRelativeAge(event.at, refNow))}</time></li>`).join("")}</ol>`
     : "<p>Belum ada aktivitas.</p>"}
   </section>`;
 }

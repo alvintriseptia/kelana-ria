@@ -1,6 +1,6 @@
-import type { RoomActivityEvent, RoomActivityFeed } from "@kelana-ria/contracts";
+import type { ClaimSeatPosition, RoomActivityEvent, RoomActivityFeed } from "@kelana-ria/contracts";
 import { playGameMotion } from "./game-motion";
-import { createRoomActivityUi, renderRoomActivity } from "./room-activity";
+import { createRoomActivityUi, formatRelativeAge, freshnessBucket, renderRoomActivity } from "./room-activity";
 import type {
   ClaimActiveAttemptView,
   ClaimCardInstance,
@@ -19,7 +19,7 @@ import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { claimDecidingMetric, claimResultReasons } from "./rulebook-claim-result";
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { clearActiveRoom, saveActiveRoom } from "./active-room-storage";
-import { createRoomEventBridge } from "./room-events";
+import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
 import { escapeText } from "./solo-view";
 import "./rulebook-seek-play.css";
 import "./rulebook-claim-play.css";
@@ -162,6 +162,28 @@ function teamName(room: ClaimEngineRoomView, teamId: string): string {
   return names.length ? names.join(", ") : teamId;
 }
 
+function seatInitials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  return (parts[0] ?? "P").slice(0, 2).toUpperCase();
+}
+
+function zoneLabelFor(room: ClaimEngineRoomView, zoneId?: string): string {
+  if (!zoneId) return "";
+  const zone = room.zones.find(z => z.zoneId === zoneId);
+  return zone?.name || zone?.label || "";
+}
+
+function approxMeters(a: GeoCoordinate, b: GeoCoordinate): number {
+  const rad = Math.PI / 180;
+  const dLat = (b.latitude - a.latitude) * rad;
+  const dLng = (b.longitude - a.longitude) * rad;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(a.latitude * rad) * Math.cos(b.latitude * rad) * Math.sin(dLng / 2) ** 2;
+  return 12_742_000 * Math.asin(Math.sqrt(Math.min(1, s)));
+}
+
 function clockLabel(ms: number): string {
   const seconds = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
@@ -207,6 +229,169 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let inlineError: ClaimInlineError = null;
   let busy = false;
   const lifetime = new AbortController();
+  let connectionState: RoomConnectionState = typeof navigator === "undefined" || navigator.onLine ? "connected" : "offline";
+  const wakeLockSupported = typeof navigator !== "undefined" && "wakeLock" in navigator;
+  let wakeLockWanted = false;
+  let wakeLockSentinel: { release: () => Promise<void>; addEventListener?: (type: string, cb: () => void) => void } | null = null;
+  let presenceWatchId: number | null = null;
+  let presenceInFlight = false;
+  let forcePresenceCatchUp = true;
+  let lastPresenceSentAt = 0;
+  let lastPresenceCoord: GeoCoordinate | null = null;
+  let selectedRivalPinSeatId = "";
+
+  function updateConnectionPill() {
+    const pill = root.querySelector<HTMLElement>("[data-cg-conn-pill]");
+    if (!pill) return;
+    pill.hidden = connectionState === "connected";
+    pill.textContent = connectionState === "offline" ? "Luring · menunggu koneksi" : "Menyambungkan ulang…";
+  }
+
+  function releaseWakeLock() {
+    const sentinel = wakeLockSentinel;
+    wakeLockSentinel = null;
+    if (sentinel) void sentinel.release().catch(() => {});
+  }
+
+  async function syncWakeLock() {
+    const active = Boolean(
+      wakeLockSupported &&
+      wakeLockWanted &&
+      live &&
+      live.room.phase === "active" &&
+      !live.room.outcome &&
+      !document.hidden &&
+      !lifetime.signal.aborted,
+    );
+    if (!active) {
+      releaseWakeLock();
+      return;
+    }
+    if (wakeLockSentinel) return;
+    try {
+      const wl = (navigator as Navigator & { wakeLock?: { request: (type: "screen") => Promise<typeof wakeLockSentinel> } }).wakeLock;
+      const sentinel = await wl?.request("screen");
+      if (!sentinel) return;
+      if (lifetime.signal.aborted || !wakeLockWanted || document.hidden || !live || live.room.phase !== "active" || live.room.outcome) {
+        void sentinel.release().catch(() => {});
+        return;
+      }
+      wakeLockSentinel = sentinel;
+      sentinel.addEventListener?.("release", () => {
+        if (wakeLockSentinel === sentinel) wakeLockSentinel = null;
+      });
+    } catch {
+      // Wake lock can be denied by battery saver or browser policy.
+    }
+  }
+
+  function stopPresenceWatch() {
+    if (presenceWatchId !== null && typeof navigator !== "undefined" && typeof navigator.geolocation?.clearWatch === "function") {
+      try {
+        navigator.geolocation.clearWatch(presenceWatchId);
+      } catch {
+        // Ignore clearWatch errors on mocked geolocation objects.
+      }
+    }
+    presenceWatchId = null;
+  }
+
+  function canPublishPresence(): boolean {
+    return Boolean(
+      !lifetime.signal.aborted &&
+      live &&
+      roomCode &&
+      live.room.phase === "active" &&
+      !live.room.isSolo &&
+      !live.room.outcome &&
+      live.room.opponentTracking?.mode === "periodic_gps" &&
+      !document.hidden &&
+      navigator.onLine,
+    );
+  }
+
+  function publishPresenceFix(coord: GeoCoordinate, accuracy: number) {
+    if (!canPublishPresence() || presenceInFlight || !live) return;
+    const nowWall = Date.now();
+    const minThrottleMs = 3_200;
+    const intervalMs = Math.max(minThrottleMs, Math.min(8_000, live.room.opponentTracking?.intervalMs ?? 10_000));
+    const elapsed = nowWall - lastPresenceSentAt;
+    const moved = lastPresenceCoord ? approxMeters(lastPresenceCoord, coord) : Infinity;
+    const shouldSend =
+      forcePresenceCatchUp ||
+      !lastPresenceCoord ||
+      elapsed >= intervalMs ||
+      (moved >= 10 && elapsed >= minThrottleMs);
+    if (!shouldSend) return;
+
+    const codeAtSend = roomCode;
+    const fix = {
+      latitude: coord.latitude,
+      longitude: coord.longitude,
+      accuracy: Number.isFinite(accuracy) && accuracy >= 0 ? accuracy : 10,
+      timestamp: demoLocation ? live.room.now : Math.max(0, nowWall + serverOffset - 1_000),
+    };
+    presenceInFlight = true;
+    forcePresenceCatchUp = false;
+    lastPresenceSentAt = nowWall;
+    lastPresenceCoord = { latitude: fix.latitude, longitude: fix.longitude };
+    void fetchApiJson<{ ok?: boolean }>(`/api/rulebooks/rooms/${encodeURIComponent(codeAtSend)}/presence`, {
+      signal: lifetime.signal,
+      body: { fix },
+    })
+      .catch(() => {})
+      .finally(() => {
+        presenceInFlight = false;
+      });
+  }
+
+  function syncPresenceWatch() {
+    if (!canPublishPresence()) {
+      stopPresenceWatch();
+      return;
+    }
+    if (presenceWatchId !== null) return;
+    if (typeof navigator === "undefined" || typeof navigator.geolocation?.watchPosition !== "function") return;
+    try {
+      presenceWatchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          publishPresenceFix(
+            { latitude: pos.coords.latitude, longitude: pos.coords.longitude },
+            pos.coords.accuracy,
+          );
+        },
+        () => {
+          // Silently fall back to verified check-in markers if GPS is denied or unavailable.
+        },
+        { enableHighAccuracy: true, maximumAge: 5_000, timeout: 15_000 },
+      );
+    } catch {
+      presenceWatchId = null;
+    }
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (lifetime.signal.aborted) return;
+    if (document.hidden) {
+      stopPresenceWatch();
+      releaseWakeLock();
+      return;
+    }
+    forcePresenceCatchUp = true;
+    syncPresenceWatch();
+    void syncWakeLock();
+  }, { signal: lifetime.signal });
+
+  window.addEventListener("offline", () => {
+    stopPresenceWatch();
+  }, { signal: lifetime.signal });
+
+  window.addEventListener("online", () => {
+    if (lifetime.signal.aborted) return;
+    forcePresenceCatchUp = true;
+    syncPresenceWatch();
+  }, { signal: lifetime.signal });
+
   const roomEvents = createRoomEventBridge({
     signal: lifetime.signal,
     getActiveRoom: () =>
@@ -215,6 +400,23 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         : null,
     isBusy: () => busy,
     onSync: () => refreshRoom(false, true),
+    onPresence: (positions: ClaimSeatPosition[], eventNow: number) => {
+      if (!live || live.room.code !== roomCode || live.room.phase !== "active" || live.room.outcome) return;
+      live.room.seatPositions = positions;
+      serverOffset = eventNow - Date.now();
+      if (claimMapHandle && claimMapRoomCode === live.room.code && !mapFailed) {
+        claimMapHandle.update(buildClaimMapState(live));
+      }
+      if (panel === "score" || selectedRivalPinSeatId || mapFailed) {
+        render();
+      } else {
+        updateClocks();
+      }
+    },
+    onConnectionChange: (state) => {
+      connectionState = state;
+      updateConnectionPill();
+    },
   });
   const toast = createPlayerToast({ signal: lifetime.signal, layout: "page" });
   let demoLocation = false;
@@ -652,10 +854,40 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
   function buildClaimMapState(payload: ClaimRoomPayload): BoardMapUpdateOptions {
     const { room, publicBoard } = payload;
+    const mapNow = Date.now() + serverOffset;
     const stateById = new Map(room.landmarks.map(lm => [lm.landmarkId, lm]));
     const targets = panel === "cards" && !folded
       ? cardTargets(room, room.ownHand.find(card => card.instanceId === selectedCardId))
       : [];
+    const rivalPins =
+      room.phase === "active" && !room.isSolo && !room.outcome && room.opponentTracking?.mode !== "off"
+        ? (room.seatPositions ?? [])
+            .filter(pos => pos.seatId !== room.seatId)
+            .map((pos) => {
+              const bucket = freshnessBucket(pos.at, mapNow);
+              const zoneName = zoneLabelFor(room, pos.zoneId);
+              const ageLabel = formatRelativeAge(pos.at, mapNow, true);
+              return {
+                id: `rival:${pos.seatId}`,
+                name: pos.name,
+                latitude: pos.latitude,
+                longitude: pos.longitude,
+                x: 50,
+                y: 50,
+                label: [zoneName, ageLabel].filter(Boolean).join(" · "),
+                markerText: `▲ ${seatInitials(pos.name)}`,
+                markerKind: "rival" as const,
+                selectable: true,
+                ownerStyle: (pos.teamId === room.teamId ? "mine" : "rival") as "mine" | "rival",
+                freshness: bucket,
+                dataAttrs: {
+                  "data-rival-seat": pos.seatId,
+                  "data-freshness": bucket,
+                  "data-source": pos.source,
+                },
+              };
+            })
+        : [];
     return {
       start: {
         id: payload.publicBoard.startPoint.id,
@@ -667,28 +899,31 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       },
       startLabel: "Awal",
       fitPadding: { top: 145, bottom: 205, left: 34, right: 34 },
-      selectedId,
+      selectedId: selectedRivalPinSeatId ? `rival:${selectedRivalPinSeatId}` : selectedId,
       onSelect: selectLandmark,
-      checkpoints: payload.publicBoard.landmarks.map((lm) => {
-        const st = stateById.get(lm.id);
-        return {
-          id: lm.id,
-          name: lm.name,
-          zone: lm.zoneId,
-          latitude: lm.latitude,
-          longitude: lm.longitude,
-          x: 50,
-          y: 50,
-          label: st ? `${landmarkStatus(st)}${st.ownerTeamId ? ` · ${teamName(room, st.ownerTeamId)}` : ""}` : lm.name,
-          markerText: st?.status === "locked" ? "■" : st?.status === "claimed" ? "◆" : "●",
-          markerKind: "landmark",
-          selectable: true,
-          ownerStyle: st?.ownerTeamId ? (st.ownerTeamId === room.teamId ? "mine" : "rival") : undefined,
-          eligible: targets.includes(lm.id),
-          statusTag: st?.status ?? "unclaimed",
-          dimmed: room.ownBurnedLandmarks.includes(lm.id) || (targets.length > 0 && !targets.includes(lm.id)),
-        };
-      }),
+      checkpoints: [
+        ...payload.publicBoard.landmarks.map((lm) => {
+          const st = stateById.get(lm.id);
+          return {
+            id: lm.id,
+            name: lm.name,
+            zone: lm.zoneId,
+            latitude: lm.latitude,
+            longitude: lm.longitude,
+            x: 50,
+            y: 50,
+            label: st ? `${landmarkStatus(st)}${st.ownerTeamId ? ` · ${teamName(room, st.ownerTeamId)}` : ""}` : lm.name,
+            markerText: st?.status === "locked" ? "■" : st?.status === "claimed" ? "◆" : "●",
+            markerKind: "landmark" as const,
+            selectable: true,
+            ownerStyle: (st?.ownerTeamId ? (st.ownerTeamId === room.teamId ? "mine" : "rival") : undefined) as "mine" | "rival" | undefined,
+            eligible: targets.includes(lm.id),
+            statusTag: st?.status ?? "unclaimed",
+            dimmed: room.ownBurnedLandmarks.includes(lm.id) || (targets.length > 0 && !targets.includes(lm.id)),
+          };
+        }),
+        ...rivalPins,
+      ],
       labels: room.zones.flatMap(zone => {
         const points = publicBoard.landmarks.filter(lm => lm.zoneId === zone.zoneId);
         if (points.length === 0) return [];
@@ -715,6 +950,13 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
   function selectLandmark(id: string) {
     if (busy) return;
+    if (id.startsWith("rival:")) {
+      selectedRivalPinSeatId = id.slice(6);
+      folded = false;
+      render();
+      return;
+    }
+    selectedRivalPinSeatId = "";
     selectedId = id;
     folded = false;
     if (panel !== "cards" || !selectedCardId) panel = "challenge";
@@ -1043,6 +1285,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         <ul class="rb-list">
           ${room.seats.map(seat => `<li><strong>${escapeText(seat.name)}</strong>${seat.isHost ? " · Host" : ""} · ${seat.ready ? "Siap" : "Belum siap"}</li>`).join("")}
         </ul>
+        ${pass.mode !== "solo" ? '<p class="cg-presence-notice">Lokasi dibagikan ke pemain di ruang selama ronde aktif.</p>' : ""}
         ${slotAlert("lobby-checkin")}
         <div class="rb-actions">
           <button type="button" class="secondary" data-action="sim-start-checkin">${demoLocation ? "Simulasikan Check-in Titik Awal" : "Check-in Titik Awal"}</button>
@@ -1059,6 +1302,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       <summary class="sg-quiet" aria-label="Lainnya">⋯</summary>
       <div class="sg-room-menu-actions">
         <button type="button" data-action="panel" data-panel="activity">Aktivitas terbaru</button>
+        ${wakeLockSupported ? `<button type="button" data-action="toggle-wakelock" aria-pressed="${wakeLockWanted}">Layar tetap menyala: ${wakeLockWanted ? "Aktif" : "Nonaktif"}</button>` : ""}
         <button type="button" data-action="refresh">Muat Ulang Ruang</button>
         <button type="button" data-nav="catalog">Keluar ke Katalog</button>
       </div>
@@ -1160,6 +1404,46 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       <p>${claimResultReasons[outcome.reason]}${decidingMetric ? ` Penentu kemenangan · ${decidingMetric}.` : ""}</p></div>`;
   }
 
+  function renderRivalCard(room: ClaimEngineRoomView): string {
+    if (!selectedRivalPinSeatId || room.phase !== "active" || room.isSolo || room.outcome) return "";
+    const pos = (room.seatPositions ?? []).find(p => p.seatId === selectedRivalPinSeatId);
+    if (!pos) return "";
+    const now = Date.now() + serverOffset;
+    const bucket = freshnessBucket(pos.at, now);
+    const zoneName = zoneLabelFor(room, pos.zoneId);
+    const sourceText = pos.source === "checkin" ? "Check-in landmark" : "GPS langsung";
+    const meta = [zoneName, sourceText].filter(Boolean).join(" · ");
+    return `<div class="cg-rival-card" data-testid="claim-rival-card" data-rival-seat="${escapeText(pos.seatId)}">
+      <div class="cg-rival-card-copy">
+        <strong>▲ ${escapeText(pos.name)}</strong>
+        <small>${meta ? `${escapeText(meta)} · ` : ""}<span data-cg-age-at="${pos.at}" data-cg-age-stale="1" data-freshness="${bucket}">${escapeText(formatRelativeAge(pos.at, now, true))}</span></small>
+      </div>
+      <button type="button" class="cg-rival-close" data-action="close-rival-card" aria-label="Tutup info pemain">×</button>
+    </div>`;
+  }
+
+  function renderRivalPositionsList(room: ClaimEngineRoomView): string {
+    if (room.isSolo || room.phase !== "active" || room.outcome || room.opponentTracking?.mode === "off") return "";
+    const now = Date.now() + serverOffset;
+    const posBySeat = new Map((room.seatPositions ?? []).map(p => [p.seatId, p]));
+    const others = room.seats.filter(seat => seat.seatId !== room.seatId);
+    if (others.length === 0) return "";
+    return `<h3>Posisi Pemain</h3>
+      <ul class="rb-list cg-players-list" aria-label="Posisi Pemain">${others.map(seat => {
+        const pos = posBySeat.get(seat.seatId);
+        if (!pos) {
+          return `<li data-player-seat="${escapeText(seat.seatId)}"><span><strong>▲ ${escapeText(seat.name)}</strong> · Belum ada lokasi</span></li>`;
+        }
+        const bucket = freshnessBucket(pos.at, now);
+        const zoneName = zoneLabelFor(room, pos.zoneId);
+        const sourceTag = pos.source === "checkin" ? "Check-in" : "GPS";
+        return `<li data-player-seat="${escapeText(seat.seatId)}" data-source="${escapeText(pos.source)}">
+          <span><strong>▲ ${escapeText(seat.name)}</strong>${zoneName ? ` · ${escapeText(zoneName)}` : ""} · ${sourceTag}</span>
+          <span class="cg-player-age" data-cg-age-at="${pos.at}" data-cg-age-stale="1" data-freshness="${bucket}">${escapeText(formatRelativeAge(pos.at, now, true))}</span>
+        </li>`;
+      }).join("")}</ul>`;
+  }
+
   function renderScore(room: ClaimEngineRoomView): string {
     const solo = room.soloProgress;
     return `${renderResult(room)}
@@ -1173,6 +1457,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         <small>${score.zonesControlled} zona · ${score.lockedLandmarks} terkunci · ${score.totalLandmarks} total landmark</small>
       </li>`).join("")}</ul>
       <p class="cg-rank-rule">Urutan skor · Zona dikuasai › Landmark terkunci › Total landmark</p>`}
+      ${renderRivalPositionsList(room)}
       ${room.outcome && room.startedAt !== null ? `<a class="cat-link" href="/?recap=${encodeURIComponent(room.code)}">Buka ringkasan</a>` : ""}
       ${room.outcome ? '<button type="button" class="sg-main" data-nav="catalog">Pilih Papan Lagi</button>' : ""}`;
   }
@@ -1193,7 +1478,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       const state = room.landmarks.find(item => item.landmarkId === lm.id);
       return `<li><button type="button" class="sg-pick" data-action="select-landmark" data-landmark="${escapeText(lm.id)}"
         aria-pressed="${lm.id === selectedId}">${escapeText(lm.name)}<small>${targets.includes(lm.id) ? "Target · " : ""}${state ? landmarkStatus(state) : ""}</small></button></li>`;
-    }).join("")}</ul>`;
+    }).join("")}</ul>
+    ${renderRivalPositionsList(room)}`;
   }
 
   function updateClocks() {
@@ -1201,6 +1487,31 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     for (const clock of root.querySelectorAll<HTMLElement>("[data-cg-countdown]")) {
       const label = clockLabel(Number(clock.dataset.cgCountdown) - now);
       if (clock.textContent !== label) clock.textContent = label;
+    }
+    for (const el of root.querySelectorAll<HTMLElement>("[data-activity-at]")) {
+      const label = formatRelativeAge(Number(el.dataset.activityAt), now);
+      if (el.textContent !== label) el.textContent = label;
+    }
+    for (const el of root.querySelectorAll<HTMLElement>("[data-cg-age-at]")) {
+      const at = Number(el.dataset.cgAgeAt);
+      const bucket = freshnessBucket(at, now);
+      const label = formatRelativeAge(at, now, el.dataset.cgAgeStale === "1");
+      if (el.textContent !== label) el.textContent = label;
+      if (el.dataset.freshness !== bucket) el.dataset.freshness = bucket;
+    }
+    if (live && claimMapHandle && claimMapRoomCode === live.room.code && !mapFailed && live.room.seatPositions?.length) {
+      let bucketChanged = false;
+      for (const pos of live.room.seatPositions) {
+        if (pos.seatId === live.room.seatId) continue;
+        const pin = root.querySelector<HTMLElement>(`[data-rival-seat="${CSS.escape(pos.seatId)}"]`);
+        if (pin && pin.dataset.freshness !== freshnessBucket(pos.at, now)) {
+          bucketChanged = true;
+          break;
+        }
+      }
+      if (bucketChanged) {
+        claimMapHandle.update(buildClaimMapState(live));
+      }
     }
   }
 
@@ -1218,6 +1529,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
   function render() {
     if (lifetime.signal.aborted) return;
+    syncPresenceWatch();
+    void syncWakeLock();
     activityUi.update(live?.room, live?.activity);
     const effects = liveEffects;
     liveEffects = [];
@@ -1255,7 +1568,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           <div class="sg-role cg-brand"></div>
           <div class="sg-hud-actions"><div class="sg-timer cg-timer" aria-label="Waktu ronde"></div>${renderMore()}</div>
         </header>
-        <div class="cg-map-legend" aria-label="Legenda peta">● Belum diklaim <span>◆ Rentan</span> <span>■ Terkunci</span></div>
+        <div class="cg-map-legend" aria-label="Legenda peta">● Belum diklaim <span>◆ Rentan</span> <span>■ Terkunci</span>${live.room.isSolo ? "" : " <span>▲ Pemain</span>"}</div>
+        <div class="cg-conn-pill" data-cg-conn-pill role="status" ${connectionState === "connected" ? "hidden" : ""}>${connectionState === "offline" ? "Luring · menunggu koneksi" : "Menyambungkan ulang…"}</div>
         <div class="room-activity-host"></div>
         <div class="sg-dock cg-dock">
           <div class="cg-drawer-bar"></div>
@@ -1267,6 +1581,12 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     }
     const game = root.querySelector<HTMLElement>(".cg-game")!;
     const { room } = live;
+    const wlBtn = game.querySelector<HTMLButtonElement>('[data-action="toggle-wakelock"]');
+    if (wlBtn) {
+      wlBtn.setAttribute("aria-pressed", String(wakeLockWanted));
+      wlBtn.textContent = `Layar tetap menyala: ${wakeLockWanted ? "Aktif" : "Nonaktif"}`;
+    }
+    updateConnectionPill();
     const brand = game.querySelector<HTMLElement>(".cg-brand")!;
     const boardTitle = room.packMeta.title.replace(/ · Claim the City$/, "");
     const brandHtml = `<span class="sg-role-mark" aria-hidden="true">◆</span>
@@ -1311,8 +1631,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       : "";
     sheet.dataset.draftKey = draftKey;
     sheet.hidden = folded;
-    sheet.innerHTML = `${activeScreenAlert}
-      ${panel === "activity" ? renderRoomActivity(live.activity) : panel === "cards" ? renderCards(room) : panel === "score" ? renderScore(room) : `
+    sheet.innerHTML = `${activeScreenAlert}${renderRivalCard(room)}
+      ${panel === "activity" ? renderRoomActivity(live.activity, Date.now() + serverOffset) : panel === "cards" ? renderCards(room) : panel === "score" ? renderScore(room) : `
         ${room.ownActiveAttempt
           ? renderActiveAttempt(room.ownActiveAttempt, room) + (room.ownActiveAttempt.landmarkId !== selectedId && selectedId ? renderLandmark(live) : "")
           : renderLandmark(live)}
@@ -1417,7 +1737,9 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       live = null;
       roomCode = "";
       joinCode = "";
-      selectedId = selectedCardId = selectedRivalId = challengeHandId = "";
+      selectedId = selectedCardId = selectedRivalId = selectedRivalPinSeatId = challengeHandId = "";
+      stopPresenceWatch();
+      releaseWakeLock();
       panel = "challenge";
       mapFailed = false;
       folded = false;
@@ -1435,6 +1757,18 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
     const action = btn.dataset.action;
     if (!action) return;
+    if (action === "toggle-wakelock") {
+      wakeLockWanted = !wakeLockWanted;
+      void syncWakeLock();
+      btn.closest<HTMLDetailsElement>(".sg-room-menu")?.removeAttribute("open");
+      render();
+      return;
+    }
+    if (action === "close-rival-card") {
+      selectedRivalPinSeatId = "";
+      render();
+      return;
+    }
     if (action === "copy-settled-restore" && settledRestore) {
       const codeToCopy = settledRestore.restoreCode;
       void (async () => {
@@ -1747,6 +2081,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   const clock = window.setInterval(updateClocks, 250);
   return () => {
     lifetime.abort();
+    stopPresenceWatch();
+    releaseWakeLock();
     roomEvents.destroy();
     root.removeAttribute("aria-busy");
     window.clearInterval(clock);

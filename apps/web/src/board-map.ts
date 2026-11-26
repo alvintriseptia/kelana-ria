@@ -18,8 +18,10 @@ export type BoardMapRadarCircle = {
 export type BoardMapPoint = SoloPoint & {
   label?: string;
   markerText?: string;
-  markerKind?: "thermometer" | "seeker" | "station" | "landmark" | "zone";
+  markerKind?: "thermometer" | "seeker" | "station" | "landmark" | "zone" | "rival";
   ownerStyle?: "mine" | "rival";
+  freshness?: "fresh" | "aging" | "stale";
+  dataAttrs?: Record<string, string>;
   eligible?: boolean;
   claimed?: boolean;
   selectable?: boolean;
@@ -569,6 +571,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       id: string;
       tag: "BUTTON" | "SPAN";
       classes: string[];
+      dataAttrs?: Record<string, string>;
       text: string;
       title?: string;
       ariaLabel: string;
@@ -611,17 +614,32 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
           point.markerKind ? `board-map-pin-${point.markerKind}` : "",
           point.statusTag ? `board-map-pin-${point.statusTag}` : "",
           point.ownerStyle ? `board-map-pin-${point.ownerStyle}` : "",
+          point.freshness ? `board-map-pin-${point.freshness}` : "",
           point.eligible ? "board-map-pin-eligible" : "",
           index < current.checkpoints.length && point.id === selectedId ? "board-map-pin-selected" : "",
         ].filter(Boolean),
+        dataAttrs: point.dataAttrs,
         text: point.markerText ?? (point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`),
-        title: point.markerKind === "station" || point.markerKind === "landmark" ? point.name : undefined,
+        title: point.markerKind === "station" || point.markerKind === "landmark" || point.markerKind === "rival" ? point.name : undefined,
         ariaLabel: point.label ? `${point.name} (${point.label})` : point.name,
         lat: point.latitude,
         lng: point.longitude,
         onClick: () => current.onSelect?.(pointId),
       });
     });
+
+    const syncDataAttrs = (el: HTMLElement, next?: Record<string, string>) => {
+      for (const attr of Array.from(el.attributes)) {
+        if (attr.name.startsWith("data-") && attr.name !== "data-map-point" && (!next || !(attr.name in next))) {
+          el.removeAttribute(attr.name);
+        }
+      }
+      if (next) {
+        for (const [k, v] of Object.entries(next)) {
+          if (el.getAttribute(k) !== v) el.setAttribute(k, v);
+        }
+      }
+    };
 
     const seenKeys = new Set<string>();
     for (const item of desired) {
@@ -630,6 +648,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       if (existing && existing.tag === item.tag) {
         existing.onClick = item.onClick;
         existing.customClassList = syncPinClasses(existing.el, existing.customClassList, item.classes);
+        syncDataAttrs(existing.el, item.dataAttrs);
         if (existing.el.textContent !== item.text) existing.el.textContent = item.text;
         existing.el.dataset.mapPoint = item.id;
         existing.el.setAttribute("aria-label", item.ariaLabel);
@@ -660,6 +679,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
           el.addEventListener("click", () => entry.onClick());
         }
         el.classList.add(...item.classes);
+        syncDataAttrs(el, item.dataAttrs);
         if (item.title !== undefined) el.title = item.title;
         el.dataset.mapPoint = item.id;
         el.textContent = item.text;
