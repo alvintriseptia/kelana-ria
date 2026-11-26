@@ -157,7 +157,7 @@ The main references are [Taiwan: Rail Rush](https://nebula.tv/jetlag/season/17) 
 
 **Field settings, configurable per board.** Suggested QA fixture only: 100 m radius, maximum reported accuracy 50 m, maximum fix age 30 s. Use inclusive thresholds for distance and accuracy. Match the received sample to its timestamp. These values require field checks at street level on a typical Android phone. Store checkpoint ID and success for gameplay; discard raw coordinates and precision after the check. Showing visited checkpoints is sufficient for the round recap.
 
-Travel restrictions operate by the visible board and player agreement. Only designated public points trigger game actions. The MVP does not record continuous routes to police how players travel. Show the difference between routes available to travel and checkpoints eligible for scoring or hiding.
+Travel restrictions operate by the visible board and player agreement. Only designated public points trigger game actions. The MVP does not record continuous route histories or store raw GPS tracks to police how players travel. In multiplayer Claim the City, an active match may optionally share ephemeral, in-memory foreground player positions (`opponentTracking` rulebook setting, defaulting to periodic GPS with last-check-in fallback) over the room event stream so rivals can read board positioning during play; raw coordinates are never written to SQLite or recaps and are wiped immediately when the match ends. Hide & Seek never broadcasts hider live coordinates—hider location remains strictly private behind server-verified clues. Show the difference between routes available to travel and checkpoints eligible for scoring or hiding.
 
 ## 7. AI editions and transit data
 
