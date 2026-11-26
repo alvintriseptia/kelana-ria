@@ -21,9 +21,46 @@ export function credential(request: IncomingMessage, cookieName: string) {
   return match?.[1];
 }
 
-export function setCredential(request: IncomingMessage, response: ServerResponse, name: string, token: string, path: string, secureCookie: boolean) {
+export function appendSetCookie(response: ServerResponse, cookieHeader: string) {
+  const existing = response.getHeader("Set-Cookie");
+  if (existing === undefined) {
+    response.setHeader("Set-Cookie", cookieHeader);
+    return;
+  }
+  const list = Array.isArray(existing) ? existing.map(String) : [String(existing)];
+  response.setHeader("Set-Cookie", [...list, cookieHeader]);
+}
+
+export function setCredential(
+  request: IncomingMessage,
+  response: ServerResponse,
+  name: string,
+  token: string,
+  path: string,
+  secureCookie: boolean,
+  sameSite: "Strict" | "Lax" = "Strict",
+  maxAgeSeconds = 2_592_000,
+) {
   const secure = secureCookie || request.socket instanceof TLSSocket;
-  response.setHeader("Set-Cookie", `${name}=${token}; Path=${path}; HttpOnly; SameSite=Strict; Max-Age=2592000${secure ? "; Secure" : ""}`);
+  appendSetCookie(
+    response,
+    `${name}=${token}; Path=${path}; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`,
+  );
+}
+
+export function clearCookie(
+  request: IncomingMessage,
+  response: ServerResponse,
+  name: string,
+  path: string,
+  secureCookie: boolean,
+  sameSite: "Strict" | "Lax" = "Lax",
+) {
+  const secure = secureCookie || request.socket instanceof TLSSocket;
+  appendSetCookie(
+    response,
+    `${name}=; Path=${path}; HttpOnly; SameSite=${sameSite}; Max-Age=0${secure ? "; Secure" : ""}`,
+  );
 }
 
 export function json(

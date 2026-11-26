@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { openEdition } from "./catalog.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
-import { openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
+import { openReview, reviewerKey, signInQaContext, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -24,6 +24,7 @@ const server = createSoloServer({
   midtrans: createRecordedMidtransAdapter(),
   allowSimulatedLocation: true,
   allowRulebookSandboxCheckout: true,
+  allowSandboxAuthOtp: true,
   rulebookReviewerKey: reviewerKey,
 });
 
@@ -450,6 +451,7 @@ try {
 
   // 3. Creator opens unified Studio directly from /, clones Official Claim pack, walks 4-step stepper, publishes, buys via Midtrans
   const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await signInQaContext(ctxCreator, baseUrl, "claim-creator@kelana.test", "Kreator Claim");
   const pageCreator = await ctxCreator.newPage();
   await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
   await pageCreator.click("#chooser-studio");
@@ -542,9 +544,9 @@ try {
   assert.equal(catalogData.editions.filter(item => item.packId === fixture.meta.packId).length, 2);
   assert.equal(JSON.stringify(catalogData).includes("rahasia-jawaban-senopati"), false);
 
-  let savedRestoreCodeForV1 = "";
   for (const version of [1, 2]) {
     const buyer = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await signInQaContext(buyer, baseUrl, `buyer-v${version}@kelana.test`, `Pembeli ${version}`);
     const shop = await buyer.newPage();
     try {
       await shop.goto(baseUrl);
@@ -578,15 +580,7 @@ try {
       assert.equal(new URL(shop.url()).searchParams.get("room"), null);
       await shop.getByRole("button", { name: "Simulasikan pembayaran berhasil" }).click();
 
-      // Confirmation card displays one-time Kode Pemulihan with copy CTA before entering room #1
-      const restoreCard = shop.getByTestId("restore-code-card");
-      await restoreCard.waitFor();
-      const restoreCode = (await shop.getByTestId("restore-code-value").innerText()).trim();
-      assert.match(restoreCode, /^KLR-[A-Z0-9]{4}-[A-Z0-9]{4}$/, "Restore code must match KLR-XXXX-XXXX format");
-      assert.ok(await shop.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on restore-code card");
-      await shop.getByRole("button", { name: "Salin kode" }).click();
-      await shop.getByRole("button", { name: "Masuk Ruang" }).click();
-
+      // Settlement binds pack permanently to the signed-in account and enters room #1 directly
       await shop.getByText("Pass Berbayar").waitFor();
       const roomCode = new URL(shop.url()).searchParams.get("room");
       const roomResponse = await buyer.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`);
@@ -604,7 +598,6 @@ try {
       await shop.reload();
       await shop.getByText("Pass Berbayar").waitFor();
       if (version === 1) {
-        savedRestoreCodeForV1 = restoreCode;
         // Return to catalog while room #1 is still active -> shows Dimiliki badge and resume CTA
         await shop.goto(baseUrl);
         const ownedCard = shop.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="1"]`);
@@ -626,7 +619,7 @@ try {
         await shop.getByText("Pass Berbayar").waitFor();
         const replayRoomCode = new URL(shop.url()).searchParams.get("room");
         assert.ok(replayRoomCode && replayRoomCode !== roomCode, "Owner must launch a brand new room #2 without re-paying");
-        // Close room #2 so restored device can launch room #3 cleanly
+        // Close room #2 so second device signed into same account can launch room #3 cleanly
         await buyer.request.post(`${baseUrl}/api/rulebooks`, {
           data: { type: "room-action", roomCode: replayRoomCode, action: { type: "leave", actionId: "leave-paid-room-2" } },
         });
@@ -657,31 +650,20 @@ try {
     }
   }
 
-  // Fresh isolated browser profile (new cookie): invalid restore code shows toast, valid code unlocks pack & launches room
-  assert.ok(savedRestoreCodeForV1, "Expected saved restore code from v1 purchase");
+  // Fresh isolated browser profile (new cookie jar): signing in with the same email unlocks owned pack immediately!
+  now += 61_000;
   const newPhone = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  await signInQaContext(newPhone, baseUrl, "buyer-v1@kelana.test", "Pembeli 1");
   const phonePage = await newPhone.newPage();
   try {
     await phonePage.goto(baseUrl);
-    await phonePage.getByRole("button", { name: "Pulihkan paket" }).click();
-    await phonePage.getByTestId("restore-modal").waitFor();
-    assert.ok(await phonePage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow in restore modal");
-    await phonePage.fill("#cat-restore-input", "KLR-ZZZZ-9999");
-    await phonePage.getByRole("button", { name: "Pulihkan", exact: true }).click();
-    const errToast = phonePage.getByTestId("player-toast");
-    await errToast.waitFor();
-    assert.match(await errToast.innerText(), /Kode Pemulihan tidak cocok/);
-
-    await phonePage.fill("#cat-restore-input", savedRestoreCodeForV1);
-    await phonePage.getByRole("button", { name: "Pulihkan", exact: true }).click();
-    await phonePage.getByTestId("restore-modal").waitFor({ state: "hidden" });
-    const restoredCard = phonePage.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="1"]`);
-    await restoredCard.getByTestId("owned-badge").waitFor();
-    await restoredCard.click();
+    const ownedCardOnNewPhone = phonePage.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="1"]`);
+    await ownedCardOnNewPhone.getByTestId("owned-badge").waitFor();
+    await ownedCardOnNewPhone.click();
     await phonePage.getByRole("button", { name: "Main Solo", exact: true }).click();
     await phonePage.getByText("Pass Berbayar").waitFor();
     const restoredRoomCode = new URL(phonePage.url()).searchParams.get("room");
-    assert.ok(restoredRoomCode && restoredRoomCode.startsWith("RC-"), "Restored device must launch paid room cleanly");
+    assert.ok(restoredRoomCode && restoredRoomCode.startsWith("RC-"), "Signed-in second device must launch paid room cleanly");
   } finally {
     await newPhone.close();
   }

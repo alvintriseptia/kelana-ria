@@ -1,5 +1,22 @@
 export const reviewerKey = "kelana-qa-reviewer-fixture";
 
+export async function signInQaContext(context, baseUrl, email, displayName = "Pemain QA") {
+  const req = await context.request.post(`${baseUrl}/api/auth/request-otp`, {
+    data: { email },
+  });
+  if (req.status() !== 200) {
+    throw new Error(`request-otp failed (${req.status()}): ${await req.text()}`);
+  }
+  const { challengeId, sandboxCode } = await req.json();
+  const ver = await context.request.post(`${baseUrl}/api/auth/verify-otp`, {
+    data: { challengeId, code: sandboxCode, displayName },
+  });
+  if (ver.status() !== 200) {
+    throw new Error(`verify-otp failed (${ver.status()}): ${await ver.text()}`);
+  }
+  return ver.json();
+}
+
 export async function startDraft(page, format) {
   await page.getByRole("button", { name: "Buat Game", exact: true }).click();
   await page.locator(`button[data-format="${format}"]`).click();
@@ -28,13 +45,4 @@ export async function buyPublishedDraft(page, packId, version = 1) {
   await page.locator(`.cat-card[data-pack-id="${packId}"][data-version="${version}"]`).click();
   await page.getByRole("button", { name: "Beli paket · Uji pembayaran" }).click();
   await page.getByRole("button", { name: "Simulasikan pembayaran berhasil" }).click();
-  const restoreCard = page.getByTestId("restore-code-card");
-  await restoreCard.waitFor();
-  const restoreCode = (await page.getByTestId("restore-code-value").innerText()).trim();
-  if (!/^KLR-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(restoreCode)) {
-    throw new Error(`Unexpected restore code format: ${restoreCode}`);
-  }
-  await page.getByRole("button", { name: "Salin kode" }).click();
-  await page.getByRole("button", { name: "Masuk Ruang" }).click();
-  return restoreCode;
 }

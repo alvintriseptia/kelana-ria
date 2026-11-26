@@ -2,6 +2,18 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { GameBoard, SoloAction } from "@kelana-ria/contracts";
+import { authHandler } from "./auth-http.js";
+import { authStore } from "./auth-store.js";
+import {
+  createEmailOtpAdapterFromEnv,
+  createHttpEmailOtpAdapter,
+  createRecordedEmailOtpAdapter,
+  createUnconfiguredEmailOtpAdapter,
+  type EmailOtpAdapter,
+  type EmailOtpProviderMode,
+  type RecordedEmailOtpAdapter,
+  type RedactedEmailOtpEvent,
+} from "./email-adapter.js";
 import { duoHandler } from "./duo-http.js";
 import { duoStore } from "./duo-store.js";
 import { credential, hasJsonBody, isFix, isGameBoard, isId, isObject, json, requestBody, setCredential } from "./http.js";
@@ -57,12 +69,17 @@ import { soloStore, type SoloStoreOptions } from "./solo-store.js";
 
 export type { GameBoard, GameConfiguration } from "@kelana-ria/contracts";
 export {
+  authStore,
   buildPublicEditionPrompt,
+  createEmailOtpAdapterFromEnv,
   createGeoapifyWalkingRouteProvider,
+  createHttpEmailOtpAdapter,
   createMidtransAdapterFromEnv,
   createMidtransSandboxAdapter,
   createProvidersFromEnv,
+  createRecordedEmailOtpAdapter,
   createRecordedMidtransAdapter,
+  createUnconfiguredEmailOtpAdapter,
   createWorkersAiEditionGenerator,
   DEFAULT_CLOUDFLARE_AI_BASE_URL,
   DEFAULT_CLOUDFLARE_AI_MODEL,
@@ -82,11 +99,15 @@ export {
   validatePackVersionForPublication,
   verifyMidtransSignature,
   WORKERS_AI_FREE_DAILY_NEURONS,
+  type EmailOtpAdapter,
+  type EmailOtpProviderMode,
   type MidtransAdapter,
   type MidtransNotificationPayload,
   type ProviderEvidenceMode,
+  type RecordedEmailOtpAdapter,
   type RecordedMidtransAdapter,
   type RedactedAiEvidenceEvent,
+  type RedactedEmailOtpEvent,
   type RedactedMidtransLifecycleEvent,
   type RedactedProviderEvent,
   type RedactedRouteEvidenceEvent,
@@ -293,12 +314,14 @@ export function createSoloServer({
   now = Date.now,
   secureCookie = false,
   midtrans,
+  emailAdapter,
   mapProxy,
   staticDir,
   healthMeta,
   allowSimulatedLocation = false,
   allowHideSeekQa = false,
   allowRulebookSandboxCheckout = false,
+  allowSandboxAuthOtp = false,
   rulebookReviewerKey = "",
   ...storeOptions
 }: {
@@ -306,12 +329,14 @@ export function createSoloServer({
   now?: () => number;
   secureCookie?: boolean;
   midtrans?: MidtransAdapter;
+  emailAdapter?: EmailOtpAdapter;
   mapProxy?: MapProxyOptions;
   staticDir?: string;
   healthMeta?: { aiMode: string; routeMode: string };
   allowSimulatedLocation?: boolean;
   allowHideSeekQa?: boolean;
   allowRulebookSandboxCheckout?: boolean;
+  allowSandboxAuthOtp?: boolean;
   rulebookReviewerKey?: string;
 } & SoloStoreOptions = {}) {
   const store = soloStore(databasePath, { now, ...storeOptions });
@@ -327,8 +352,28 @@ export function createSoloServer({
   const seek = seekStore(databasePath, now);
   const handleSeek = seekHandler(seek, now, secureCookie);
   const handlePacks = packHandler(packs, now, secureCookie);
+  const auth = authStore(databasePath);
+  const resolvedEmailAdapter = emailAdapter ?? createEmailOtpAdapterFromEnv(process.env, { allowSandboxFallback: allowSandboxAuthOtp });
   const rulebooks = rulebookStore(databasePath, { midtrans, now });
-  const handleRulebooks = rulebookHandler(rulebooks, now, secureCookie, allowHideSeekQa, allowRulebookSandboxCheckout, rulebookReviewerKey);
+  const handleAuth = authHandler({
+    auth,
+    emailAdapter: resolvedEmailAdapter,
+    now,
+    secureCookie,
+    allowSandboxAuthOtp,
+    onAuthenticated: (guestCredential, accountPrincipal, ts) =>
+      rulebooks.migrateOwner(guestCredential, accountPrincipal, ts).migrated,
+  });
+  const handleRulebooks = rulebookHandler(
+    rulebooks,
+    now,
+    secureCookie,
+    allowHideSeekQa,
+    allowRulebookSandboxCheckout,
+    rulebookReviewerKey,
+    handleAuth.resolveUser,
+    allowSandboxAuthOtp,
+  );
   const handleMap = mapHandler(mapProxy);
   const handleStatic = staticDir ? staticHandler(staticDir) : undefined;
   const mapMode = mapProxy?.geoapifyApiKey?.trim() ? "geoapify-vector" : "offline-vector";
@@ -345,6 +390,9 @@ export function createSoloServer({
           allowSimulatedLocation: Boolean(allowSimulatedLocation),
         });
         return;
+      }
+      if (url.pathname === "/api/auth" || url.pathname.startsWith("/api/auth/")) {
+        return await handleAuth(request, response, url);
       }
       if (url.pathname === "/api/map" || url.pathname.startsWith("/api/map/")) {
         return await handleMap(request, response, url);
@@ -473,6 +521,7 @@ export function createSoloServer({
   server.on("close", () => {
     handleRulebooks.closeStreams();
     rulebooks.close();
+    auth.close();
     seek.close();
     packs.close();
     duo.close();
@@ -489,6 +538,8 @@ if (import.meta.main) {
   const staticDir = process.env.WEB_DIST_DIR || (process.env.SERVE_WEB === "1" ? defaultWebDist : undefined);
   const allowSimulatedLocation =
     process.env.ALLOW_SIMULATED_LOCATION === "1" || process.env.NODE_ENV === "development";
+  const allowSandboxAuthOtp =
+    process.env.ALLOW_SANDBOX_AUTH_OTP === "1" || process.env.NODE_ENV === "development";
   const server = createSoloServer({
     databasePath: process.env.SOLO_DATABASE_PATH,
     secureCookie: process.env.SOLO_SECURE_COOKIE === "1",
@@ -498,6 +549,7 @@ if (import.meta.main) {
     allowSimulatedLocation,
     allowHideSeekQa: process.env.ALLOW_HIDE_SEEK_QA === "1",
     allowRulebookSandboxCheckout: process.env.ALLOW_RULEBOOK_SANDBOX_CHECKOUT === "1",
+    allowSandboxAuthOtp,
     rulebookReviewerKey: process.env.RULEBOOK_REVIEWER_KEY,
     healthMeta: { aiMode: providers.aiMode, routeMode: providers.routeMode },
     mapProxy: {

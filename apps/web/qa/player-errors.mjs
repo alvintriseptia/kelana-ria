@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { openEdition } from "./catalog.mjs";
+import { signInQaContext } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -20,6 +21,7 @@ const server = createSoloServer({
   midtrans: createRecordedMidtransAdapter(),
   allowSimulatedLocation: false,
   allowRulebookSandboxCheckout: true,
+  allowSandboxAuthOtp: true,
   rulebookReviewerKey: reviewerKey,
 });
 
@@ -120,6 +122,7 @@ async function setGeoResult(page, spec) {
 try {
   // 1. Catalog uncertain room creation retry + Pending payment inline state (390 x 844)
   const ctxCat = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
+  await signInQaContext(ctxCat, baseUrl, "errors-buyer@kelana.test", "Pembeli QA");
   const pageCat = await ctxCat.newPage();
 
   // Author & publish a paid Claim edition so we can test pending payment cleanly
@@ -204,19 +207,6 @@ try {
   assert.equal((await readAlertLog(pageCat)).length, 1);
   assert.ok(await pageCat.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageCat.screenshot({ path: path.join(results, "errors-pending-payment.png"), fullPage: true });
-
-  // 1c. Invalid restore code triggers friendly game toast without leaking raw error code
-  await pageCat.getByRole("button", { name: "Pulihkan paket" }).click();
-  await pageCat.getByTestId("restore-modal").waitFor();
-  await pageCat.fill("#cat-restore-input", "KLR-0000-BAD1");
-  await pageCat.getByRole("button", { name: "Pulihkan", exact: true }).click();
-  const restoreToast = pageCat.getByTestId("player-toast");
-  await restoreToast.waitFor();
-  const restoreToastText = await restoreToast.innerText();
-  assert.match(restoreToastText, /Kode Pemulihan tidak cocok/);
-  assertNoRawErrorLeaks(restoreToastText, "Invalid restore code toast");
-  assert.ok(await pageCat.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  await pageCat.getByRole("button", { name: "Batal", exact: true }).click();
   await ctxCat.close();
 
   // 2. Claim the City on 390 x 844: GPS denied, out-of-range check-in, stale card target toast,

@@ -314,7 +314,6 @@ export type RulebookEntitlementSummary = {
   packId: string;
   orderId: string;
   purchasedAt: number;
-  restoredAt: number | null;
   activeRoomCode: string | null;
 };
 
