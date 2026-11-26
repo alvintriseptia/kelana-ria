@@ -218,6 +218,7 @@ export type SeekEngineRoomView = {
 };
 
 export type SeekEngineAction = { actionId: string } & (
+  | { type: "rename-seat"; name: string }
   | { type: "set-turn-order"; turnOrder: string[] }
   | { type: "check-in-start"; fix: LocationFix }
   | { type: "ready"; ready: boolean }

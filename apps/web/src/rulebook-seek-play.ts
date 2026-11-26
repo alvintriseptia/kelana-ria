@@ -579,7 +579,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             type: isOwnedPaid ? "create-owned-room" : "create-free-room",
             packId: target.packId,
             version: target.version,
-            hostName: "Host",
             requestId: pending.id,
           },
         });
@@ -1785,7 +1784,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               type: isOwnedLaunch ? "create-owned-room" : "create-free-room",
               packId,
               version,
-              hostName: "Host",
               requestId: pending.id,
               ...(isQa ? { qa: true } : {}),
             },
@@ -1883,7 +1881,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               transactionStatus: "settlement",
               statusCode: "200",
               currency: "IDR",
-              hostName: "Host",
             },
           });
           if (ok && res.ok && res.pass) {

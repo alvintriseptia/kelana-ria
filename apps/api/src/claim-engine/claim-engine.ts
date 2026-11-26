@@ -556,11 +556,11 @@ export function viewClaimEngineMatch(match: ClaimEngineMatch, seatId: string, no
   }
 
   const pendingRivalPhotoReviews: ClaimPendingPhotoReview[] = [];
-  if (seat && !isSoloMatch(match)) {
+  if (seat && seat.leftAt == null && !isSoloMatch(match)) {
     for (const otherAttempt of Object.values(match.activeAttemptsBySeat)) {
       if (!otherAttempt?.pendingPhoto) continue;
       const otherSeat = findSeat(match, otherAttempt.seatId);
-      if (otherSeat && otherSeat.teamId !== seat.teamId) {
+      if (otherSeat && otherSeat.leftAt == null && otherSeat.teamId !== seat.teamId) {
         pendingRivalPhotoReviews.push({
           attemptOwnerSeatId: otherAttempt.seatId,
           landmarkId: otherAttempt.landmarkId,
@@ -584,8 +584,14 @@ export function viewClaimEngineMatch(match: ClaimEngineMatch, seatId: string, no
     phase: match.phase,
     startedAt: match.startedAt,
     deadline: match.deadline,
-    seats: match.seats.map(({ seatId, name, teamId, isHost, startVerifiedUntil, ready }) => ({
-      seatId, name, teamId, isHost, startVerifiedUntil, ready,
+    seats: match.seats.map(({ seatId, name, teamId, isHost, startVerifiedUntil, ready, leftAt }) => ({
+      seatId,
+      name,
+      teamId,
+      isHost,
+      startVerifiedUntil,
+      ready,
+      ...(leftAt != null ? { leftAt } : {}),
     })),
     landmarks: Object.values(match.landmarks).map((lm) => ({ ...lm })),
     zones,
@@ -636,6 +642,7 @@ export function applyClaimEngineAction(
   };
 
   if (match.outcome) return finish({ error: "match-finished" });
+  if (seat.leftAt != null) return finish({ error: "player-left" });
 
   switch (action.type) {
     case "leave": {
@@ -652,10 +659,51 @@ export function applyClaimEngineAction(
         const purged = finishMatch(match, "abandoned", { winnerTeamId: null, soloWon: false, reason: "abandoned", at: now });
         return finish({ purgedPhotoIds: purged });
       }
-      const otherTeams = [...new Set(match.seats.filter((s) => s.teamId !== seat.teamId).map((s) => s.teamId))];
-      const winner = otherTeams.length === 1 ? otherTeams[0] : null;
+      seat.leftAt = now;
+      const attempt = match.activeAttemptsBySeat[seatId];
+      const attemptPurged: string[] = [];
+      if (attempt?.pendingPhoto) {
+        attemptPurged.push(attempt.pendingPhoto.photoId);
+      }
+      delete match.activeAttemptsBySeat[seatId];
+
+      const activeTeams = [...new Set(match.seats.filter((s) => s.leftAt == null).map((s) => s.teamId))];
+      if (activeTeams.length >= 2) {
+        return finish({ ...(attemptPurged.length > 0 ? { purgedPhotoIds: attemptPurged } : {}) });
+      }
+      const winner = activeTeams.length === 1 ? activeTeams[0] : null;
       const purged = finishMatch(match, "finished", { winnerTeamId: winner, reason: "forfeit", at: now });
-      return finish({ purgedPhotoIds: purged });
+      return finish({ purgedPhotoIds: [...attemptPurged, ...purged] });
+    }
+
+    case "rename-seat": {
+      if (match.phase !== "lobby") return finish({ error: "room-phase-changed" });
+      const cleaned = typeof action.name === "string"
+        ? action.name.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim()
+        : "";
+      if (!cleaned || cleaned.length > 32) return finish({ error: "invalid-seat-name" });
+      seat.name = cleaned;
+      return finish();
+    }
+
+    case "set-team": {
+      if (match.phase !== "lobby") return finish({ error: "room-phase-changed" });
+      if (match.mode === "solo" || match.pack.session.maxPlayers <= 1) {
+        return finish({ error: "teams-unavailable-in-solo" });
+      }
+      const targetSeatId = action.targetSeatId ?? seatId;
+      if (targetSeatId !== seatId && !seat.isHost) {
+        return finish({ error: "host-only" });
+      }
+      const target = findSeat(match, targetSeatId);
+      if (!target) return finish({ error: "unknown-seat" });
+      const teamId = typeof action.teamId === "string" ? action.teamId.trim() : "";
+      if (!teamId || teamId.length > 32 || !/^[A-Za-z0-9_-]{1,32}$/.test(teamId)) {
+        return finish({ error: "invalid-team-id" });
+      }
+      target.teamId = teamId;
+      for (const s of match.seats) s.ready = false;
+      return finish();
     }
 
     case "check-in-start": {
@@ -684,6 +732,11 @@ export function applyClaimEngineAction(
       if (match.phase !== "lobby") return finish({ error: "room-phase-changed" });
       const minimum = match.mode === "group" ? Math.max(2, match.pack.session.minPlayers) : match.pack.session.minPlayers;
       if (match.seats.length < minimum) return finish({ error: "not-enough-players" });
+      const isGroup = match.mode === "group" || (match.mode === undefined && match.seats.length > 1);
+      if (isGroup) {
+        const distinctTeams = new Set(match.seats.map((s) => s.teamId));
+        if (distinctTeams.size < 2) return finish({ error: "not-enough-teams" });
+      }
       const allReady = match.seats.every(
         (s) => s.ready && startVerified(s, now, match.pack.session.requireStartCheckIn),
       );
@@ -970,7 +1023,7 @@ export function applyClaimEngineAction(
         case "sabotage_curse": {
           if (isSoloMatch(match)) return finish({ error: "multiplayer-only" });
           const target = action.targetSeatId ? findSeat(match, action.targetSeatId) : undefined;
-          if (!target || target.teamId === seat.teamId) return finish({ error: "invalid-curse-target" });
+          if (!target || target.teamId === seat.teamId || target.leftAt != null) return finish({ error: "invalid-curse-target" });
           const targetActiveCount = match.deck.activeCurses.filter((c) => c.targetSeatId === target.seatId).length;
           if (targetActiveCount >= match.deck.maxActiveCursesPerTarget) {
             return finish({ error: "target-curse-limit-reached" });
