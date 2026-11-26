@@ -24,11 +24,13 @@ export type StudioMapEditorOptions = {
   config: MapConfig;
   record: StudioVersionRecord;
   mode: StudioMapMode;
+  editable?: boolean;
   selectedTarget: { kind: "start" | "station" | "poi" | "landmark"; id: string } | null;
   transitStations?: StudioTransitPin[];
   onToggleTransitStation?: (stationId: string) => void;
   onMapClick: (coord: GeoCoordinate) => void;
   onSelectTarget: (target: { kind: "start" | "station" | "poi" | "landmark"; id: string }) => void;
+  onMoveTarget?: (target: { kind: "start" | "station" | "poi" | "landmark"; id: string }, coord: GeoCoordinate) => void;
   onError: () => void;
 };
 
@@ -36,18 +38,59 @@ export type StudioMapUpdate = Pick<
   StudioMapEditorOptions,
   | "record"
   | "mode"
+  | "editable"
   | "selectedTarget"
   | "transitStations"
   | "onToggleTransitStation"
   | "onMapClick"
   | "onSelectTarget"
+  | "onMoveTarget"
 >;
 
 export type StudioMapEditorHandle = {
   update: (next: StudioMapUpdate) => void;
   recenter: () => void;
+  panTo: (coord: GeoCoordinate, zoom?: number) => void;
   destroy: () => void;
 };
+
+function buildRadiusFeatures(
+  record: StudioVersionRecord,
+  selectedTarget: StudioMapEditorOptions["selectedTarget"],
+  overrideCoord?: GeoCoordinate,
+) {
+  let radiusCenter: GeoCoordinate | null = null;
+  let radiusMeters = 0;
+  if (selectedTarget) {
+    if (selectedTarget.kind === "start") {
+      radiusCenter = overrideCoord ?? record.snapshot.startPoint;
+      radiusMeters = isClaimStudioPack(record.pack)
+        ? record.pack.geography.checkInRadiusMeters
+        : record.pack.geography.hidingZoneRadiusMeters;
+    } else if (selectedTarget.kind === "station") {
+      const st = record.snapshot.stations.find((s) => s.id === selectedTarget.id);
+      if (st) {
+        radiusCenter = overrideCoord ?? st;
+        radiusMeters = isClaimStudioPack(record.pack) ? 100 : record.pack.geography.hidingZoneRadiusMeters;
+      }
+    } else if (selectedTarget.kind === "landmark" && isClaimStudioPack(record.pack)) {
+      const lm = record.pack.geography.landmarks.find((l) => l.id === selectedTarget.id);
+      if (lm) {
+        radiusCenter = overrideCoord ?? lm;
+        radiusMeters = record.pack.geography.checkInRadiusMeters;
+      }
+    }
+  }
+  return radiusCenter && radiusMeters > 0
+    ? [
+        {
+          type: "Feature" as const,
+          properties: {},
+          geometry: { type: "Polygon" as const, coordinates: [circlePolygon(radiusCenter, radiusMeters)] },
+        },
+      ]
+    : [];
+}
 
 function buildGeoJson(
   record: StudioVersionRecord,
@@ -69,38 +112,7 @@ function buildGeoJson(
         ]
       : [];
 
-  let radiusCenter: GeoCoordinate | null = null;
-  let radiusMeters = 0;
-  if (selectedTarget) {
-    if (selectedTarget.kind === "start") {
-      radiusCenter = record.snapshot.startPoint;
-      radiusMeters = isClaimStudioPack(record.pack)
-        ? record.pack.geography.checkInRadiusMeters
-        : record.pack.geography.hidingZoneRadiusMeters;
-    } else if (selectedTarget.kind === "station") {
-      const st = record.snapshot.stations.find((s) => s.id === selectedTarget.id);
-      if (st) {
-        radiusCenter = st;
-        radiusMeters = isClaimStudioPack(record.pack) ? 100 : record.pack.geography.hidingZoneRadiusMeters;
-      }
-    } else if (selectedTarget.kind === "landmark" && isClaimStudioPack(record.pack)) {
-      const lm = record.pack.geography.landmarks.find((l) => l.id === selectedTarget.id);
-      if (lm) {
-        radiusCenter = lm;
-        radiusMeters = record.pack.geography.checkInRadiusMeters;
-      }
-    }
-  }
-  const radiusFeatures =
-    radiusCenter && radiusMeters > 0
-      ? [
-          {
-            type: "Feature" as const,
-            properties: {},
-            geometry: { type: "Polygon" as const, coordinates: [circlePolygon(radiusCenter, radiusMeters)] },
-          },
-        ]
-      : [];
+  const radiusFeatures = buildRadiusFeatures(record, selectedTarget);
 
   const transitFeatures = transitStations.map((st) => ({
     type: "Feature" as const,
@@ -209,6 +221,8 @@ type MarkerEntry = {
   target: StudioTarget;
   lat: number;
   lng: number;
+  draggable: boolean;
+  lastDragEnd: number;
 };
 
 function syncStudioPinClasses(el: HTMLElement, prev: string[], next: string[]): string[] {
@@ -238,11 +252,13 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
   let current: StudioMapUpdate = {
     record: options.record,
     mode: options.mode,
+    editable: options.editable,
     selectedTarget: options.selectedTarget,
     transitStations: options.transitStations,
     onToggleTransitStation: options.onToggleTransitStation,
     onMapClick: options.onMapClick,
     onSelectTarget: options.onSelectTarget,
+    onMoveTarget: options.onMoveTarget,
   };
 
   container.innerHTML = `<div class="board-map-shell">
@@ -258,6 +274,14 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
   let destroyed = false;
   let styleLoaded = false;
   const markerMap = new Map<string, MarkerEntry>();
+
+  function updateLiveRadius(target: StudioTarget, coord: GeoCoordinate) {
+    if (!map || !styleLoaded || destroyed) return;
+    const radiusSrc = map.getSource<maplibregl.GeoJSONSource>("studio-radius");
+    if (!radiusSrc) return;
+    const features = buildRadiusFeatures(current.record, target, coord);
+    radiusSrc.setData({ type: "FeatureCollection", features: features as never });
+  }
 
   function syncSources() {
     if (!map || !styleLoaded || destroyed) return;
@@ -336,7 +360,13 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
       seenKeys.add(item.key);
       const isSel =
         current.selectedTarget?.kind === item.target.kind && current.selectedTarget?.id === item.target.id;
-      const classes = ["board-map-pin", ...item.classes, isSel ? "board-map-pin-selected" : ""].filter(Boolean);
+      const canDrag = Boolean(isSel && current.editable);
+      const classes = [
+        "board-map-pin",
+        ...item.classes,
+        isSel ? "board-map-pin-selected" : "",
+        canDrag ? "board-map-pin-draggable" : "",
+      ].filter(Boolean);
       const existing = markerMap.get(item.key);
       if (existing) {
         existing.target = item.target;
@@ -344,6 +374,11 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
         if (existing.el.textContent !== item.label) existing.el.textContent = item.label;
         existing.el.setAttribute("aria-label", item.label);
         existing.el.dataset.mapPoint = item.target.id;
+        existing.el.dataset.draggable = canDrag ? "true" : "false";
+        if (existing.draggable !== canDrag) {
+          existing.draggable = canDrag;
+          existing.marker.setDraggable(canDrag);
+        }
         if (existing.lat !== item.coord.latitude || existing.lng !== item.coord.longitude) {
           existing.lat = item.coord.latitude;
           existing.lng = item.coord.longitude;
@@ -356,17 +391,41 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
         btn.textContent = item.label;
         btn.dataset.mapPoint = item.target.id;
         btn.dataset.studioKind = item.target.kind;
+        btn.dataset.draggable = canDrag ? "true" : "false";
         btn.setAttribute("aria-label", item.label);
+        const marker = new maplibregl.Marker({ element: btn, draggable: canDrag })
+          .setLngLat([item.coord.longitude, item.coord.latitude])
+          .addTo(map);
         const entry: MarkerEntry = {
-          marker: new maplibregl.Marker({ element: btn }).setLngLat([item.coord.longitude, item.coord.latitude]).addTo(map),
+          marker,
           el: btn,
           customClassList: classes,
           target: item.target,
           lat: item.coord.latitude,
           lng: item.coord.longitude,
+          draggable: canDrag,
+          lastDragEnd: 0,
         };
+        marker.on("drag", () => {
+          const ll = entry.marker.getLngLat();
+          updateLiveRadius(entry.target, { latitude: ll.lat, longitude: ll.lng });
+        });
+        marker.on("dragend", () => {
+          const ll = entry.marker.getLngLat();
+          const coord: GeoCoordinate = {
+            latitude: Number(ll.lat.toFixed(5)),
+            longitude: Number(ll.lng.toFixed(5)),
+          };
+          entry.lat = coord.latitude;
+          entry.lng = coord.longitude;
+          entry.lastDragEnd = Date.now();
+          entry.marker.setLngLat([coord.longitude, coord.latitude]);
+          updateLiveRadius(entry.target, coord);
+          current.onMoveTarget?.(entry.target, coord);
+        });
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
+          if (Date.now() - entry.lastDragEnd < 200) return;
           current.onSelectTarget(entry.target);
         });
         markerMap.set(item.key, entry);
@@ -457,6 +516,11 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
     recenter() {
       if (destroyed || !map) return;
       map.fitBounds(computeStudioBounds(current.record), { padding: 36, maxZoom: 14.5, duration: 250 });
+    },
+    panTo(coord: GeoCoordinate, zoom?: number) {
+      if (destroyed || !map) return;
+      const targetZoom = zoom ?? Math.max(map.getZoom(), 14.5);
+      map.easeTo({ center: [coord.longitude, coord.latitude], zoom: targetZoom, duration: 250 });
     },
     destroy() {
       destroyed = true;

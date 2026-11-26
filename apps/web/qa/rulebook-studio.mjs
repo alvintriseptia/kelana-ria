@@ -534,6 +534,107 @@ try {
     await assertNoHorizontalOverflow(page, `Claim Step 2 tab=${mapTab}`);
   }
 
+  // #147: Clean human-first inspector (Koordinat & ID collapsed by default), draggable selected pin, GPS Pakai Lokasi Saya, and Urungkan undo
+  await page.click('button[data-map-tab="primary"]');
+  await page.click('button[data-map-action="recenter"]');
+  await page.waitForTimeout(350);
+  await page.locator('#st-map-host button[data-map-point="m-bloc"]').press("Enter");
+  const coordAdvanced = page.getByTestId("coord-advanced");
+  assert.equal(await coordAdvanced.getAttribute("open"), null, "Koordinat & ID (Lanjutan) must be collapsed by default");
+  assert.equal(await page.locator("#ed-lm-lat").isVisible(), false, "Raw latitude input must be hidden when collapsed");
+  await coordAdvanced.locator("summary").click();
+  assert.equal(await page.locator("#ed-lm-lat").isVisible(), true, "Raw latitude input must be visible when expanded");
+  const origLat = await page.inputValue("#ed-lm-lat");
+  const origLng = await page.inputValue("#ed-lm-lng");
+
+  // Verify selected pin is draggable while unselected pin is not, drag selected pin, then Urungkan to revert
+  const selectedPin = page.locator('#st-map-host button[data-map-point="m-bloc"]');
+  const otherPin = page.locator('#st-map-host button[data-map-point="taman-literasi"]');
+  assert.equal(await selectedPin.getAttribute("data-draggable"), "true", "Selected pin must be draggable");
+  assert.equal(await otherPin.getAttribute("data-draggable"), "false", "Unselected pin must not be draggable");
+  await selectedPin.scrollIntoViewIfNeeded();
+  const pinBox = await selectedPin.boundingBox();
+  assert.ok(pinBox, "Expected bounding box for selected pin");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
+    page.waitForResponse((r) => r.url().includes("/api/rulebooks?role=writer") && r.request().method() === "GET"),
+    (async () => {
+      await page.mouse.move(pinBox.x + pinBox.width / 2, pinBox.y + pinBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(pinBox.x + pinBox.width / 2 + 28, pinBox.y + pinBox.height / 2 - 22, { steps: 6 });
+      await page.mouse.up();
+    })(),
+  ]);
+  await page.waitForFunction(
+    ({ lat, lng }) =>
+      document.querySelector("#ed-lm-lat")?.value !== lat || document.querySelector("#ed-lm-lng")?.value !== lng,
+    { lat: origLat, lng: origLng },
+  );
+  assert.equal(await page.getByTestId("studio-map-undo").isDisabled(), false, "Urungkan must enable after dragging pin");
+  await clickAndWaitStudioSave(page, '[data-testid="studio-map-undo"]');
+  await page.waitForFunction(
+    ({ lat, lng }) =>
+      document.querySelector("#ed-lm-lat")?.value === lat && document.querySelector("#ed-lm-lng")?.value === lng,
+    { lat: origLat, lng: origLng },
+  );
+
+  // Boundary vertex add + Urungkan revert
+  await page.click('button[data-map-tab="boundary"]');
+  await page.click('button[data-map-drawer="points"]');
+  const vertexCountBefore = await page.locator(".studio-point-list button[data-select-kind='vertex']").count();
+  await page.click('button[data-map-drawer="points"]');
+  await page.fill("#ed-v-lat", "-6.24501");
+  await page.fill("#ed-v-lng", "106.79901");
+  await clickAndWaitStudioSave(page, 'button[data-map-action="add-vertex"]');
+  await clickAndWaitStudioSave(page, '[data-testid="studio-map-undo"]');
+  await page.click('button[data-map-drawer="points"]');
+  await page.waitForFunction(
+    (expected) => document.querySelectorAll(".studio-point-list button[data-select-kind='vertex']").length === expected,
+    vertexCountBefore,
+  );
+  await page.click('button[data-map-drawer="points"]');
+
+  // Field-scouting Pakai Lokasi Saya (mocked GPS success + undo + permission denial handling)
+  await page.click('button[data-map-tab="primary"]');
+  await page.locator('#st-map-host button[data-map-point="m-bloc"]').press("Enter");
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "geolocation", {
+      configurable: true,
+      value: {
+        getCurrentPosition(success) {
+          success({ coords: { latitude: -6.24412, longitude: 106.79834, accuracy: 8 } });
+        },
+      },
+    });
+  });
+  await clickAndWaitStudioSave(page, '[data-testid="studio-gps-move"]');
+  await page.getByTestId("studio-gps-status").filter({ hasText: /Titik ditempatkan di posisimu/ }).waitFor();
+  await page.waitForFunction(
+    () => document.querySelector("#ed-lm-lat")?.value === "-6.24412" && document.querySelector("#ed-lm-lng")?.value === "106.79834",
+  );
+  await clickAndWaitStudioSave(page, '[data-testid="studio-map-undo"]');
+  await page.waitForFunction(
+    ({ lat, lng }) =>
+      document.querySelector("#ed-lm-lat")?.value === lat && document.querySelector("#ed-lm-lng")?.value === lng,
+    { lat: origLat, lng: origLng },
+  );
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "geolocation", {
+      configurable: true,
+      value: {
+        getCurrentPosition(_success, error) {
+          error({ code: 1, message: "Permission denied" });
+        },
+      },
+    });
+  });
+  await page.getByTestId("studio-gps-add").click();
+  await page.getByTestId("studio-gps-status").filter({ hasText: /Izin lokasi ditolak/ }).waitFor();
+
+  await page.setViewportSize({ width: 320, height: 640 });
+  await assertNoHorizontalOverflow(page, "Claim Step 2 toolbar & inspector at 320x640");
+  await page.setViewportSize({ width: 390, height: 844 });
+
   assert.equal(styleFetchCount, countOnClaimStep2, "Interactions on Claim Step 2 must not re-fetch /api/map/style.json");
   assert.equal(
     await canvas.evaluate((el) => el.isConnected && document.querySelector("#st-map-host .maplibregl-canvas") === el),
