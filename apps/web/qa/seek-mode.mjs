@@ -117,7 +117,7 @@ try {
 
   const menu = host.locator('summary[aria-label="Menu permainan"]');
   const refresh = host.getByRole("button", { name: "Muat ulang", exact: true });
-  const exit = host.getByRole("button", { name: "Keluar ke katalog" });
+  const exit = host.getByRole("button", { name: "Kembali ke Katalog" });
   assert.equal(await host.locator(".sg-nav button").count(), 3);
   assert.equal(await refresh.isVisible(), false);
   assert.equal(await exit.isVisible(), false);
@@ -198,7 +198,7 @@ try {
   assert.equal(next.turnStartPoint.id, "mrt-blok-a");
   assert.equal(next.releaseAt - next.now, 25 * 60_000);
   await guest.locator('summary[aria-label="Menu permainan"]').click();
-  await guest.getByRole("button", { name: "Keluar ke katalog" }).click();
+  await guest.getByRole("button", { name: "Kembali ke Katalog" }).click();
   await guest.getByRole("heading", { name: "Hide & Seek (2–6 Pemain)" }).waitFor();
   await assertCleanUiCopy(guest, "seek-mode catalog");
   assert.equal(new URL(guest.url()).searchParams.has("room"), false);

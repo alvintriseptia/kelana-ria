@@ -1,0 +1,339 @@
+.lobby-invite-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 2px solid #104a40;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #f6fbf5, #e8f3e9);
+  box-shadow: 0 3px 0 rgba(16, 74, 64, 0.16);
+}
+
+.lobby-invite-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lobby-invite-code-wrap {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.lobby-invite-label {
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #365649;
+}
+
+.lobby-invite-code {
+  font: 850 1.45rem/1.05 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  color: #103a32;
+}
+
+.lobby-invite-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lobby-invite-actions > button {
+  flex: 1 1 130px;
+  min-height: 44px;
+}
+
+.lobby-invite-url-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 0.8rem;
+  color: #365649;
+}
+
+.lobby-invite-url {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #104a40;
+  font-weight: 700;
+}
+
+.lobby-seat-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lobby-seat-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 160px;
+}
+
+.lobby-seat-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.lobby-icon-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 10px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lobby-rename-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.lobby-rename-form input {
+  flex: 1 1 150px;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1.5px solid #104a40;
+  border-radius: 10px;
+  background: #ffffff;
+  font: inherit;
+  box-sizing: border-box;
+}
+
+.lobby-team-section {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1.5px solid #6b9184;
+  border-radius: 12px;
+  background: #f5fbf4;
+}
+
+.lobby-team-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lobby-team-head h4 {
+  margin: 0;
+  font: 700 1.15rem/1.1 "Barlow Condensed", sans-serif;
+  color: #104a40;
+}
+
+.lobby-team-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.lobby-team-card {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1.5px solid var(--team-border, #104a40);
+  border-radius: 12px;
+  background: var(--team-bg, #ffffff);
+}
+
+.lobby-team-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lobby-team-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--team-accent, #104a40);
+  color: #ffffff;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.lobby-team-members {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lobby-member-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 74, 64, 0.28);
+  background: #ffffff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #132c26;
+}
+
+.lobby-seat-select {
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1.5px solid #6b9184;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #132c26;
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 700;
+  max-width: 100%;
+}
+
+.lobby-turn-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #d9f181;
+  color: #103a32;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.lobby-wait-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: #e2eee5;
+  color: #1d443b;
+  font-size: 0.88rem;
+  font-weight: 750;
+}
+
+.lobby-danger-btn {
+  border-color: #9b3022 !important;
+  color: #822216 !important;
+  background: #fff4f1 !important;
+}
+
+.lobby-danger-btn--solid {
+  background: #9b3022 !important;
+  border-color: #721e13 !important;
+  color: #ffffff !important;
+  box-shadow: inset 0 -3px #60170d !important;
+}
+
+.lobby-footer-exit {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed #87aa9b;
+}
+
+.lobby-canceled-card {
+  display: grid;
+  gap: 12px;
+  text-align: left;
+  border: 2px solid #9b3022;
+  background: #fff7f4;
+}
+
+.lobby-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 85;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(12, 39, 34, 0.58);
+  overflow-y: auto;
+}
+
+.lobby-dialog {
+  width: min(100%, 400px);
+  max-width: 100%;
+  box-sizing: border-box;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 2px solid #104a40;
+  border-radius: 16px;
+  background: #f8fcf7;
+  color: #132c26;
+  box-shadow: 0 14px 32px rgba(12, 39, 34, 0.3);
+}
+
+.lobby-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lobby-dialog-head h2 {
+  margin: 0;
+  font: 700 1.45rem/1.05 "Barlow Condensed", sans-serif;
+  color: #104a40;
+}
+
+.lobby-dialog-body {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  color: #2c4a42;
+}
+
+.lobby-qr-box {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1.5px solid #87aa9b;
+}
+
+.lobby-qr-svg {
+  display: block;
+  width: min(220px, 100%);
+  height: auto;
+  border-radius: 8px;
+}
+
+.lobby-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.lobby-dialog-actions > button {
+  flex: 1 1 130px;
+  min-height: 44px;
+  border-radius: 10px;
+  font-weight: 800;
+}

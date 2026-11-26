@@ -23,6 +23,16 @@ import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { clearActiveRoom, saveActiveRoom } from "./active-room-storage";
 import { fetchAuthMe, getCachedAuth, onAuthChange, openAuthModal } from "./auth-modal";
+import { resolveDefaultPlayerName, saveRememberedGuestName } from "./guest-name";
+import {
+  canUseWebShare,
+  closeLobbyDialog,
+  copyToClipboard,
+  openConfirmDialog,
+  openQrModal,
+  renderCanceledRoomCard,
+  renderLobbyInviteCard,
+} from "./lobby-ui";
 import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
 import { answerText, incomingQuestion, questionDeck, questionNames, questionOptions, rewardCard } from "./seek-game-panels";
 import "./rulebook-seek-play.css";
@@ -57,7 +67,7 @@ type RoomPayload = {
   publicBoard: SeekPublicBoard;
   qa?: true;
   deck: SeekDeckPublicView | SeekDeckHiderView;
-  pass: { roomCode: string; packId: string; version: number; maxPlayers: number; paid: boolean; mode?: "group" };
+  pass: { roomCode: string; packId: string; version: number; minPlayers?: number; maxPlayers: number; paid: boolean; mode?: "group" };
 };
 
 type CapturedLocation = LocationFix & { qaLocationId?: string };
@@ -195,8 +205,12 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let entitlements: RulebookEntitlementSummary[] = [];
   let roomCode = new URLSearchParams(location.search).get("room") ?? "";
   let joinCode = roomCode;
-  let joinName = getCachedAuth()?.user?.displayName || "Pemain Baru";
+  let joinName = resolveDefaultPlayerName(getCachedAuth()?.user?.displayName, "Pemain Baru");
   let joinNameEdited = false;
+  let copiedCode = false;
+  let copiedLink = false;
+  let editingName = false;
+  let renameDraft = "";
   let foundCodeDraft = "";
   let live: RoomPayload | null = null;
   let cachedBoard: { code: string; board: SeekPublicBoard } | null = null;
@@ -720,7 +734,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const qFamily = typeof action.family === "string" ? action.family : undefined;
     const itemId = typeof action.itemId === "string" ? action.itemId : undefined;
     const targetKey = qId ?? stId ?? itemId ?? qFamily;
-    const signature = JSON.stringify([roomCode, type, stId, qId, qFamily, itemId, action.answerCode, action.code, action.offTransit]);
+    const signature = JSON.stringify([roomCode, type, stId, qId, qFamily, itemId, action.answerCode, action.code, action.offTransit, action.name, action.ready, action.turnOrder]);
     const pending = ensurePendingAction(signature, type, { stationId: stId, questionId: qId, family: qFamily, itemId });
     const slot = inlineSlotForSeekAction(action);
 
@@ -1066,21 +1080,84 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     `;
   }
 
+  function destructiveExitSpec(payload: RoomPayload): {
+    label: string;
+    title: string;
+    body: string;
+    toastText: string;
+  } | null {
+    const { room, pass } = payload;
+    if (room.outcome) return null;
+    const own = room.seats.find((s) => s.seatId === room.seatId);
+    if (!own) return null;
+    if (room.phase === "lobby") {
+      if (own.isHost) {
+        return {
+          label: "Batalkan Ruang",
+          title: "Batalkan ruang ini?",
+          body: pass.paid
+            ? "Semua pemain akan keluar dari lobi, dan slot ruang aktif paket berbayarmu langsung terbuka kembali."
+            : "Semua pemain yang sudah bergabung akan keluar dari lobi ini.",
+          toastText: "Ruang dibatalkan.",
+        };
+      }
+      return {
+        label: "Tinggalkan Lobi",
+        title: "Tinggalkan lobi?",
+        body: "Kursimu di lobi akan dilepas. Kamu tetap bisa gabung lagi selama Host belum memulai permainan.",
+        toastText: "Kamu meninggalkan lobi.",
+      };
+    }
+    return {
+      label: "Menyerah & Keluar",
+      title: "Menyerah dan keluar dari permainan?",
+      body: "Keluar di tengah pertandingan akan mengakhiri sesi Hide & Seek ini sebagai menyerah untuk seluruh ruang.",
+      toastText: "Kamu keluar dari permainan.",
+    };
+  }
+
+  function orderedSeekSeats(room: SeekEngineRoomView): SeekEngineRoomView["seats"] {
+    const byId = new Map(room.seats.map((s) => [s.seatId, s]));
+    const ordered: SeekEngineRoomView["seats"] = [];
+    for (const id of room.turnOrder) {
+      const seat = byId.get(id);
+      if (seat) {
+        ordered.push(seat);
+        byId.delete(id);
+      }
+    }
+    for (const seat of byId.values()) ordered.push(seat);
+    return ordered;
+  }
+
   function renderRoomMenu(): string {
     const open = root.querySelector<HTMLDetailsElement>(".sg-room-menu")?.open;
+    const exitSpec = live ? destructiveExitSpec(live) : null;
     return `<details class="sg-room-menu" ${open ? "open" : ""}>
       <summary class="sg-quiet" aria-label="Menu permainan" title="Menu permainan"><span aria-hidden="true">⋯</span></summary>
       <div class="sg-room-menu-actions">
         ${live && isBoardPhase(live.room) ? '<button type="button" data-action="game-panel" data-panel="activity">Aktivitas terbaru</button>' : ""}
         <button type="button" data-action="refresh">Muat ulang</button>
-        <button type="button" data-nav="catalog">Keluar ke katalog</button>
+        <button type="button" data-nav="catalog">Kembali ke Katalog</button>
+        ${exitSpec ? `<button type="button" class="lobby-danger-btn" data-action="confirm-leave" data-testid="menu-leave-btn">${escapeText(exitSpec.label)}</button>` : ""}
       </div>
     </details>`;
   }
 
   function renderRoom(payload: RoomPayload): string {
     const { room, pass } = payload;
+    if (room.phase === "canceled") {
+      clearActiveRoom(room.code);
+      return renderCanceledRoomCard({ roomCode: room.code, title: room.packMeta.title });
+    }
     const isHider = room.role === "hider";
+    const ownSeat = room.seats.find((s) => s.seatId === room.seatId);
+    const isHost = Boolean(ownSeat?.isHost);
+    const minPlayers = pass.minPlayers ?? 2;
+    const enoughPlayers = room.seats.length >= minPlayers;
+    const seatsOrdered = orderedSeekSeats(room);
+    const inviteUrl = `${location.origin}/?play=rulebook-seek&room=${encodeURIComponent(room.code)}`;
+    const exitSpec = destructiveExitSpec(payload);
 
     return `<section class="rb-shell" aria-label="Permainan Hide & Seek">
       <div class="rb-card">
@@ -1098,7 +1175,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         <h2>${escapeText(room.packMeta.title)}</h2>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${slotAlert("lobby")}
-        ${allowHideSeekQa && !payload.qa && !pass.paid && room.phase === "lobby" && room.seats.some(seat => seat.seatId === room.seatId && seat.isHost)
+        ${allowHideSeekQa && !payload.qa && !pass.paid && room.phase === "lobby" && isHost
           ? `<div class="rb-actions"><button type="button" class="secondary" data-action="start-qa" data-pack="${escapeText(pass.packId)}" data-version="${pass.version}" ${busy ? "disabled" : ""}>Buat Ruang QA dari Paket Ini</button></div>` : ""}
       </div>
 
@@ -1110,21 +1187,54 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       ${
         room.phase === "lobby"
           ? `<div class="rb-card">
-              <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
-              <p><small>Tautan undangan: <a href="${escapeText(`${location.origin}/?play=rulebook-seek&room=${encodeURIComponent(room.code)}`)}" data-testid="invite-link">${escapeText(`${location.origin}/?play=rulebook-seek&room=${room.code}`)}</a></small></p>
-              <ul class="rb-list">
-                ${room.seats
-                  .map(
-                    (s) => `<li><strong>${escapeText(s.name)}</strong>${s.isHost ? " · Host" : ""} · ${s.ready ? "Siap" : "Belum siap"}</li>`,
-                  )
+              ${renderLobbyInviteCard({ roomCode: room.code, inviteUrl, copiedCode, copiedLink })}
+              <div class="lobby-team-head">
+                <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
+                ${isHost && seatsOrdered.length >= 2
+                  ? `<button type="button" class="secondary" data-action="shuffle-turns" data-testid="shuffle-turns-btn" ${busy ? "disabled" : ""}>Acak</button>`
+                  : ""}
+              </div>
+              <ul class="rb-list" data-testid="seek-turn-list">
+                ${seatsOrdered
+                  .map((s, idx) => {
+                    const isSelf = s.seatId === room.seatId;
+                    return `<li data-seat-row="${escapeText(s.seatId)}">
+                      <div class="lobby-seat-row">
+                        <div class="lobby-seat-main">
+                          <span class="lobby-turn-badge">Giliran ${idx + 1}</span>
+                          <strong>${escapeText(s.name)}</strong>${s.isHost ? " · Host" : ""}${isSelf ? " · Kamu" : ""} · ${s.ready ? "Siap" : "Belum siap"}
+                        </div>
+                        <div class="lobby-seat-controls">
+                          ${isSelf && !editingName ? `<button type="button" class="secondary lobby-icon-btn" data-action="edit-name" data-testid="edit-own-name" aria-label="Ubah nama pemain">✎</button>` : ""}
+                          ${isHost && seatsOrdered.length >= 2 ? `
+                            <button type="button" class="secondary lobby-icon-btn" data-action="move-turn" data-seat="${escapeText(s.seatId)}" data-dir="-1" aria-label="Naikkan giliran ${escapeText(s.name)}" ${busy || idx === 0 ? "disabled" : ""}>↑</button>
+                            <button type="button" class="secondary lobby-icon-btn" data-action="move-turn" data-seat="${escapeText(s.seatId)}" data-dir="1" aria-label="Turunkan giliran ${escapeText(s.name)}" ${busy || idx === seatsOrdered.length - 1 ? "disabled" : ""}>↓</button>
+                          ` : ""}
+                        </div>
+                      </div>
+                      ${isSelf && editingName ? `<div class="lobby-rename-form">
+                        <input id="sg-rename-input" type="text" maxlength="32" value="${escapeText(renameDraft)}" placeholder="Nama pemain" aria-label="Nama pemain baru">
+                        <button type="button" class="primary" data-action="save-name" data-testid="save-own-name">Simpan</button>
+                        <button type="button" class="secondary" data-action="cancel-name">Batal</button>
+                      </div>` : ""}
+                    </li>`;
+                  })
                   .join("")}
               </ul>
               ${slotAlert("lobby-checkin")}
               <div class="rb-actions">
                 <button type="button" class="secondary" data-action="sim-start-checkin">Check-in di ${escapeText(room.turnStartPoint.name)}</button>
-                <button type="button" class="primary" data-action="mark-ready">Tandai Siap</button>
-                <button type="button" class="primary" data-action="start-match">Mulai Permainan</button>
+                ${ownSeat?.ready
+                  ? `<button type="button" class="secondary" data-action="unmark-ready">Batal Siap</button>`
+                  : `<button type="button" class="primary" data-action="mark-ready">Tandai Siap</button>`}
+                ${isHost
+                  ? `<button type="button" class="primary" data-action="start-match" ${enoughPlayers ? "" : "disabled"}>Mulai Permainan</button>`
+                  : `<span class="lobby-wait-pill" role="status" data-testid="seek-wait-host">Menunggu Host memulai…</span>`}
               </div>
+              ${!enoughPlayers ? `<p role="status">Undang pemain hingga ruang berisi setidaknya ${minPlayers} pemain.</p>` : ""}
+              ${exitSpec ? `<div class="lobby-footer-exit">
+                <button type="button" class="secondary lobby-danger-btn" data-action="confirm-leave" data-testid="lobby-leave-btn">${escapeText(exitSpec.label)}</button>
+              </div>` : ""}
             </div>`
           : ""
       }
@@ -1544,6 +1654,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       joinName = target.value;
       joinNameEdited = true;
     }
+    if (target.id === "sg-rename-input") renameDraft = target.value;
     if (target.id === "rb-found-input") foundCodeDraft = target.value;
     if (target.id === "sg-radius") {
       radiusDraft = target.value;
@@ -1596,9 +1707,80 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     reader.readAsDataURL(file);
   }, { signal: lifecycle.signal });
 
+  async function executeConfirmedLeave(toastText: string) {
+    if (!live || busy || actionPending) return;
+    const leavingCode = roomCode || live.room.code;
+    actionPending = true;
+    root.setAttribute("aria-busy", "true");
+    inlineError = null;
+    try {
+      const ok = await postRoomAction({ type: "leave" });
+      if (!ok || lifecycle.signal.aborted) return;
+      clearActiveRoom(leavingCode);
+      toast.resetDedupe();
+      toast.show({ message: toastText, tone: "info", dedupeKey: `seek:leave:${leavingCode}` });
+      onBack();
+    } catch (error) {
+      if (!lifecycle.signal.aborted) {
+        reportError(error, { surface: "lobby", action: "leave" }, "lobby");
+        render();
+      }
+    } finally {
+      actionPending = false;
+      if (!lifecycle.signal.aborted) {
+        root.removeAttribute("aria-busy");
+        if (!pendingAction) roomEvents.sync();
+      }
+    }
+  }
+
   root.addEventListener("click", (event) => {
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
     if (!btn || busy || actionPending || btn.disabled) return;
+
+    const lobbyAction = btn.dataset.lobbyAction;
+    if (lobbyAction && live) {
+      const inviteUrl = `${location.origin}/?play=rulebook-seek&room=${encodeURIComponent(live.room.code)}`;
+      if (lobbyAction === "copy-code") {
+        void copyToClipboard(live.room.code).then((ok) => {
+          if (lifecycle.signal.aborted || !ok) return;
+          copiedCode = true;
+          render();
+          window.setTimeout(() => {
+            if (lifecycle.signal.aborted) return;
+            copiedCode = false;
+            render();
+          }, 2500);
+        });
+      } else if (lobbyAction === "share-invite") {
+        void (async () => {
+          if (canUseWebShare()) {
+            try {
+              await navigator.share({
+                title: live.room.packMeta.title,
+                text: `Gabung ruang Hide & Seek (${live.room.code}) di Kelana Ria!`,
+                url: inviteUrl,
+              });
+              return;
+            } catch (err) {
+              if (err instanceof DOMException && err.name === "AbortError") return;
+            }
+          }
+          const ok = await copyToClipboard(inviteUrl);
+          if (lifecycle.signal.aborted || !ok) return;
+          copiedLink = true;
+          render();
+          window.setTimeout(() => {
+            if (lifecycle.signal.aborted) return;
+            copiedLink = false;
+            render();
+          }, 2500);
+        })();
+      } else if (lobbyAction === "show-qr") {
+        openQrModal({ roomCode: live.room.code, inviteUrl, title: live.room.packMeta.title });
+      }
+      return;
+    }
 
     const nav = btn.dataset.nav;
     if (nav === "back") {
@@ -1614,7 +1796,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       return;
     }
     if (nav === "catalog") {
-      if (live?.pass.mode) return onBack();
+      if (live?.pass.mode || live?.room.phase === "canceled") return onBack();
       live = null;
       drawKey = "";
       pendingId = "";
@@ -1634,6 +1816,35 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
     const action = btn.dataset.action;
     if (!action) return;
+    if (action === "confirm-leave" && live) {
+      btn.closest<HTMLDetailsElement>(".sg-room-menu")?.removeAttribute("open");
+      const spec = destructiveExitSpec(live);
+      if (!spec) return;
+      openConfirmDialog({
+        title: spec.title,
+        body: spec.body,
+        confirmLabel: spec.label,
+        danger: true,
+        onConfirm: () => {
+          void executeConfirmedLeave(spec.toastText);
+        },
+      });
+      return;
+    }
+    if (action === "edit-name" && live) {
+      const ownSeat = live.room.seats.find((s) => s.seatId === live!.room.seatId);
+      renameDraft = ownSeat?.name ?? "";
+      editingName = true;
+      render();
+      root.querySelector<HTMLInputElement>("#sg-rename-input")?.focus({ preventScroll: true });
+      return;
+    }
+    if (action === "cancel-name") {
+      editingName = false;
+      render();
+      root.querySelector<HTMLButtonElement>('[data-testid="edit-own-name"]')?.focus({ preventScroll: true });
+      return;
+    }
     if (action === "refresh") {
       const menu = btn.closest<HTMLDetailsElement>(".sg-room-menu");
       if (menu) {
@@ -1922,6 +2133,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             },
           });
           if (ok && res.ok) {
+            if (!getCachedAuth()?.authenticated) saveRememberedGuestName(joinName);
             roomCode = joinCode;
             toast.clear();
             toast.resetDedupe();
@@ -1939,10 +2151,48 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         }
       } else if (action === "refresh") {
         await refreshRoom();
+      } else if (action === "save-name" && live) {
+        const cleaned = (root.querySelector<HTMLInputElement>("#sg-rename-input")?.value ?? renameDraft).trim();
+        if (!cleaned || cleaned.length > 32) {
+          reportError("invalid-seat-name", { surface: "lobby", action: "rename-seat" }, "lobby");
+          render();
+        } else {
+          const ok = await postRoomAction({ type: "rename-seat", name: cleaned });
+          if (ok) {
+            editingName = false;
+            if (!getCachedAuth()?.authenticated) saveRememberedGuestName(cleaned);
+            render();
+          }
+        }
+      } else if (action === "move-turn" && live) {
+        const targetSeat = btn.dataset.seat ?? "";
+        const dir = Number(btn.dataset.dir ?? 0);
+        const order = orderedSeekSeats(live.room).map((s) => s.seatId);
+        const idx = order.indexOf(targetSeat);
+        const nextIdx = idx + dir;
+        if (idx >= 0 && nextIdx >= 0 && nextIdx < order.length) {
+          [order[idx], order[nextIdx]] = [order[nextIdx], order[idx]];
+          await postRoomAction({ type: "set-turn-order", turnOrder: order });
+        }
+      } else if (action === "shuffle-turns" && live) {
+        const current = orderedSeekSeats(live.room).map((s) => s.seatId);
+        if (current.length >= 2) {
+          const next = [...current];
+          for (let i = next.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [next[i], next[j]] = [next[j], next[i]];
+          }
+          if (next.every((id, i) => id === current[i])) {
+            next.push(next.shift()!);
+          }
+          await postRoomAction({ type: "set-turn-order", turnOrder: next });
+        }
       } else if (action === "sim-start-checkin") {
         await postRoomAction({ type: "check-in-start", fix: await locationFix(room?.turnStartPoint) });
       } else if (action === "mark-ready") {
         await postRoomAction({ type: "ready", ready: true });
+      } else if (action === "unmark-ready") {
+        await postRoomAction({ type: "ready", ready: false });
       } else if (action === "start-match") {
         await postRoomAction({ type: "start" });
       } else if (action === "lock-anchor") {
@@ -2127,6 +2377,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   });
   return () => {
     lifecycle.abort();
+    closeLobbyDialog();
     roomEvents.destroy();
     window.clearTimeout(previewTimer);
     root.removeAttribute("aria-busy");

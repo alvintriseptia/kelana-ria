@@ -1004,7 +1004,8 @@ export function rulebookStore(
         version: rec.version,
         format: rec.format,
         maxPlayers: mode === "solo" ? 1 : rec.pack.session.maxPlayers,
-        ...(mode ? { mode, minPlayers: mode === "group" ? Math.max(2, rec.pack.session.minPlayers) : 1 } : {}),
+        minPlayers: mode ? (mode === "group" ? Math.max(2, rec.pack.session.minPlayers) : 1) : rec.pack.session.minPlayers,
+        ...(mode ? { mode } : {}),
         paid: orderId !== null || entitlementId !== null,
         createdAt: now,
       };

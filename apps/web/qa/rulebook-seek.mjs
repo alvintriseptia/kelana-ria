@@ -476,7 +476,63 @@ try {
       await video.delete();
     }
   }
-  console.log("qa:rulebook-seek passed (Studio, paid room, clue privacy, Thermometer, photos, map fallback, and role swap)");
+  // #142: Hide & Seek Home Gabung Ruang modal, offline SVG QR, Host start gate, turn-order reorder/shuffle, and Host cancel SSE
+  const sHostCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const sGuestCtx = await browser.newContext({ viewport: { width: 320, height: 640 } });
+  const sHost = await sHostCtx.newPage();
+  const sGuest = await sGuestCtx.newPage();
+  try {
+    await sHost.goto(baseUrl, { waitUntil: "networkidle" });
+    await sHost.locator('.cat-card[data-pack-id="official-jakarta-compact-seek"]').click();
+    await sHost.getByRole("button", { name: "Main Grup", exact: true }).click();
+    await sHost.getByTestId("lobby-invite-card").waitFor();
+    const sCode = (await sHost.getByTestId("lobby-room-code").innerText()).trim();
+    assert.match(sCode, /^RB-/);
+    assert.equal(await sHost.locator('button[data-action="start-match"]').isDisabled(), true, "Seek Host Start must be disabled with 1 player");
+
+    // Offline QR modal with zero network requests
+    let qrReqs = 0;
+    const countReq = () => { qrReqs++; };
+    sHost.on("request", countReq);
+    await sHost.getByTestId("show-qr-btn").click();
+    await sHost.getByTestId("qr-modal").locator("svg.lobby-qr-svg path").waitFor();
+    assert.equal(qrReqs, 0, "Seek QR modal must make zero network requests");
+    sHost.off("request", countReq);
+    await sHost.keyboard.press("Escape");
+    await sHost.getByTestId("qr-modal").waitFor({ state: "hidden" });
+
+    // Guest joins Hide & Seek from Home Gabung Ruang modal on 320x640
+    await sGuest.goto(baseUrl, { waitUntil: "networkidle" });
+    await sGuest.getByTestId("home-join-room-btn").click();
+    await sGuest.fill("#cat-join-code", sCode.toLowerCase());
+    await sGuest.fill("#cat-join-name", "Raka");
+    await sGuest.getByTestId("join-modal-submit").click();
+    await sGuest.getByTestId("seek-turn-list").waitFor();
+    assert.equal(await sGuest.locator('button[data-action="start-match"]').count(), 0, "Non-host guest must not see Mulai Permainan in Seek lobby");
+    await sGuest.getByTestId("seek-wait-host").waitFor();
+    assert.ok(await sGuest.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek lobby (320x640)");
+
+    // Host reorders and shuffles hider turn order
+    await sHost.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (2/4)"));
+    const orderBefore = await sHost.locator('[data-testid="seek-turn-list"] > li').evaluateAll((els) => els.map((e) => e.getAttribute("data-seat-row")));
+    assert.deepEqual(orderBefore, ["seat-1", "seat-2"]);
+    await sHost.getByTestId("shuffle-turns-btn").click();
+    await sHost.waitForFunction(() => document.querySelector('[data-testid="seek-turn-list"] > li')?.getAttribute("data-seat-row") === "seat-2");
+    await sHost.locator('button[data-action="move-turn"][data-seat="seat-1"][data-dir="-1"]').click();
+    await sHost.waitForFunction(() => document.querySelector('[data-testid="seek-turn-list"] > li')?.getAttribute("data-seat-row") === "seat-1");
+
+    // Host cancels room -> Guest sees canceled-room-card live via SSE
+    await sHost.getByTestId("lobby-leave-btn").click();
+    await sHost.getByTestId("confirm-dialog-submit").click();
+    await sHost.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+    await sGuest.getByTestId("canceled-room-card").waitFor({ timeout: 5000 });
+    assert.match(await sGuest.getByTestId("canceled-room-card").innerText(), /Host membatalkan ruang ini/);
+  } finally {
+    await sHostCtx.close();
+    await sGuestCtx.close();
+  }
+
+  console.log("qa:rulebook-seek passed (Studio, paid room, clue privacy, Thermometer, photos, map fallback, role swap, and Lobby QR/TurnOrder/Leave)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

@@ -20,6 +20,17 @@ import { claimDecidingMetric, claimResultReasons } from "./rulebook-claim-result
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { clearActiveRoom, saveActiveRoom } from "./active-room-storage";
 import { fetchAuthMe, getCachedAuth, onAuthChange, openAuthModal } from "./auth-modal";
+import { resolveDefaultPlayerName, saveRememberedGuestName } from "./guest-name";
+import {
+  canUseWebShare,
+  closeLobbyDialog,
+  copyToClipboard,
+  openConfirmDialog,
+  openQrModal,
+  renderCanceledRoomCard,
+  renderLobbyInviteCard,
+  teamVisual,
+} from "./lobby-ui";
 import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
 import { escapeText } from "./solo-view";
 import "./rulebook-seek-play.css";
@@ -220,8 +231,12 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let entitlements: RulebookEntitlementSummary[] = [];
   let roomCode = new URLSearchParams(location.search).get("room") ?? "";
   let joinCode = roomCode;
-  let joinName = getCachedAuth()?.user?.displayName || "Pemain";
+  let joinName = resolveDefaultPlayerName(getCachedAuth()?.user?.displayName, "Pemain");
   let joinNameEdited = false;
+  let copiedCode = false;
+  let copiedLink = false;
+  let editingName = false;
+  let renameDraft = "";
   let live: ClaimRoomPayload | null = null;
   let cachedBoard: { code: string; board: ClaimRoomPayload["publicBoard"] } | null = null;
   let roomEtag: { code: string; includeBoard: boolean; value: string } | null = null;
@@ -735,15 +750,28 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     return { slot: live?.room.phase === "lobby" ? "lobby" : "landmark-checkin", targetId: landmarkId };
   }
 
-  async function postRoomAction(action: Record<string, unknown>) {
-    if (!roomCode) return;
+  async function postRoomAction(action: Record<string, unknown>): Promise<boolean> {
+    if (!roomCode) return false;
     const type = String(action.type ?? "action");
     const landmarkId = typeof action.landmarkId === "string" ? action.landmarkId : undefined;
     const cardInstanceId = typeof action.cardInstanceId === "string" ? action.cardInstanceId : undefined;
     const targetSeatId = typeof action.targetSeatId === "string" ? action.targetSeatId : undefined;
     const curseId = typeof action.curseInstanceId === "string" ? action.curseInstanceId : undefined;
     const targetKey = landmarkId ?? cardInstanceId ?? targetSeatId ?? curseId;
-    const signature = JSON.stringify([roomCode, type, landmarkId, cardInstanceId, targetSeatId, curseId, action.tier, action.choiceId, action.inputValue]);
+    const signature = JSON.stringify([
+      roomCode,
+      type,
+      landmarkId,
+      cardInstanceId,
+      targetSeatId,
+      curseId,
+      action.tier,
+      action.choiceId,
+      action.inputValue,
+      action.teamId,
+      action.name,
+      action.ready,
+    ]);
     const pending = ensurePendingAction(signature, type, { cardInstanceId, landmarkId });
     const previousAttempt = live?.room.ownActiveAttempt;
     const { slot, targetId } = inlineSlotForRoomAction(action);
@@ -758,7 +786,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         },
       });
       clearPendingAction();
-      if (res.error || !ok) {
+      const succeeded = Boolean(ok && !res.error);
+      if (!succeeded) {
         reportError(
           { error: res.error ?? "invalid-request", status },
           { action: type, target: targetKey },
@@ -777,10 +806,12 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         }
       }
       await refreshRoom(false, false, true).catch(() => {});
+      return succeeded;
     } catch (error) {
-      if (lifetime.signal.aborted) return;
+      if (lifetime.signal.aborted) return false;
       const resolved = reportError(error, { action: type, target: targetKey }, slot, targetId);
       if (!resolved.uncertain) clearPendingAction();
+      return false;
     }
   }
 
@@ -1242,11 +1273,82 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     return `<img class="cg-proof" alt="Foto bukti untuk ditinjau" src="/api/rulebooks/rooms/${encodeURIComponent(code)}/photos/${encodeURIComponent(id)}">`;
   }
 
+  function nextFreshTeamId(seats: ClaimEngineRoomView["seats"]): string {
+    const used = new Set(seats.map((s) => s.teamId));
+    for (let i = 1; i <= seats.length + 20; i++) {
+      const candidate = `team-${i}`;
+      if (!used.has(candidate)) return candidate;
+    }
+    return `team-${Date.now()}`;
+  }
+
+  function orderedTeamIds(seats: ClaimEngineRoomView["seats"]): string[] {
+    const ids: string[] = [];
+    for (const s of seats) {
+      if (!ids.includes(s.teamId)) ids.push(s.teamId);
+    }
+    return ids;
+  }
+
+  function destructiveExitSpec(payload: ClaimRoomPayload): {
+    label: string;
+    title: string;
+    body: string;
+    toastText: string;
+  } | null {
+    const { room, pass } = payload;
+    if (room.outcome) return null;
+    const own = room.seats.find((s) => s.seatId === room.seatId);
+    if (!own || own.leftAt != null) return null;
+    if (room.phase === "lobby") {
+      if (own.isHost) {
+        return {
+          label: "Batalkan Ruang",
+          title: "Batalkan ruang ini?",
+          body: pass.paid
+            ? "Semua pemain akan keluar dari lobi, dan slot ruang aktif paket berbayarmu langsung terbuka kembali."
+            : "Semua pemain yang sudah bergabung akan keluar dari lobi ini.",
+          toastText: "Ruang dibatalkan.",
+        };
+      }
+      return {
+        label: "Tinggalkan Lobi",
+        title: "Tinggalkan lobi?",
+        body: "Kursimu di lobi akan dilepas. Kamu tetap bisa gabung lagi selama Host belum memulai permainan.",
+        toastText: "Kamu meninggalkan lobi.",
+      };
+    }
+    if (room.phase === "active") {
+      if (room.isSolo) {
+        return {
+          label: "Akhiri Permainan",
+          title: "Akhiri permainan solo?",
+          body: "Ronde solo ini akan berakhir sebagai ditinggalkan dan tidak bisa dilanjutkan lagi.",
+          toastText: "Permainan solo diakhiri.",
+        };
+      }
+      return {
+        label: "Menyerah & Keluar",
+        title: "Menyerah dan keluar dari pertandingan?",
+        body: "Kamu akan keluar dari pertandingan aktif. Jika tinggal 1 tim aktif, pertandingan langsung selesai; jika masih ada minimal 2 tim aktif, pemain lain tetap melanjutkan.",
+        toastText: "Kamu keluar dari pertandingan.",
+      };
+    }
+    return null;
+  }
+
   function renderLobby(payload: ClaimRoomPayload): string {
     const { room, pass } = payload;
     const invite = `${location.origin}/?play=rulebook-claim&room=${encodeURIComponent(room.code)}`;
+    const isGroupLobby = pass.mode !== "solo" && pass.maxPlayers > 1;
     const enoughPlayers = !pass.minPlayers || room.seats.length >= pass.minPlayers;
-    const isHost = room.seats.some(seat => seat.seatId === room.seatId && seat.isHost);
+    const ownSeat = room.seats.find((seat) => seat.seatId === room.seatId);
+    const isHost = Boolean(ownSeat?.isHost);
+    const teams = orderedTeamIds(room.seats);
+    const enoughTeams = !isGroupLobby || (pass.mode === undefined && room.seats.length <= 1) || teams.length >= 2;
+    const ownTeamMembers = ownSeat ? room.seats.filter((s) => s.teamId === ownSeat.teamId).length : 0;
+    const exitSpec = destructiveExitSpec(payload);
+
     return `<section class="rb-shell" aria-label="Ruang Claim the City">
       <div class="rb-card">
         <div class="rb-actions cg-lobby-head">
@@ -1263,33 +1365,96 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         </div>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${slotAlert("lobby")}
+        ${isGroupLobby ? renderLobbyInviteCard({ roomCode: room.code, inviteUrl: invite, copiedCode, copiedLink }) : ""}
         <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
-        ${pass.mode !== "solo" ? `<p class="cg-invite"><small>Tautan undangan</small>
-          <a href="${escapeText(invite)}" data-testid="invite-link">${escapeText(invite)}</a>
-        </p>` : ""}
         <ul class="rb-list">
-          ${room.seats.map(seat => `<li><strong>${escapeText(seat.name)}</strong>${seat.isHost ? " · Host" : ""} · ${seat.ready ? "Siap" : "Belum siap"}</li>`).join("")}
+          ${room.seats.map((seat) => {
+            const isSelf = seat.seatId === room.seatId;
+            const tIdx = Math.max(0, teams.indexOf(seat.teamId));
+            const vis = teamVisual(tIdx);
+            return `<li data-seat-row="${escapeText(seat.seatId)}">
+              <div class="lobby-seat-row">
+                <div class="lobby-seat-main">
+                  ${isGroupLobby ? `<span class="lobby-team-badge" style="--team-accent:${vis.accent}"><span aria-hidden="true">${vis.shape}</span> ${vis.label}</span>` : ""}
+                  <strong>${escapeText(seat.name)}</strong>${seat.isHost ? " · Host" : ""}${isSelf ? " · Kamu" : ""} · ${seat.ready ? "Siap" : "Belum siap"}
+                </div>
+                <div class="lobby-seat-controls">
+                  ${isSelf && !editingName ? `<button type="button" class="secondary lobby-icon-btn" data-action="edit-name" data-testid="edit-own-name" aria-label="Ubah nama pemain">✎</button>` : ""}
+                  ${isHost && isGroupLobby ? `<select class="lobby-seat-select" data-reassign-seat="${escapeText(seat.seatId)}" aria-label="Pindah tim ${escapeText(seat.name)}">
+                    ${teams.map((tid, idx) => {
+                      const tv = teamVisual(idx);
+                      return `<option value="${escapeText(tid)}" ${seat.teamId === tid ? "selected" : ""}>${tv.shape} ${tv.label}</option>`;
+                    }).join("")}
+                    <option value="__new__">+ Tim Baru</option>
+                  </select>` : ""}
+                </div>
+              </div>
+              ${isSelf && editingName ? `<div class="lobby-rename-form">
+                <input id="cg-rename-input" type="text" maxlength="32" value="${escapeText(renameDraft)}" placeholder="Nama pemain" aria-label="Nama pemain baru">
+                <button type="button" class="primary" data-action="save-name" data-testid="save-own-name">Simpan</button>
+                <button type="button" class="secondary" data-action="cancel-name">Batal</button>
+              </div>` : ""}
+            </li>`;
+          }).join("")}
         </ul>
+        ${isGroupLobby ? `<section class="lobby-team-section" aria-label="Susunan Tim" data-testid="claim-team-switcher">
+          <div class="lobby-team-head">
+            <h4>Susunan Tim (${teams.length} tim)</h4>
+            <button type="button" class="secondary" data-action="new-team" data-testid="new-team-btn" ${busy || ownTeamMembers <= 1 ? "disabled" : ""}>+ Tim Baru</button>
+          </div>
+          <div class="lobby-team-grid">
+            ${teams.map((tid, idx) => {
+              const vis = teamVisual(idx);
+              const members = room.seats.filter((s) => s.teamId === tid);
+              const isOwnTeam = ownSeat?.teamId === tid;
+              return `<div class="lobby-team-card" data-team-card="${escapeText(tid)}" style="--team-accent:${vis.accent};--team-bg:${vis.bg};--team-border:${vis.border}">
+                <div class="lobby-team-top">
+                  <span class="lobby-team-badge"><span aria-hidden="true">${vis.shape}</span> ${vis.label} (${members.length})</span>
+                  ${isOwnTeam
+                    ? `<span class="rb-badge">Tim Kamu</span>`
+                    : `<button type="button" class="secondary" data-action="join-team" data-team="${escapeText(tid)}" ${busy ? "disabled" : ""}>Gabung ${vis.label}</button>`}
+                </div>
+                <div class="lobby-team-members">
+                  ${members.map((m) => `<span class="lobby-member-pill">${escapeText(m.name)}${m.isHost ? " ★" : ""}</span>`).join("")}
+                </div>
+              </div>`;
+            }).join("")}
+          </div>
+        </section>` : ""}
         ${pass.mode !== "solo" ? '<p class="cg-presence-notice">Lokasi dibagikan ke pemain di ruang selama ronde aktif.</p>' : ""}
         ${slotAlert("lobby-checkin")}
         <div class="rb-actions">
           <button type="button" class="secondary" data-action="sim-start-checkin">${demoLocation ? "Simulasikan Check-in Titik Awal" : "Check-in Titik Awal"}</button>
-          <button type="button" class="primary" data-action="mark-ready">Tandai Siap</button>
-          ${isHost ? `<button type="button" class="primary" data-action="start-match" ${enoughPlayers ? "" : "disabled"}>Mulai Permainan</button>` : ""}
+          ${ownSeat?.ready
+            ? `<button type="button" class="secondary" data-action="unmark-ready">Batal Siap</button>`
+            : `<button type="button" class="primary" data-action="mark-ready">Tandai Siap</button>`}
+          ${isHost
+            ? `<button type="button" class="primary" data-action="start-match" ${enoughPlayers && enoughTeams ? "" : "disabled"}>Mulai Permainan</button>`
+            : `<span class="lobby-wait-pill" role="status">Menunggu Host memulai…</span>`}
         </div>
         ${!enoughPlayers ? `<p>Undang pemain hingga ruang berisi setidaknya ${pass.minPlayers} pemain.</p>` : ""}
+        ${enoughPlayers && !enoughTeams ? `<p role="status" data-testid="not-enough-teams-hint">Minimal 2 tim berbeda untuk memulai.</p>` : ""}
+        ${exitSpec ? `<div class="lobby-footer-exit">
+          <button type="button" class="secondary lobby-danger-btn" data-action="confirm-leave" data-testid="lobby-leave-btn">${escapeText(exitSpec.label)}</button>
+        </div>` : ""}
       </div>
     </section>`;
+  }
+
+  function renderMoreMenuItems(): string {
+    const exitSpec = live ? destructiveExitSpec(live) : null;
+    return `<button type="button" data-action="panel" data-panel="activity">Aktivitas terbaru</button>
+        ${wakeLockSupported ? `<button type="button" data-action="toggle-wakelock" aria-pressed="${wakeLockWanted}">Layar tetap menyala: ${wakeLockWanted ? "Aktif" : "Nonaktif"}</button>` : ""}
+        <button type="button" data-action="refresh">Muat Ulang Ruang</button>
+        <button type="button" data-nav="catalog">Kembali ke Katalog</button>
+        ${exitSpec ? `<button type="button" class="lobby-danger-btn" data-action="confirm-leave" data-testid="menu-leave-btn">${escapeText(exitSpec.label)}</button>` : ""}`;
   }
 
   function renderMore(): string {
     return `<details class="sg-room-menu">
       <summary class="sg-quiet" aria-label="Lainnya">⋯</summary>
       <div class="sg-room-menu-actions">
-        <button type="button" data-action="panel" data-panel="activity">Aktivitas terbaru</button>
-        ${wakeLockSupported ? `<button type="button" data-action="toggle-wakelock" aria-pressed="${wakeLockWanted}">Layar tetap menyala: ${wakeLockWanted ? "Aktif" : "Nonaktif"}</button>` : ""}
-        <button type="button" data-action="refresh">Muat Ulang Ruang</button>
-        <button type="button" data-nav="catalog">Keluar ke Katalog</button>
+        ${renderMoreMenuItems()}
       </div>
     </details>`;
   }
@@ -1519,7 +1684,14 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     activityUi.update(live?.room, live?.activity);
     const effects = liveEffects;
     liveEffects = [];
-    toast.setLayout(live && live.room.phase !== "lobby" ? "game" : "page", Boolean(live?.activity.prompt));
+    toast.setLayout(live && live.room.phase !== "lobby" && live.room.phase !== "canceled" ? "game" : "page", Boolean(live?.activity.prompt));
+    if (live?.room.phase === "canceled") {
+      clearActiveRoom(live.room.code);
+      activityUi.mount(null);
+      destroyClaimMap();
+      root.innerHTML = renderCanceledRoomCard({ roomCode: live.room.code, title: live.room.packMeta.title });
+      return;
+    }
     if (!live || live.room.phase === "lobby") {
       activityUi.mount(null);
       destroyClaimMap();
@@ -1566,10 +1738,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     }
     const game = root.querySelector<HTMLElement>(".cg-game")!;
     const { room } = live;
-    const wlBtn = game.querySelector<HTMLButtonElement>('[data-action="toggle-wakelock"]');
-    if (wlBtn) {
-      wlBtn.setAttribute("aria-pressed", String(wakeLockWanted));
-      wlBtn.textContent = `Layar tetap menyala: ${wakeLockWanted ? "Aktif" : "Nonaktif"}`;
+    const menuActions = game.querySelector<HTMLElement>(".sg-room-menu-actions");
+    const nextMenuHtml = renderMoreMenuItems();
+    if (menuActions && menuActions.innerHTML !== nextMenuHtml) {
+      menuActions.innerHTML = nextMenuHtml;
     }
     updateConnectionPill();
     const brand = game.querySelector<HTMLElement>(".cg-brand")!;
@@ -1698,17 +1870,114 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       joinName = target.value;
       joinNameEdited = true;
     }
+    if (target.id === "cg-rename-input") renameDraft = target.value;
   }, { signal: lifetime.signal });
 
   root.addEventListener("change", event => {
     if (event.target instanceof HTMLSelectElement && event.target.hasAttribute("data-claim-hand")) {
       challengeHandId = event.target.value;
+      return;
+    }
+    if (event.target instanceof HTMLSelectElement && event.target.dataset.reassignSeat && live && !busy) {
+      const targetSeatId = event.target.dataset.reassignSeat;
+      const chosen = event.target.value;
+      const nextTeamId = chosen === "__new__" ? nextFreshTeamId(live.room.seats) : chosen;
+      busy = true;
+      root.setAttribute("aria-busy", "true");
+      void postRoomAction({ type: "set-team", teamId: nextTeamId, targetSeatId })
+        .catch((error) => {
+          if (!lifetime.signal.aborted) reportError(error, { surface: "lobby", action: "set-team" }, "lobby");
+        })
+        .finally(() => {
+          busy = false;
+          if (lifetime.signal.aborted) return;
+          root.removeAttribute("aria-busy");
+          render();
+          if (!pendingAction) roomEvents.sync();
+        });
     }
   }, { signal: lifetime.signal });
+
+  async function executeConfirmedLeave(toastText: string) {
+    if (!live || busy) return;
+    const leavingCode = roomCode || live.room.code;
+    const wasActiveSolo = live.room.phase === "active" && live.room.isSolo;
+    busy = true;
+    root.setAttribute("aria-busy", "true");
+    inlineError = null;
+    try {
+      const ok = await postRoomAction({ type: "leave" });
+      if (!ok || lifetime.signal.aborted) return;
+      clearActiveRoom(leavingCode);
+      stopPresenceWatch();
+      releaseWakeLock();
+      toast.resetDedupe();
+      toast.show({ message: toastText, tone: "info", dedupeKey: `claim:leave:${leavingCode}` });
+      if (!wasActiveSolo) {
+        onBack();
+        return;
+      }
+    } catch (error) {
+      if (!lifetime.signal.aborted) {
+        reportError(error, { surface: "lobby", action: "leave" }, "lobby");
+      }
+    } finally {
+      busy = false;
+      if (!lifetime.signal.aborted) {
+        root.removeAttribute("aria-busy");
+        render();
+        if (!pendingAction) roomEvents.sync();
+      }
+    }
+  }
 
   root.addEventListener("click", (event) => {
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
     if (!btn || busy) return;
+    const lobbyAction = btn.dataset.lobbyAction;
+    if (lobbyAction && live) {
+      const inviteUrl = `${location.origin}/?play=rulebook-claim&room=${encodeURIComponent(live.room.code)}`;
+      if (lobbyAction === "copy-code") {
+        void copyToClipboard(live.room.code).then((ok) => {
+          if (lifetime.signal.aborted || !ok) return;
+          copiedCode = true;
+          render();
+          window.setTimeout(() => {
+            if (lifetime.signal.aborted) return;
+            copiedCode = false;
+            render();
+          }, 2500);
+        });
+      } else if (lobbyAction === "share-invite") {
+        void (async () => {
+          if (canUseWebShare()) {
+            try {
+              await navigator.share({
+                title: live.room.packMeta.title,
+                text: `Gabung ruang Claim the City (${live.room.code}) di Kelana Ria!`,
+                url: inviteUrl,
+              });
+              return;
+            } catch (err) {
+              if (err instanceof DOMException && err.name === "AbortError") return;
+            }
+          }
+          const ok = await copyToClipboard(inviteUrl);
+          if (lifetime.signal.aborted || !ok) return;
+          copiedLink = true;
+          render();
+          window.setTimeout(() => {
+            if (lifetime.signal.aborted) return;
+            copiedLink = false;
+            render();
+          }, 2500);
+        })();
+      } else if (lobbyAction === "show-qr") {
+        openQrModal({ roomCode: live.room.code, inviteUrl, title: live.room.packMeta.title });
+      }
+      return;
+    }
+
     const nav = btn.dataset.nav;
     if (nav === "back") return onBack();
     if (nav === "studio") {
@@ -1721,7 +1990,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       return;
     }
     if (nav === "catalog") {
-      if (live?.pass.mode) return onBack();
+      if (live?.pass.mode || live?.room.phase === "canceled") return onBack();
       live = null;
       roomCode = "";
       joinCode = "";
@@ -1745,6 +2014,35 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
     const action = btn.dataset.action;
     if (!action) return;
+    if (action === "confirm-leave" && live) {
+      btn.closest<HTMLDetailsElement>(".sg-room-menu")?.removeAttribute("open");
+      const spec = destructiveExitSpec(live);
+      if (!spec) return;
+      openConfirmDialog({
+        title: spec.title,
+        body: spec.body,
+        confirmLabel: spec.label,
+        danger: true,
+        onConfirm: () => {
+          void executeConfirmedLeave(spec.toastText);
+        },
+      });
+      return;
+    }
+    if (action === "edit-name" && live) {
+      const ownSeat = live.room.seats.find((s) => s.seatId === live!.room.seatId);
+      renameDraft = ownSeat?.name ?? "";
+      editingName = true;
+      render();
+      root.querySelector<HTMLInputElement>("#cg-rename-input")?.focus({ preventScroll: true });
+      return;
+    }
+    if (action === "cancel-name") {
+      editingName = false;
+      render();
+      root.querySelector<HTMLButtonElement>('[data-testid="edit-own-name"]')?.focus({ preventScroll: true });
+      return;
+    }
     if (action === "toggle-wakelock") {
       wakeLockWanted = !wakeLockWanted;
       void syncWakeLock();
@@ -1936,6 +2234,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           },
         });
         if (ok && res.ok) {
+          if (!getCachedAuth()?.authenticated) saveRememberedGuestName(joinName);
           roomCode = joinCode;
           toast.clear();
           toast.resetDedupe();
@@ -1946,6 +2245,22 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       } else if (action === "refresh") {
         btn.closest("details")?.removeAttribute("open");
         await refreshRoom(false, false, true);
+      } else if (action === "save-name" && live) {
+        const cleaned = (root.querySelector<HTMLInputElement>("#cg-rename-input")?.value ?? renameDraft).trim();
+        if (!cleaned || cleaned.length > 32) {
+          reportError("invalid-seat-name", { surface: "lobby", action: "rename-seat" }, "lobby");
+        } else {
+          const ok = await postRoomAction({ type: "rename-seat", name: cleaned });
+          if (ok) {
+            editingName = false;
+            if (!getCachedAuth()?.authenticated) saveRememberedGuestName(cleaned);
+          }
+        }
+      } else if (action === "join-team" && live) {
+        const teamId = btn.dataset.team ?? "";
+        if (teamId) await postRoomAction({ type: "set-team", teamId });
+      } else if (action === "new-team" && live) {
+        await postRoomAction({ type: "set-team", teamId: nextFreshTeamId(live.room.seats) });
       } else if (action === "sim-start-checkin" && live) {
         await postRoomAction({
           type: "check-in-start",
@@ -1953,6 +2268,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         });
       } else if (action === "mark-ready") {
         await postRoomAction({ type: "ready", ready: true });
+      } else if (action === "unmark-ready") {
+        await postRoomAction({ type: "ready", ready: false });
       } else if (action === "start-match") {
         await postRoomAction({ type: "start" });
       } else if (action === "checkin-landmark" && live) {
@@ -2065,6 +2382,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   const clock = window.setInterval(updateClocks, 250);
   return () => {
     lifetime.abort();
+    closeLobbyDialog();
     stopPresenceWatch();
     releaseWakeLock();
     roomEvents.destroy();
