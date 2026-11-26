@@ -17,8 +17,12 @@ import type { GeoSeedRequest } from "./seek-engine/geo-seeder.js";
 import type { rulebookStore, StoredRulebookRecord } from "./rulebook-store.js";
 
 const cookieName = "kelana_rulebook";
+const SSE_KEEPALIVE_MS = 20_000;
 
 type Store = ReturnType<typeof rulebookStore>;
+type RulebookRequestHandler = ((request: IncomingMessage, response: ServerResponse, url: URL) => Promise<void>) & {
+  closeStreams: () => void;
+};
 
 function studioRecord({ ownerHash: _ownerHash, ...record }: StoredRulebookRecord) {
   return record;
@@ -31,9 +35,10 @@ function hashKey(value: string) {
 export function rulebookHandler(
   store: Store, now: () => number, secureCookie = false, allowHideSeekQa = false, allowSandboxCheckout = false,
   reviewerKey = "",
-) {
+): RulebookRequestHandler {
   const configuredReviewer = reviewerKey.trim();
   const reviewerHash = configuredReviewer ? hashKey(configuredReviewer) : undefined;
+  const activeSseStreams = new Set<() => void>();
 
   function canReview(request: IncomingMessage): boolean {
     const key = /^Bearer (.+)$/i.exec(request.headers.authorization ?? "")?.[1];
@@ -57,7 +62,7 @@ export function rulebookHandler(
     return fresh;
   }
 
-  return async function handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
+  async function handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const path = url.pathname;
     if (request.method === "GET" && path === "/api/rulebooks/catalog") {
       const member = credential(request, cookieName);
@@ -156,6 +161,71 @@ export function rulebookHandler(
         "X-Content-Type-Options": "nosniff",
       });
       response.end(photo);
+      return;
+    }
+
+    const eventsRoute = /^\/api\/rulebooks\/rooms\/([\w-]+)\/events$/.exec(path);
+    if (request.method === "GET" && eventsRoute) {
+      const cred = credential(request, cookieName);
+      if (!cred) return json(response, 404, { error: "room-not-found" });
+      const roomCode = decodeURIComponent(eventsRoute[1]);
+      let closed = false;
+      let keepalive: ReturnType<typeof setInterval> | undefined;
+      let unsubscribe: (() => void) | undefined;
+
+      const writeEvent = (stateRev: number, eventNow: number) => {
+        if (closed || response.writableEnded || response.destroyed) return;
+        response.write(`event: rev\ndata: ${JSON.stringify({ stateRev, now: eventNow })}\n\n`);
+      };
+
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        activeSseStreams.delete(cleanup);
+        if (keepalive !== undefined) {
+          clearInterval(keepalive);
+          keepalive = undefined;
+        }
+        unsubscribe?.();
+        unsubscribe = undefined;
+        if (!response.writableEnded && !response.destroyed) {
+          response.end();
+        }
+      };
+
+      const sub = store.subscribeRoom(
+        roomCode,
+        cred,
+        now(),
+        (event) => writeEvent(event.stateRev, event.now),
+        cleanup,
+      );
+      if (!sub.ok) return json(response, 404, { error: "room-not-found" });
+      unsubscribe = sub.unsubscribe;
+
+      request.socket?.setTimeout(0);
+      response.writeHead(200, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      });
+      response.flushHeaders?.();
+      activeSseStreams.add(cleanup);
+      response.write(`retry: 3000\nevent: rev\ndata: ${JSON.stringify({ stateRev: sub.stateRev, now: sub.now })}\n\n`);
+
+      keepalive = setInterval(() => {
+        if (closed || response.writableEnded || response.destroyed) {
+          cleanup();
+          return;
+        }
+        response.write(": keepalive\n\n");
+      }, SSE_KEEPALIVE_MS);
+      keepalive.unref?.();
+
+      request.on("close", cleanup);
+      response.on("close", cleanup);
+      response.on("error", cleanup);
       return;
     }
 
@@ -496,5 +566,11 @@ export function rulebookHandler(
     }
 
     json(response, 404, { error: "not-found" });
-  };
+  }
+
+  return Object.assign(handle, {
+    closeStreams: () => {
+      for (const close of [...activeSseStreams]) close();
+    },
+  });
 }

@@ -194,6 +194,11 @@ function normalizeRestoreCode(raw: string): string | null {
   return `${stripped.slice(0, 3)}-${stripped.slice(3, 7)}-${stripped.slice(7, 11)}`;
 }
 
+export type RoomRevEvent = {
+  stateRev: number;
+  now: number;
+};
+
 export type RulebookRoomPass = {
   passId: string;
   orderId: string | null;
@@ -543,13 +548,13 @@ export function rulebookStore(
     db.exec("BEGIN IMMEDIATE");
     txDepth++;
     commitCallbacks = [];
+    let result: T;
+    let callbacks: (() => void)[];
     try {
-      const result = fn();
+      result = fn();
       db.exec("COMMIT");
-      const callbacks = commitCallbacks;
+      callbacks = commitCallbacks;
       commitCallbacks = [];
-      for (const callback of callbacks) callback();
-      return result;
     } catch (error) {
       commitCallbacks = [];
       db.exec("ROLLBACK");
@@ -557,6 +562,8 @@ export function rulebookStore(
     } finally {
       txDepth--;
     }
+    for (const callback of callbacks) callback();
+    return result;
   }
 
   const initNow = (options.now ?? Date.now)();
@@ -591,10 +598,23 @@ export function rulebookStore(
   }
 
   const liveRooms = new Map<string, LiveSession>();
+  const roomSubscribers = new Map<string, Set<{ onEvent: (event: RoomRevEvent) => void; onClose?: () => void }>>();
   const catalogRooms = new Map<string, string>();
   const pendingOrders = new Map<string, ReturnType<typeof createOrder>>();
   const pendingOrderRecords = new Map<string, { buyerHash: string; order: RulebookOrder }>();
   let touchSeq = 0;
+
+  function emitRoomEvent(roomCode: string, event: RoomRevEvent) {
+    const subs = roomSubscribers.get(roomCode);
+    if (!subs || subs.size === 0) return;
+    for (const sub of [...subs]) {
+      try {
+        sub.onEvent(event);
+      } catch {
+        // Broken client streams must never disrupt committed room mutations.
+      }
+    }
+  }
 
   // Rehydrate photos, active rooms, catalog room idempotency mappings, and unexpired pending orders.
   const photosByRoom = new Map<string, Map<string, Buffer>>();
@@ -635,7 +655,12 @@ export function rulebookStore(
   }
 
   function persistLiveSession(session: LiveSession, now: number, bumpRev: boolean) {
-    if (bumpRev) session.stateRev += 1;
+    if (bumpRev) {
+      session.stateRev += 1;
+      const roomCode = session.pass.roomCode;
+      const event: RoomRevEvent = { stateRev: session.stateRev, now };
+      onCommit(() => emitRoomEvent(roomCode, event));
+    }
     if (session.match.outcome) {
       deleteAllRoomPhotos(session);
       deleteLiveRoomStmt.run(session.pass.roomCode);
@@ -1986,6 +2011,44 @@ export function rulebookStore(
     return active;
   }
 
+  function subscribeRoom(
+    roomCode: string,
+    credential: string,
+    now: number,
+    onEvent: (event: RoomRevEvent) => void,
+    onClose?: () => void,
+  ):
+    | { ok: true; stateRev: number; now: number; unsubscribe: () => void }
+    | { ok: false; error: "room-not-found" | "not-a-member" } {
+    const session = liveRooms.get(roomCode);
+    if (!session) return { ok: false, error: "room-not-found" };
+    const credHash = digest(credential);
+    const seatId = session.format === "claim-the-city"
+      ? findClaimEngineSeat(session.match, credHash)
+      : findSeekEngineSeat(session.match, credHash);
+    if (!seatId) return { ok: false, error: "not-a-member" };
+    const roomNow = roomTime(roomCode, now);
+    if (session.format === "claim-the-city") syncClaimReadState(session, roomNow);
+    else syncSeekReadState(session, roomNow);
+    let subs = roomSubscribers.get(roomCode);
+    if (!subs) {
+      subs = new Set();
+      roomSubscribers.set(roomCode, subs);
+    }
+    const entry = { onEvent, onClose };
+    subs.add(entry);
+    let removed = false;
+    const unsubscribe = () => {
+      if (removed) return;
+      removed = true;
+      const bucket = roomSubscribers.get(roomCode);
+      if (!bucket) return;
+      bucket.delete(entry);
+      if (bucket.size === 0) roomSubscribers.delete(roomCode);
+    };
+    return { ok: true, stateRev: session.stateRev, now: roomNow, unsubscribe };
+  }
+
   async function seedGeoFromOfficialFixture(request: GeoSeedRequest): Promise<GeoSnapshot> {
     const baseSnapshot = officialSeekLoaded[officialSeekLoaded.length - 1]?.snapshot;
     if (!baseSnapshot) throw new Error("No official geo fixture loaded");
@@ -2032,11 +2095,24 @@ export function rulebookStore(
     playCardInRoom,
     deckActionInRoom,
     viewRoom,
+    subscribeRoom,
     roomTime,
     previewSeekQuestion,
     qaLocation,
     advanceQaClock,
     seedGeoFromOfficialFixture,
-    close: () => db.close(),
+    close: () => {
+      for (const subs of [...roomSubscribers.values()]) {
+        for (const sub of [...subs]) {
+          try {
+            sub.onClose?.();
+          } catch {
+            // Ignore stream close errors during shutdown.
+          }
+        }
+      }
+      roomSubscribers.clear();
+      db.close();
+    },
   };
 }

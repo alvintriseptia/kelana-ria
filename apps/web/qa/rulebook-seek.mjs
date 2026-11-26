@@ -259,6 +259,8 @@ try {
   await drawnPreview.waitFor({ state: "detached" });
   await pageG2.locator('[data-panel="ask"]').click();
   await drawnPreview.waitFor();
+  const hiderCanvas = await pageCreator.locator(".sg-board .maplibregl-canvas").elementHandle();
+  const askSentAt = Date.now();
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
   await drawnPreview.waitFor({ state: "detached" });
   const seekerAfter = await pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
@@ -266,7 +268,9 @@ try {
   assert.equal(seekerAfter.room.questions[0].radarRadiusMeters, draft.radiusMeters);
   assert.equal(seekerAfter.activity.events.some(event => event.kind === "question"), false);
   const pendingNotice = pageCreator.locator('[data-activity-message][data-notice-kind="question"]');
-  await pendingNotice.waitFor();
+  await pendingNotice.waitFor({ timeout: 1500 });
+  assert.ok(Date.now() - askSentAt < 1500, "Hider must receive incoming Radar clue via SSE before a 3-second poll cycle");
+  assert.equal(await hiderCanvas.evaluate(element => element.isConnected), true, "SSE push must keep Hider MapLibre canvas mounted");
   assert.match(await pendingNotice.innerText(), /Ada pertanyaan baru/);
   const hiderActivity = await pageCreator.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json()).then(data => data.activity);
   assert.equal(hiderActivity.prompt.kind, "question");
@@ -284,12 +288,14 @@ try {
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-private-answer.png") });
   await pageCreator.click('button[data-answer="yes"]');
   assert.equal(await pageCreator.locator('[data-correct="true"]').isVisible(), true);
+  const answerSentAt = Date.now();
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
   const dealGrid = pageCreator.locator(".sg-deal");
   await dealGrid.locator(".sg-offer-back").first().waitFor({ state: "attached" });
   assert.equal(await pageCreator.locator('[data-action="confirm-draw"]').isDisabled(), true);
   const answerNotice = pageG2.locator('[data-activity-message][data-notice-kind="answer"]');
-  await answerNotice.waitFor();
+  await answerNotice.waitFor({ timeout: 1500 });
+  assert.ok(Date.now() - answerSentAt < 1500, "Seeker must receive Hider answer via SSE before a 3-second poll cycle");
   const radarResult = pageG2.locator('.sg-map-result[data-game-motion^="update:"]');
   await radarResult.waitFor();
   assert.equal(await canvas.evaluate(element => element.isConnected), true);
@@ -341,8 +347,13 @@ try {
   assert.ok(markerB.y + markerB.height < questionPanel.y);
   assert.equal(await canvas.evaluate(element => element.isConnected), true);
   await pageG2.screenshot({ path: path.join(results, "rulebook-seek-thermometer.png") });
+  // Abort SSE /events on Hider to verify automatic 3-second polling fallback delivers incoming Thermometer clue without manual refresh
+  await pageCreator.route(`**/api/rulebooks/rooms/${roomCode}/events`, route => route.abort());
+  await pageCreator.reload();
+  await pageCreator.locator(".sg-board").waitFor();
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
-  await refreshSeekRoom(pageCreator);
+  await pageCreator.locator('[data-activity-message][data-notice-kind="question"]').waitFor({ timeout: 8000 });
+  await pageCreator.unroute(`**/api/rulebooks/rooms/${roomCode}/events`);
   await pageCreator.click('button[data-answer="hotter"]');
   await pageCreator.emulateMedia({ reducedMotion: "reduce" });
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');

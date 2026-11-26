@@ -19,6 +19,7 @@ import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { claimDecidingMetric, claimResultReasons } from "./rulebook-claim-result";
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { clearActiveRoom, saveActiveRoom } from "./active-room-storage";
+import { createRoomEventBridge } from "./room-events";
 import { escapeText } from "./solo-view";
 import "./rulebook-seek-play.css";
 import "./rulebook-claim-play.css";
@@ -205,8 +206,16 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let statusMsg = "";
   let inlineError: ClaimInlineError = null;
   let busy = false;
-  let pollActive = false;
   const lifetime = new AbortController();
+  const roomEvents = createRoomEventBridge({
+    signal: lifetime.signal,
+    getActiveRoom: () =>
+      live && roomCode && (live.room.phase === "lobby" || live.room.phase === "active") && !live.room.outcome
+        ? { code: roomCode, stateRev: live.stateRev ?? 0 }
+        : null,
+    isBusy: () => busy,
+    onSync: () => refreshRoom(false, true),
+  });
   const toast = createPlayerToast({ signal: lifetime.signal, layout: "page" });
   let demoLocation = false;
   let mapFailed = false;
@@ -440,6 +449,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         serverOffset = serverNow - Date.now();
         updateClocks();
       }
+      roomEvents.markSynced();
       if (!background && !skipRender) render();
       return;
     }
@@ -487,6 +497,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       );
       if (unchanged) {
         live = payload;
+        roomEvents.markSynced();
         return;
       }
       if (payload.room.outcome && !live?.room.outcome) {
@@ -495,6 +506,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       }
       live = payload;
       syncRoomUrl(roomCode);
+      roomEvents.markSynced();
     } else if (background) {
       return;
     } else if (allowInvitePrompt) {
@@ -1415,6 +1427,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       toast.clear();
       refreshSeq++;
       syncRoomUrl("");
+      roomEvents.sync();
       render();
       void loadCatalog();
       return;
@@ -1718,19 +1731,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       if (lifetime.signal.aborted) return;
       root.removeAttribute("aria-busy");
       render();
+      if (!pendingAction) roomEvents.sync();
     });
-  }, { signal: lifetime.signal });
-
-  window.addEventListener("online", () => {
-    if (!document.hidden && !busy && roomCode) {
-      void refreshRoom(false, true).catch(() => {});
-    }
-  }, { signal: lifetime.signal });
-
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && navigator.onLine && !busy && roomCode) {
-      void refreshRoom(false, true).catch(() => {});
-    }
   }, { signal: lifetime.signal });
 
   void isSimulatedLocationAllowed(lifetime.signal).then(allowed => {
@@ -1743,17 +1745,11 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     render();
   });
   const clock = window.setInterval(updateClocks, 250);
-  const poll = window.setInterval(() => {
-    if (document.hidden || !navigator.onLine || busy || pollActive) return;
-    if (live?.room.phase !== "lobby" && live?.room.phase !== "active") return;
-    pollActive = true;
-    void refreshRoom(false, true).catch(() => {}).finally(() => { pollActive = false; });
-  }, 3000);
   return () => {
     lifetime.abort();
+    roomEvents.destroy();
     root.removeAttribute("aria-busy");
     window.clearInterval(clock);
-    window.clearInterval(poll);
     destroyClaimMap();
   };
 }

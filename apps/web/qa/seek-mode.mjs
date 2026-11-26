@@ -144,13 +144,15 @@ try {
   assert.equal(await canvas.evaluate(element => element.isConnected), true);
   assert.equal(await refresh.isVisible(), false);
 
+  const phaseJumpAt = Date.now();
   const jumpToRelease = await advance(host, "phase-end");
   const seeking = (await view(guest, code)).room;
   assert.equal(seeking.phase, "seeking");
   assert.equal(seeking.now, seeking.releaseAt);
   const staleDeadline = await post(host, { ...jumpToRelease, actionId: "stale-phase" });
   assert.equal((await staleDeadline.json()).error, "qa-deadline-changed");
-  await guest.getByText("Fase Cari", { exact: false }).first().waitFor();
+  await guest.getByText("Fase Cari", { exact: false }).first().waitFor({ timeout: 1500 });
+  assert.ok(Date.now() - phaseJumpAt < 1500, "Guest must receive QA phase jump via SSE before a 3-second poll cycle");
   await assertCleanUiCopy(guest, "seek-mode QA room");
   await guest.getByRole("button", { name: "Mode QA" }).click();
   assert.equal(await guest.locator('[data-action="qa-advance"]').count(), 0);
@@ -173,6 +175,8 @@ try {
   await host.locator('[data-answer="hotter"]').click();
   await clickAction(host, '[data-action="answer-pending"]');
 
+  // Abort SSE /events on guest to verify automatic fallback to 3-second polling recovery
+  await guest.route(`**/api/rulebooks/rooms/${code}/events`, route => route.abort());
   await guest.getByRole("button", { name: "Mode QA" }).click();
   await guest.getByLabel("Lokasi simulasi kamu").selectOption("mrt-blok-a");
   await guest.reload();
@@ -185,6 +189,8 @@ try {
   await host.getByRole("button", { name: "Mode QA" }).click();
   await advance(host, "phase-end");
   assert.equal((await view(guest, code)).room.regroupPoint.id, "mrt-blok-a");
+  await guest.locator('[data-action="regroup"]').waitFor({ timeout: 8000 });
+  await guest.unroute(`**/api/rulebooks/rooms/${code}/events`);
   await host.getByLabel("Lokasi simulasi kamu").selectOption("mrt-blok-a");
   for (const page of [host, guest]) await clickAction(page, '[data-action="regroup"]');
   const next = (await view(guest, code)).room;

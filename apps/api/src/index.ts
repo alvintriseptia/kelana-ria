@@ -464,7 +464,14 @@ export function createSoloServer({
       json(response, 500, { error: "server-error" });
     }
   });
+  const nativeClose = server.close.bind(server);
+  server.close = ((callback?: (err?: Error) => void) => {
+    handleRulebooks.closeStreams();
+    server.closeIdleConnections?.();
+    return nativeClose(callback);
+  }) as typeof server.close;
   server.on("close", () => {
+    handleRulebooks.closeStreams();
     rulebooks.close();
     seek.close();
     packs.close();
