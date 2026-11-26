@@ -309,6 +309,46 @@ function parseAction(value: unknown): SoloAction | undefined {
   return undefined;
 }
 
+const YOUTUBE_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "youtube-nocookie.com",
+  "www.youtube-nocookie.com",
+]);
+
+export function parseYoutubeVideoId(input: unknown): string | null {
+  if (typeof input !== "string") return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  if (YOUTUBE_ID_PATTERN.test(trimmed)) return trimmed;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+  const host = parsed.hostname.toLowerCase();
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  let candidate: string | null = null;
+  if (host === "youtu.be") {
+    candidate = segments.length === 1 ? segments[0] : null;
+  } else if (YOUTUBE_HOSTS.has(host)) {
+    if (parsed.pathname === "/watch") {
+      candidate = parsed.searchParams.get("v");
+    } else if (
+      segments.length === 2 &&
+      (segments[0] === "shorts" || segments[0] === "embed" || segments[0] === "live")
+    ) {
+      candidate = segments[1];
+    }
+  }
+  return candidate && YOUTUBE_ID_PATTERN.test(candidate) ? candidate : null;
+}
+
 export function createSoloServer({
   databasePath = defaultDatabasePath,
   now = Date.now,
@@ -323,6 +363,7 @@ export function createSoloServer({
   allowRulebookSandboxCheckout = false,
   allowSandboxAuthOtp = false,
   rulebookReviewerKey = "",
+  demoVideoYoutubeId = null,
   ...storeOptions
 }: {
   databasePath?: string;
@@ -338,6 +379,7 @@ export function createSoloServer({
   allowRulebookSandboxCheckout?: boolean;
   allowSandboxAuthOtp?: boolean;
   rulebookReviewerKey?: string;
+  demoVideoYoutubeId?: string | null;
 } & SoloStoreOptions = {}) {
   const store = soloStore(databasePath, { now, ...storeOptions });
   const duo = duoStore(databasePath);
@@ -377,6 +419,7 @@ export function createSoloServer({
   const handleMap = mapHandler(mapProxy);
   const handleStatic = staticDir ? staticHandler(staticDir) : undefined;
   const mapMode = mapProxy?.geoapifyApiKey?.trim() ? "geoapify-vector" : "offline-vector";
+  const resolvedDemoVideoYoutubeId = parseYoutubeVideoId(demoVideoYoutubeId);
   const server = createServer({ requestTimeout: 15_000 }, async (request, response) => {
     try {
       const url = new URL(request.url ?? "/", "http://localhost");
@@ -388,6 +431,7 @@ export function createSoloServer({
           mapMode,
           staticWeb: Boolean(handleStatic),
           allowSimulatedLocation: Boolean(allowSimulatedLocation),
+          demoVideoYoutubeId: resolvedDemoVideoYoutubeId,
         });
         return;
       }
@@ -551,6 +595,7 @@ if (import.meta.main) {
     allowRulebookSandboxCheckout: process.env.ALLOW_RULEBOOK_SANDBOX_CHECKOUT === "1",
     allowSandboxAuthOtp,
     rulebookReviewerKey: process.env.RULEBOOK_REVIEWER_KEY,
+    demoVideoYoutubeId: process.env.DEMO_VIDEO_YOUTUBE_ID,
     healthMeta: { aiMode: providers.aiMode, routeMode: providers.routeMode },
     mapProxy: {
       geoapifyApiKey: process.env.GEOAPIFY_API_KEY,

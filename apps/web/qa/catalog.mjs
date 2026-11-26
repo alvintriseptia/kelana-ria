@@ -1,3 +1,7 @@
+export function catalogUrl(origin) {
+  return `${origin.replace(/\/$/, "")}/catalog`;
+}
+
 export function openEdition(page, format, board = "compact") {
   const area = board === "jakarta-wide" ? "wide" : "compact";
   const game = format === "hide-and-seek" ? "seek" : "claim";

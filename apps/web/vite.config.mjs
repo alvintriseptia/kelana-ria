@@ -62,7 +62,7 @@ self.addEventListener("fetch", (event) => {
       request.headers.has("Authorization") || request.headers.has("Range")) return;
 
   if (request.mode === "navigate") {
-    if (url.pathname !== "/" && url.pathname !== "/index.html") return;
+    if (url.pathname !== "/" && url.pathname !== "/catalog" && url.pathname !== "/index.html") return;
     event.respondWith(fetch(request).catch(async (error) => {
       const cache = await caches.open(cacheName);
       const fallback = await cache.match("/index.html");

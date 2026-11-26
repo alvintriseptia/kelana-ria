@@ -1154,7 +1154,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         <p>Pilih edisi resmi gratis atau paket buatan komunitas. Sembunyi di stasiun, kumpulkan petunjuk, dan mainkan kartu.</p>
         <div class="rb-actions">
           <button type="button" class="secondary" data-nav="studio">Buka Studio Kreator</button>
-          <button type="button" class="secondary" data-nav="back">Kembali ke Beranda</button>
+          <button type="button" class="secondary" data-nav="back">Kembali ke Katalog</button>
         </div>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${slotAlert("catalog")}

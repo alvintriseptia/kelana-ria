@@ -235,7 +235,7 @@ export function mountRulebookRecap(
 ) {
   if (sharedId) {
     document.title = "Ringkasan komunitas · Kelana Ria";
-    function renderShared(content: string, backHref = "/", backLabel = "Katalog") {
+    function renderShared(content: string, backHref = "/catalog", backLabel = "Katalog") {
       if (signal.aborted) return;
       root.innerHTML = `<article class="recap-shell">
         <a class="recap-back" href="${escapeText(backHref)}">‹ ${escapeText(backLabel)}</a>
@@ -275,7 +275,7 @@ export function mountRulebookRecap(
     return;
   }
 
-  const back = matchId ? "/?recaps=1" : "/";
+  const back = matchId ? "/?recaps=1" : "/catalog";
   const title = matchId ? "Ringkasan pertandingan" : "Riwayat pertandingan";
   document.title = `${title} · Kelana Ria`;
 

@@ -144,6 +144,7 @@ async function checkPwa(page, cdp, origin) {
   const manifest = JSON.parse(info.data);
   assert.ok(manifest.name || manifest.short_name);
   assert.equal(manifest.display, 'standalone');
+  assert.equal(manifest.start_url, '/catalog');
   assert.equal(new URL(manifest.start_url, info.url).origin, origin);
   const icons = await page.evaluate(async ({ icons, url }) => {
     const dimensions = [];
@@ -172,7 +173,7 @@ export async function exerciseChooser(context, origin, dist, results) {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     const cdp = await context.newCDPSession(page);
-    await page.goto(origin);
+    await page.goto(`${origin}/catalog`);
     await page.getByRole('heading', { name: 'Pilih permainan', level: 1 }).waitFor();
     assert.equal(await page.locator('html').getAttribute('lang'), 'id');
     const noOverflow = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
@@ -182,6 +183,14 @@ export async function exerciseChooser(context, origin, dist, results) {
     await soloEdition.waitFor();
     await seekEdition.waitFor();
     assert.match(await soloEdition.innerText(), /1–4 pemain/);
+    assert.match(
+      await page.getByTestId('catalog-subtitle-claim-the-city').innerText(),
+      /Rebut & kunci landmark nyata untuk kuasai zona kota\./,
+    );
+    assert.match(
+      await page.getByTestId('catalog-subtitle-hide-and-seek').innerText(),
+      /Sembunyi di stasiun transit; pencari melacak lewat radar & petunjuk\./,
+    );
     const tree = (await cdp.send('Accessibility.getFullAXTree')).nodes.filter(node => !node.ignored);
     assert.ok(tree.some(node => node.role.value === 'link' && /Jakarta Selatan.*Gratis/.test(node.name.value)),
       'Edition links expose their title and price');
@@ -190,9 +199,19 @@ export async function exerciseChooser(context, origin, dist, results) {
     await confirmCredits(page, results);
     await assertCleanUiCopy(page, 'home catalog chooser');
 
+    // Compact top-left Kelana Ria brand link on /catalog navigates to the Landing Page (/) and back
+    await page.locator('header.mast a.brand[href="/"]').click();
+    await page.getByRole('heading', { name: 'Ubah Jakarta jadi papan permainan nyata', level: 1 }).waitFor();
+    assert.equal(new URL(page.url()).pathname, '/');
+    await assertCleanUiCopy(page, 'landing page');
+    assert.ok(await noOverflow(), 'Horizontal overflow on landing page');
+    await page.getByTestId('landing-choose-game').click();
+    await page.getByRole('heading', { name: 'Pilih permainan', level: 1 }).waitFor();
+    assert.equal(new URL(page.url()).pathname, '/catalog');
+
     await tabTo(page, seekEdition);
     await page.keyboard.press('Enter');
-    await page.waitForURL(url => url.searchParams.get('edition') === 'official-jakarta-wide-seek' && url.searchParams.has('version'));
+    await page.waitForURL(url => url.pathname === '/catalog' && url.searchParams.get('edition') === 'official-jakarta-wide-seek' && url.searchParams.has('version'));
     const detail = page.getByRole('article', { name: 'Detail edisi' });
     await detail.waitFor();
     assert.match(await detail.innerText(), /Hide\s*&\s*Seek/i);
@@ -229,7 +248,7 @@ export async function exerciseChooser(context, origin, dist, results) {
     await page.getByRole('heading', { name: 'Edisi Landmark Tanpa Dek' }).waitFor();
     await verifyClaimPractice(page, results, 'solo', false);
     await page.unroute(alternate);
-    await page.goto(origin);
+    await page.goto(`${origin}/catalog`);
     await soloEdition.waitFor();
     await soloEdition.click();
     assert.match(await detail.innerText(), /Cara bermain.*Jelajahi landmark di peta/s);
@@ -248,9 +267,10 @@ export async function exerciseChooser(context, origin, dist, results) {
     await page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
     await page.getByRole('link', { name: /Katalog/ }).click();
     await soloEdition.waitFor();
+    assert.equal(new URL(page.url()).pathname, '/catalog');
     await context.setOffline(true);
     const offline = await page.reload();
-    assert.ok(offline.ok() && offline.fromServiceWorker(), 'Previously opened catalog relaunches offline');
+    assert.ok(offline.ok() && offline.fromServiceWorker(), 'Previously opened /catalog relaunches offline');
     await soloEdition.waitFor();
     await soloEdition.click();
     await detail.waitFor();

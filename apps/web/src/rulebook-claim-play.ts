@@ -1197,7 +1197,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         <p>Rebut wilayah lewat Klaim, Kunci, dan Rebut landmark. Selesaikan tantangan di lokasi dan pakai kartu untuk balik keadaan.</p>
         <div class="rb-actions">
           <button type="button" class="secondary" data-nav="studio">Buka Studio Kreator</button>
-          <button type="button" class="secondary" data-nav="back">Kembali ke Beranda</button>
+          <button type="button" class="secondary" data-nav="back">Kembali ke Katalog</button>
         </div>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${slotAlert("catalog")}

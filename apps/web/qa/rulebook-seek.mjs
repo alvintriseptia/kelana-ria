@@ -4,7 +4,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
-import { openEdition } from "./catalog.mjs";
+import { catalogUrl, openEdition } from "./catalog.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
 import { buyPublishedDraft, openDraft, openReview, reviewerKey, signInQaContext, startDraft } from "./studio-navigation.mjs";
@@ -38,23 +38,23 @@ const browser = await chromium.launch({
 });
 
 try {
-  // 0. Quick check: launching Hide & Seek directly from / opens Official Jakarta Compact Hide & Seek room + invite link
+  // 0. Quick check: launching Hide & Seek from /catalog opens Official Jakarta Compact Hide & Seek room + invite link
   const ctxRoot = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageRoot = await ctxRoot.newPage();
-  await pageRoot.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageRoot.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
   await openEdition(pageRoot, "hide-and-seek");
   await pageRoot.getByRole("button", { name: "Main Grup", exact: true }).click();
   await pageRoot.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
   const rootInvite = await pageRoot.getAttribute('[data-testid="invite-link"]', "href");
-  assert.ok(rootInvite && rootInvite.includes("room=RB-"), "Root launch should create Hide & Seek room with invite link");
+  assert.ok(rootInvite && rootInvite.includes("room=RB-"), "Catalog launch should create Hide & Seek room with invite link");
   await ctxRoot.close();
 
-  // 1. Creator opens Studio from /, selects Hide & Seek, clones Official pack, exercises 4-step stepper + JSON export/import + revision note + publish
+  // 1. Creator opens Studio from /catalog, selects Hide & Seek, clones Official pack, exercises 4-step stepper + JSON export/import + revision note + publish
   const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 }, recordVideo });
   await signInQaContext(ctxCreator, baseUrl, "seek-creator@kelana.test", "Kreator Seek");
   const pageCreator = await ctxCreator.newPage();
   pageCreator.setDefaultTimeout(20_000);
-  await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageCreator.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
   await pageCreator.click("#chooser-studio");
   await startDraft(pageCreator, "hide-and-seek");
   await pageCreator.waitForSelector('button[data-action="clone"]');
@@ -484,7 +484,7 @@ try {
   // #144: Non-host paid guest sees Gabung Ruang Baru + Lihat Paket Ini + Buka ringkasan (NO Main Lagi)
   assert.equal(await pageG2.getByTestId("postmatch-play-again").count(), 0, "Non-host paid Seek guest must not see Main Lagi");
   await pageG2.getByTestId("postmatch-join-new-room").waitFor();
-  assert.equal(await pageG2.getByTestId("postmatch-view-pack").getAttribute("href"), "/?edition=pack-senopati-seek&version=1");
+  assert.equal(await pageG2.getByTestId("postmatch-view-pack").getAttribute("href"), "/catalog?edition=pack-senopati-seek&version=1");
   assert.ok(await pageG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek finished screen for paid guest (390x844)");
 
   // Paid Host refreshes finished room -> sees Main Lagi + Buka ringkasan + Kembali ke Katalog -> taps Main Lagi -> brand-new paid Seek lobby!
@@ -527,6 +527,9 @@ try {
   assert.ok(await pageG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageG2.screenshot({ path: path.join(results, "rulebook-seek-recap.png") });
   await pageG2.locator('header.mast a.brand[href="/"]').click();
+  await pageG2.getByRole("heading", { name: "Ubah Jakarta jadi papan permainan nyata", level: 1 }).waitFor();
+  assert.equal(await pageG2.getByTestId("resume-room-banner").count(), 0, "Completed Hide & Seek room must not show resume banner on landing");
+  await pageG2.getByTestId("landing-choose-game").click();
   await pageG2.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
   assert.equal(await pageG2.getByTestId("resume-room-banner").count(), 0, "Completed Hide & Seek room must not show resume banner");
   for (const [context, page, filename] of [
@@ -546,7 +549,7 @@ try {
   const sHost = await sHostCtx.newPage();
   const sGuest = await sGuestCtx.newPage();
   try {
-    await sHost.goto(baseUrl, { waitUntil: "networkidle" });
+    await sHost.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
     await sHost.locator('.cat-card[data-pack-id="official-jakarta-compact-seek"]').click();
     await sHost.getByRole("button", { name: "Main Grup", exact: true }).click();
     await sHost.getByTestId("lobby-invite-card").waitFor();
@@ -565,8 +568,8 @@ try {
     await sHost.keyboard.press("Escape");
     await sHost.getByTestId("qr-modal").waitFor({ state: "hidden" });
 
-    // Guest joins Hide & Seek from Home Gabung Ruang modal on 320x640
-    await sGuest.goto(baseUrl, { waitUntil: "networkidle" });
+    // Guest joins Hide & Seek from Catalog Gabung Ruang modal on 320x640
+    await sGuest.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
     await sGuest.getByTestId("home-join-room-btn").click();
     await sGuest.fill("#cat-join-code", sCode.toLowerCase());
     await sGuest.fill("#cat-join-name", "Raka");

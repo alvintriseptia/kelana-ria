@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createSoloServer } from "../dist/index.js";
+import { fileURLToPath } from "node:url";
+import { createSoloServer, parseYoutubeVideoId } from "../dist/index.js";
 
 test("GET /api/health reports operational modes without leaking secrets", async (t) => {
   const server = createSoloServer({
@@ -30,16 +31,66 @@ test("GET /api/health reports operational modes without leaking secrets", async 
     mapMode: "geoapify-vector",
     staticWeb: false,
     allowSimulatedLocation: false,
+    demoVideoYoutubeId: null,
   });
 });
 
-test("single-origin staticDir serves built PWA files with cache headers and blocks path traversal", async (t) => {
+test("parseYoutubeVideoId and /api/health strictly parse DEMO_VIDEO_YOUTUBE_ID", async (t) => {
+  assert.equal(parseYoutubeVideoId("dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(parseYoutubeVideoId("  abc_123-XYZ  "), "abc_123-XYZ");
+  assert.equal(parseYoutubeVideoId("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=12s"), "dQw4w9WgXcQ");
+  assert.equal(parseYoutubeVideoId("https://m.youtube.com/watch?v=dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(parseYoutubeVideoId("https://youtu.be/dQw4w9WgXcQ?si=sharetoken"), "dQw4w9WgXcQ");
+  assert.equal(parseYoutubeVideoId("https://www.youtube.com/shorts/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+  assert.equal(parseYoutubeVideoId("https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"), "dQw4w9WgXcQ");
+
+  // Reject malformed, unsafe, non-YouTube, or wrong-length values
+  for (const invalid of [
+    "",
+    "   ",
+    null,
+    undefined,
+    12345678901,
+    "short123",
+    "tooLongVideoId123",
+    "bad!char$12",
+    "javascript:alert(1)",
+    "https://evil.example/watch?v=dQw4w9WgXcQ",
+    "https://youtu.be/dQw4w9WgXcQ/extra",
+    "https://www.youtube.com/watch?v=bad<script>",
+    "ftp://youtu.be/dQw4w9WgXcQ",
+  ]) {
+    assert.equal(parseYoutubeVideoId(invalid), null, `Expected invalid value to yield null: ${String(invalid)}`);
+  }
+
+  const validServer = createSoloServer({
+    databasePath: ":memory:",
+    demoVideoYoutubeId: "https://youtu.be/K3lAnA_R1a0?si=demo",
+  });
+  validServer.listen(0, "127.0.0.1");
+  await once(validServer, "listening");
+  t.after(() => validServer.close());
+  const validHealth = await (await fetch(`http://127.0.0.1:${validServer.address().port}/api/health`)).json();
+  assert.equal(validHealth.demoVideoYoutubeId, "K3lAnA_R1a0");
+
+  const invalidServer = createSoloServer({
+    databasePath: ":memory:",
+    demoVideoYoutubeId: "https://evil.example/watch?v=K3lAnA_R1a0",
+  });
+  invalidServer.listen(0, "127.0.0.1");
+  await once(invalidServer, "listening");
+  t.after(() => invalidServer.close());
+  const invalidHealth = await (await fetch(`http://127.0.0.1:${invalidServer.address().port}/api/health`)).json();
+  assert.equal(invalidHealth.demoVideoYoutubeId, null);
+});
+
+test("single-origin staticDir serves built PWA files on / and /catalog with cache headers and blocks path traversal", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "kelana-static-"));
   await mkdir(join(dir, "assets"), { recursive: true });
   await mkdir(join(dir, "licenses"), { recursive: true });
   await writeFile(join(dir, "index.html"), "<!doctype html><title>Kelana Ria</title>");
   await writeFile(join(dir, "sw.js"), "self.addEventListener('install', () => {});");
-  await writeFile(join(dir, "manifest.webmanifest"), '{"name":"Kelana Ria"}');
+  await writeFile(join(dir, "manifest.webmanifest"), '{"name":"Kelana Ria","start_url":"/catalog"}');
   await writeFile(join(dir, "assets", "app-abc123.js"), "console.log('ok');");
   await writeFile(join(dir, "licenses", "maplibre-gl.txt"), "BSD-3-Clause");
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -54,11 +105,18 @@ test("single-origin staticDir serves built PWA files with cache headers and bloc
   const health = await (await fetch(`${base}/api/health`)).json();
   assert.equal(health.staticWeb, true);
 
-  const rootRes = await fetch(`${base}/`);
-  assert.equal(rootRes.status, 200);
-  assert.match(rootRes.headers.get("content-type") ?? "", /text\/html/);
-  assert.equal(rootRes.headers.get("cache-control"), "no-cache");
-  assert.match(await rootRes.text(), /Kelana Ria/);
+  for (const spaPath of ["/", "/catalog", "/catalog?edition=official-jakarta-compact-claim&version=1"]) {
+    const res = await fetch(`${base}${spaPath}`);
+    assert.equal(res.status, 200, `Expected 200 for ${spaPath}`);
+    assert.match(res.headers.get("content-type") ?? "", /text\/html/);
+    assert.equal(res.headers.get("cache-control"), "no-cache");
+    assert.match(await res.text(), /Kelana Ria/);
+  }
+
+  const catalogHead = await fetch(`${base}/catalog`, { method: "HEAD" });
+  assert.equal(catalogHead.status, 200);
+  assert.equal(catalogHead.headers.get("cache-control"), "no-cache");
+  assert.equal(await catalogHead.text(), "");
 
   const assetRes = await fetch(`${base}/assets/app-abc123.js`);
   assert.equal(assetRes.status, 200);
@@ -82,4 +140,10 @@ test("single-origin staticDir serves built PWA files with cache headers and bloc
 
   const apiUnknown = await fetch(`${base}/api/does-not-exist`);
   assert.equal(apiUnknown.status, 404);
+
+  // Verify the committed PWA manifest launches installed users straight into /catalog
+  const webManifestPath = fileURLToPath(new URL("../../web/public/manifest.webmanifest", import.meta.url));
+  const webManifest = JSON.parse(await readFile(webManifestPath, "utf8"));
+  assert.equal(webManifest.start_url, "/catalog");
+  assert.equal(webManifest.scope, "/");
 });

@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
-import { openEdition } from "./catalog.mjs";
+import { catalogUrl, openEdition } from "./catalog.mjs";
 import { signInQaContext } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -147,7 +147,7 @@ try {
   assert.equal(pubRes.status(), 200);
 
   // 1a. Uncertain free room creation: first POST reaches server and creates room, then network drops before client receives reply
-  await pageCat.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageCat.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
   await openEdition(pageCat, "claim-the-city");
   await pageCat.getByRole("button", { name: "Main Solo", exact: true }).waitFor();
   await installAlertObserver(pageCat);
@@ -213,7 +213,7 @@ try {
   //    500 server error + reduced motion, uncertain card replay/reconnect + dedup
   const ctxClaim = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
   const page = await ctxClaim.newPage();
-  await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await page.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
   await openEdition(page, "claim-the-city");
   await page.getByRole("button", { name: "Main Solo", exact: true }).click();
   await page.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));

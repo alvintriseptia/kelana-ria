@@ -1455,7 +1455,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     if (btn.dataset.nav === "back") return onBack();
     if (btn.dataset.nav === "catalog") {
-      history.pushState(null, "", "/");
+      history.pushState(null, "", "/catalog");
       window.dispatchEvent(new PopStateEvent("popstate"));
       return;
     }

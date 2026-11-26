@@ -9,6 +9,7 @@ import { once } from 'node:events';
 import { createSoloServer } from '../../api/dist/index.js';
 import { preview } from 'vite';
 import { exerciseChooser } from './browser.mjs';
+import { exerciseLandingPage } from './landing.mjs';
 import { budgets, measure, phoneOptions, profile } from './profile.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -64,6 +65,7 @@ try {
     ...phoneOptions(browser), ...launch,
   });
   report.pwa = await exerciseChooser(regular, origin, dist, results);
+  await exerciseLandingPage({ browser, results });
   for (const [metric, limit] of Object.entries(budgets)) {
     assert.ok(report.median[metric] <= limit, `Median ${metric} ${report.median[metric]} exceeds ${limit}`);
   }

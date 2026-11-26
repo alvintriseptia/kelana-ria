@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
-import { openEdition } from "./catalog.mjs";
+import { catalogUrl, openEdition } from "./catalog.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
 import { openReview, reviewerKey, signInQaContext, startDraft } from "./studio-navigation.mjs";
@@ -62,10 +62,10 @@ const proof = {
 };
 
 try {
-  // 1. Solo Official Jakarta Compact Claim launched directly from /
+  // 1. Solo Official Jakarta Compact Claim launched from /catalog
   const ctxSolo = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
   const pageSolo = await ctxSolo.newPage();
-  await pageSolo.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageSolo.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
   await openEdition(pageSolo, "claim-the-city");
   await pageSolo.getByRole("button", { name: "Main Solo", exact: true }).click();
   await pageSolo.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
@@ -186,9 +186,9 @@ try {
   await pageSolo.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
   assert.equal(await pageSolo.getByRole("list", { name: "Daftar Landmark" }).count(), 0);
 
-  // App restart simulation: open a fresh tab at / in the same browser context -> Lanjutkan Permainan banner appears and resumes the active game
+  // App restart simulation: open a fresh tab at /catalog in the same browser context -> Lanjutkan Permainan banner appears and resumes the active game
   const pageRestart = await ctxSolo.newPage();
-  await pageRestart.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageRestart.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
   const resumeBanner = pageRestart.getByTestId("resume-room-banner");
   await resumeBanner.waitFor();
   const resumeText = await resumeBanner.innerText();
@@ -208,16 +208,16 @@ try {
   assert.equal(new URL(pageRestart.url()).searchParams.get("room"), soloRoomCode);
 
   // Return to catalog and test dismissing the resume banner
-  await pageRestart.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageRestart.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
   await resumeBanner.waitFor();
   await dismissBtn.click();
   assert.equal(await resumeBanner.count(), 0, "Dismissing resume banner should hide it on the catalog");
   await ctxSolo.close();
 
-  // 2. 3-player Claim the City FFA launched directly from / + invite link join
+  // 2. 3-player Claim the City FFA launched from /catalog + invite link join
   const ctxP1 = await browser.newContext({ viewport: { width: 390, height: 844 }, recordVideo });
   const pageP1 = await ctxP1.newPage();
-  await pageP1.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageP1.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
   await openEdition(pageP1, "claim-the-city");
   await pageP1.getByRole("button", { name: "Grup", exact: true }).click();
   await pageP1.getByRole("button", { name: "Main Grup", exact: true }).click();
@@ -423,15 +423,18 @@ try {
   await communitySection.waitFor();
   await communitySection.getByText(/Belum ada hasil pertandingan yang dibagikan/).waitFor();
 
-  // Top app bar brand logo links back to home catalog (/) from edition detail, recaps, game screens, and Creator Studio
+  // Top app bar brand logo links back to Landing Page (/) from edition detail, recaps, game screens, and Creator Studio
   const brandLink = pageVisitor.locator('header.mast a.brand[href="/"]');
   const brandBox = await brandLink.boundingBox();
   assert.ok(brandBox && brandBox.width >= 44 && brandBox.height >= 44, "Brand logo link must meet 44x44 touch target");
   await brandLink.click();
-  await pageVisitor.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+  await pageVisitor.getByRole("heading", { name: "Ubah Jakarta jadi papan permainan nyata", level: 1 }).waitFor();
+  assert.equal(new URL(pageVisitor.url()).pathname, "/");
   assert.equal(new URL(pageVisitor.url()).search, "");
   assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
+  await pageVisitor.getByTestId("landing-choose-game").click();
+  await pageVisitor.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
   await pageVisitor.waitForLoadState("networkidle");
   await pageVisitor.waitForFunction(() => {
     const el = document.querySelector(".cat-card");
@@ -444,10 +447,11 @@ try {
   });
   assert.ok(catalogCardTheme.bg, "Catalog card theme background should be resolved");
 
-  // Bare /?play normalizes cleanly to the home catalog (/)
+  // Bare /?play normalizes cleanly to /catalog
   await pageVisitor.goto(`${baseUrl}/?play`, { waitUntil: "networkidle" });
   await pageVisitor.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
-  assert.equal(new URL(pageVisitor.url()).search, "", "Bare /?play should normalize to /");
+  assert.equal(new URL(pageVisitor.url()).pathname, "/catalog", "Bare /?play should normalize to /catalog");
+  assert.equal(new URL(pageVisitor.url()).search, "", "Bare /?play should clear query string");
   assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
   for (const route of ["/?recaps=1", "/?play=rulebook-claim", "/?play=rulebook-seek", "/?play=rulebook-studio"]) {
@@ -472,8 +476,9 @@ try {
     }
     assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await brandLink.click();
-    await pageVisitor.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
-    assert.equal(new URL(pageVisitor.url()).search, "", `Clicking brand logo from ${route} should navigate to /`);
+    await pageVisitor.getByRole("heading", { name: "Ubah Jakarta jadi papan permainan nyata", level: 1 }).waitFor();
+    assert.equal(new URL(pageVisitor.url()).pathname, "/", `Clicking brand logo from ${route} should navigate to /`);
+    assert.equal(new URL(pageVisitor.url()).search, "", `Clicking brand logo from ${route} should clear query params`);
     assert.equal(await pageVisitor.evaluate(() => document.getElementById("play")?.hidden), true);
     assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   }
@@ -481,11 +486,11 @@ try {
   await ctxVisitor.close();
   await ctxP2.close();
 
-  // 3. Creator opens unified Studio directly from /, clones Official Claim pack, walks 4-step stepper, publishes, buys via Midtrans
+  // 3. Creator opens unified Studio from /catalog, clones Official Claim pack, walks 4-step stepper, publishes, buys via Midtrans
   const ctxCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });
   await signInQaContext(ctxCreator, baseUrl, "claim-creator@kelana.test", "Kreator Claim");
   const pageCreator = await ctxCreator.newPage();
-  await pageCreator.goto(baseUrl, { waitUntil: "networkidle" });
+  await pageCreator.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
   await pageCreator.click("#chooser-studio");
   await startDraft(pageCreator, "claim-the-city");
   await pageCreator.waitForSelector('button[data-action="clone"]');
@@ -583,7 +588,7 @@ try {
     }
     const shop = await buyer.newPage();
     try {
-      await shop.goto(baseUrl);
+      await shop.goto(catalogUrl(baseUrl));
       const group = shop.getByRole("region", { name: "Claim the City" });
       await group.locator('.cat-card[data-pack-id="official-jakarta-compact-claim"]').waitFor();
       assert.equal(await shop.getByRole("button", { name: /Pulihkan paket/i }).count(), 0, "Superseded Pulihkan paket button must be deleted");
@@ -674,7 +679,7 @@ try {
       await shop.getByText("Pass Berbayar").waitFor();
       if (version === 1) {
         // Return to catalog while room #1 is still active -> shows Dimiliki badge and resume CTA
-        await shop.goto(baseUrl);
+        await shop.goto(catalogUrl(baseUrl));
         const ownedCard = shop.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="1"]`);
         await ownedCard.waitFor();
         await ownedCard.getByTestId("owned-badge").waitFor();
@@ -730,7 +735,7 @@ try {
   const newPhone = await browser.newContext({ viewport: { width: 320, height: 640 } });
   const phonePage = await newPhone.newPage();
   try {
-    await phonePage.goto(baseUrl);
+    await phonePage.goto(catalogUrl(baseUrl));
     const ownedCardOnNewPhone = phonePage.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="1"]`);
     await ownedCardOnNewPhone.waitFor();
     assert.equal(await ownedCardOnNewPhone.getByTestId("owned-badge").count(), 0, "Guest on fresh device must not see Dimiliki before sign-in");
@@ -960,7 +965,7 @@ try {
   const lG2 = await lG2Ctx.newPage();
   const lG3 = await lG3Ctx.newPage();
   try {
-    await lHost.goto(baseUrl, { waitUntil: "networkidle" });
+    await lHost.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
     await lHost.locator('.cat-card[data-pack-id="official-jakarta-compact-claim"]').click();
     await lHost.getByRole("button", { name: "Grup", exact: true }).click();
     await lHost.getByRole("button", { name: "Main Grup", exact: true }).click();
@@ -989,8 +994,8 @@ try {
     await lHost.getByTestId("save-own-name").click();
     await lHost.waitForFunction(() => document.body.textContent.includes("Kapten Andi"));
 
-    // Guest 2 joins from Catalog Home Gabung Ruang modal on 320x640 with lowercase + spaces
-    await lG2.goto(baseUrl, { waitUntil: "networkidle" });
+    // Guest 2 joins from Catalog Gabung Ruang modal on 320x640 with lowercase + spaces
+    await lG2.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
     await lG2.getByTestId("home-join-room-btn").click();
     const joinModal = lG2.getByTestId("join-room-modal");
     await joinModal.waitFor();
@@ -1001,8 +1006,8 @@ try {
     await lG2.getByTestId("claim-team-switcher").waitFor();
     assert.ok(await lG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Claim Group lobby (320x640)");
 
-    // Guest 3 joins via Home Gabung Ruang modal as Ciko
-    await lG3.goto(baseUrl, { waitUntil: "networkidle" });
+    // Guest 3 joins via Catalog Gabung Ruang modal as Ciko
+    await lG3.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
     await lG3.getByTestId("home-join-room-btn").click();
     await lG3.fill("#cat-join-code", lobbyCode);
     await lG3.fill("#cat-join-name", "Ciko");
@@ -1273,7 +1278,7 @@ try {
     await guestViewPackLink.waitFor();
     const guestJoinBox = await guestJoinNewBtn.boundingBox();
     assert.ok(guestJoinBox && guestJoinBox.height >= 44, "Gabung Ruang Baru CTA must meet 44px touch target");
-    assert.equal(await guestViewPackLink.getAttribute("href"), "/?edition=pack-senopati-claim&version=1");
+    assert.equal(await guestViewPackLink.getAttribute("href"), "/catalog?edition=pack-senopati-claim&version=1");
     assert.ok(await pmGuest.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on paid guest Claim finished screen (320x640)");
 
     // Host taps Main Lagi -> opens brand-new paid Group lobby for pack-senopati-claim v1

@@ -149,7 +149,7 @@ try {
   await directModal.waitFor({ state: "hidden" });
 
   // Return to catalog and tap Studio Kreator as guest -> opens 2-step Email OTP modal and signs in
-  await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await page.goto(`${baseUrl}/catalog`, { waitUntil: "networkidle" });
   await page.click("#chooser-studio");
   const studioAuthModal = page.getByTestId("auth-modal");
   await studioAuthModal.waitFor();
