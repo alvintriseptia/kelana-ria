@@ -528,70 +528,73 @@ try {
   assert.equal(catalogData.editions.filter(item => item.packId === fixture.meta.packId).length, 2);
   assert.equal(JSON.stringify(catalogData).includes("rahasia-jawaban-senopati"), false);
 
-  const buyer = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  const shop = await buyer.newPage();
   for (const version of [1, 2]) {
-    await shop.goto(baseUrl);
-    const group = shop.getByRole("region", { name: "Claim the City" });
-    await group.locator('.cat-card[data-pack-id="official-jakarta-compact-claim"]').waitFor();
-    const paid = group.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="${version}"]`);
-    await paid.click();
-    const editionUrl = shop.url();
-    const detail = shop.getByRole("article", { name: "Detail edisi" });
-    await detail.waitFor();
-    assert.equal(new URL(editionUrl).searchParams.get("version"), String(version));
-    if (version === 2) {
-      assert.match(await detail.innerText(), /105 menit/);
-      assert.match(await detail.innerText(), /Kota Contoh/);
-    }
-    const orderRequest = shop.waitForRequest(req => req.url().endsWith("/api/rulebooks/catalog") && req.method() === "POST");
-    await shop.getByRole("button", { name: "Beli sesi · Uji pembayaran" }).click();
-    const checkout = (await orderRequest).postDataJSON();
-    await shop.getByRole("button", { name: "Cek status pembayaran" }).waitFor();
-    await shop.reload();
-    await shop.getByRole("button", { name: "Cek status pembayaran" }).click();
-    await shop.getByRole("alert").filter({ hasText: "masih menunggu" }).waitFor();
-    assert.equal(new URL(shop.url()).searchParams.get("room"), null);
-    await shop.getByRole("button", { name: "Simulasikan pembayaran berhasil" }).click();
-    await shop.getByText("Pass Berbayar").waitFor();
-    const roomCode = new URL(shop.url()).searchParams.get("room");
-    const roomResponse = await buyer.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`);
-    const { pass } = await roomResponse.json();
-    assert.equal(pass.version, version);
-    assert.equal(pass.maxPlayers, 1);
-    assert.equal(pass.mode, "solo");
-    const verify = await buyer.request.post(`${baseUrl}/api/rulebooks/catalog`, {
-      data: { ...checkout, type: "check-payment" },
-    });
-    assert.equal((await verify.json()).pass.roomCode, roomCode);
-    if (version === 2) {
-      await shop.route("**/api/health", route => route.fulfill({ json: { allowSimulatedLocation: false } }));
-    }
-    await shop.reload();
-    await shop.getByText("Pass Berbayar").waitFor();
-    if (version === 2) {
-      const { publicBoard: { startPoint }, room } = await roomResponse.json();
-      await shop.evaluate(({ latitude, longitude, timestamp }) => {
-        let retry = false;
-        Object.defineProperty(navigator, "geolocation", { configurable: true, value: {
-          getCurrentPosition(resolve, reject) {
-            if (retry) resolve({ coords: { latitude, longitude, accuracy: 10 }, timestamp });
-            else { retry = true; reject({ code: 1 }); }
-          },
-        } });
-      }, { ...startPoint, timestamp: room.now });
-      const check = shop.getByRole("button", { name: "Check-in Titik Awal", exact: true });
-      await check.click();
-      await shop.getByRole("alert").filter({ hasText: "Izin lokasi ditolak" }).waitFor();
-      assert.equal(new URL(shop.url()).searchParams.get("room"), roomCode);
-      const accepted = shop.waitForResponse(res => res.url().endsWith("/api/rulebooks") && res.request().method() === "POST");
-      await check.click();
-      const verifiedStart = await (await accepted).json();
-      assert.equal(verifiedStart.error, undefined);
-      assert.ok(verifiedStart.room.seats[0].startVerifiedUntil);
+    const buyer = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const shop = await buyer.newPage();
+    try {
+      await shop.goto(baseUrl);
+      const group = shop.getByRole("region", { name: "Claim the City" });
+      await group.locator('.cat-card[data-pack-id="official-jakarta-compact-claim"]').waitFor();
+      const paid = group.locator(`.cat-card[data-pack-id="${fixture.meta.packId}"][data-version="${version}"]`);
+      await paid.click();
+      const editionUrl = shop.url();
+      const detail = shop.getByRole("article", { name: "Detail edisi" });
+      await detail.waitFor();
+      assert.equal(new URL(editionUrl).searchParams.get("version"), String(version));
+      if (version === 2) {
+        assert.match(await detail.innerText(), /105 menit/);
+        assert.match(await detail.innerText(), /Kota Contoh/);
+      }
+      const orderRequest = shop.waitForRequest(req => req.url().endsWith("/api/rulebooks/catalog") && req.method() === "POST");
+      await shop.getByRole("button", { name: "Beli sesi · Uji pembayaran" }).click();
+      const checkout = (await orderRequest).postDataJSON();
+      await shop.getByRole("button", { name: "Cek status pembayaran" }).waitFor();
+      await shop.reload();
+      await shop.getByRole("button", { name: "Cek status pembayaran" }).click();
+      await shop.getByRole("alert").filter({ hasText: "masih menunggu" }).waitFor();
+      assert.equal(new URL(shop.url()).searchParams.get("room"), null);
+      await shop.getByRole("button", { name: "Simulasikan pembayaran berhasil" }).click();
+      await shop.getByText("Pass Berbayar").waitFor();
+      const roomCode = new URL(shop.url()).searchParams.get("room");
+      const roomResponse = await buyer.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`);
+      const { pass } = await roomResponse.json();
+      assert.equal(pass.version, version);
+      assert.equal(pass.maxPlayers, 1);
+      assert.equal(pass.mode, "solo");
+      const verify = await buyer.request.post(`${baseUrl}/api/rulebooks/catalog`, {
+        data: { ...checkout, type: "check-payment" },
+      });
+      assert.equal((await verify.json()).pass.roomCode, roomCode);
+      if (version === 2) {
+        await shop.route("**/api/health", route => route.fulfill({ json: { allowSimulatedLocation: false } }));
+      }
+      await shop.reload();
+      await shop.getByText("Pass Berbayar").waitFor();
+      if (version === 2) {
+        const { publicBoard: { startPoint }, room } = await roomResponse.json();
+        await shop.evaluate(({ latitude, longitude, timestamp }) => {
+          let retry = false;
+          Object.defineProperty(navigator, "geolocation", { configurable: true, value: {
+            getCurrentPosition(resolve, reject) {
+              if (retry) resolve({ coords: { latitude, longitude, accuracy: 10 }, timestamp });
+              else { retry = true; reject({ code: 1 }); }
+            },
+          } });
+        }, { ...startPoint, timestamp: room.now });
+        const check = shop.getByRole("button", { name: "Check-in Titik Awal", exact: true });
+        await check.click();
+        await shop.getByRole("alert").filter({ hasText: "Izin lokasi ditolak" }).waitFor();
+        assert.equal(new URL(shop.url()).searchParams.get("room"), roomCode);
+        const accepted = shop.waitForResponse(res => res.url().endsWith("/api/rulebooks") && res.request().method() === "POST");
+        await check.click();
+        const verifiedStart = await (await accepted).json();
+        assert.equal(verifiedStart.error, undefined);
+        assert.ok(verifiedStart.room.seats[0].startVerifiedUntil);
+      }
+    } finally {
+      await buyer.close();
     }
   }
-  await buyer.close();
   await author({ type: "pause-version", packId: fixture.meta.packId, version: 2, reason: "Edisi latihan selesai" });
   await pageCreator.goto(`${baseUrl}/?edition=${fixture.meta.packId}&version=2`);
   await pageCreator.getByRole("alert").filter({ hasText: "Edisi ini tidak tersedia" }).waitFor();
