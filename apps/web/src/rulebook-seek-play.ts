@@ -99,7 +99,7 @@ type PendingSeekAction = {
 const phaseLabels: Record<SeekEngineRoomView["phase"], string> = {
   lobby: "Ruang Tunggu",
   head_start: "Waktu Sembunyi (Head Start)",
-  seeking: "Perburuan Makro",
+  seeking: "Fase Cari",
   endgame: "ENDGAME (Zona Terkunci)",
   regroup: "Berkumpul Kembali",
   finished: "Selesai",
@@ -115,6 +115,20 @@ const familyLabels: Record<HideSeekQuestionFamily, string> = {
   measuring: "Pengukuran (Measuring)",
   tentacles: "Tentacles (POI Terdekat)",
   photo: "Foto",
+};
+
+const curseBlockerLabels: Record<string, string> = {
+  block_questions: "Pertanyaan",
+  block_transit: "Transit",
+  none: "Tanpa blokir",
+};
+
+const curseClearLabels: Record<string, string> = {
+  photo_challenge: "Tantangan foto",
+  timer: "Timer",
+  next_n_questions: "Pertanyaan berikutnya",
+  gps_detour: "Detour GPS",
+  honor_task: "Tugas lapangan",
 };
 
 function distanceMeters(start: GeoCoordinate, end: GeoCoordinate): number {
@@ -495,7 +509,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             type: "create-free-room",
             packId: target.packId,
             version: target.version,
-            hostName: "Tuan Rumah",
+            hostName: "Host",
             requestId: pending.id,
           },
         });
@@ -839,7 +853,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     return `<section class="rb-shell" aria-label="Katalog Rulebook Hide & Seek">
       <div class="rb-card">
         <h2>Hide &amp; Seek · Rulebook Packs (2–6 Pemain)</h2>
-        <p>Pilih edisi resmi gratis atau paket kreator komunitas berbasis RulebookPack. Semua aturan, zona sembunyi, buku petunjuk, dan dek kartu dimuat dari data paket.</p>
+        <p>Pilih edisi resmi gratis atau paket kreator komunitas. Semua aturan, zona sembunyi, buku petunjuk, dan dek kartu dimuat dari data paket.</p>
         <div class="rb-actions">
           <button type="button" class="secondary" data-nav="studio">Buka Studio Kreator</button>
           <button type="button" class="secondary" data-nav="back">Kembali ke Beranda</button>
@@ -1041,7 +1055,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
                     return `<li>
                       <span class="rb-badge rb-badge-danger">${escapeText(c.title)}</span>
                       <p>${escapeText(c.description)}</p>
-                      <small>Blokir: ${escapeText(c.blockerType)} · Kondisi hapus: ${escapeText(c.clearCondition.type)}</small>
+                      <small>Blokir: ${escapeText(curseBlockerLabels[c.blockerType] ?? c.blockerType)} · Kondisi hapus: ${escapeText(curseClearLabels[c.clearCondition.type] ?? c.clearCondition.type)}</small>
                       ${
                         c.pendingPhoto
                           ? `<p><small>Foto bukti terkirim · Auto-setuju dalam ${autoApproveSec} dtk</small></p>`
@@ -1637,7 +1651,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               type: "create-free-room",
               packId,
               version,
-              hostName: "Tuan Rumah",
+              hostName: "Host",
               requestId: pending.id,
               ...(isQa ? { qa: true } : {}),
             },
@@ -1710,7 +1724,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               transactionStatus: "settlement",
               statusCode: "200",
               currency: "IDR",
-              hostName: "Tuan Rumah",
+              hostName: "Host",
             },
           });
           if (ok && res.ok && res.pass) {

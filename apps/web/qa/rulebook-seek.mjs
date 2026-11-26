@@ -211,7 +211,7 @@ try {
   await clickAndWaitPost(pageCreator, 'button[data-action="lock-anchor"]');
   now += 26 * 60_000;
   await refreshSeekRoom(pageG2);
-  await pageG2.waitForFunction(() => document.body.textContent.includes("Perburuan Makro"));
+  await pageG2.waitForFunction(() => document.body.textContent.includes("Fase Cari"));
   const seekerBodyBeforeEndgame = await pageG2.textContent("body");
   assert.equal(seekerBodyBeforeEndgame.includes("hider-found-code"), false);
 

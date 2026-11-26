@@ -42,7 +42,7 @@ export const clueNames: Record<HideSeekQuestionFamily, string> = {
 
 export type PracticeCardExample = { title: string; description: string; kind: HideSeekCardCategory | "tactical" };
 export const cardKindNames: Record<PracticeCardExample["kind"], string> = {
-  time_bonus: "Bonus Waktu", powerup: "Powerup", curse: "Kutukan", tactical: "Kartu Taktis",
+  time_bonus: "Bonus Waktu", powerup: "Powerup", curse: "Kutukan", tactical: "Kartu",
 };
 
 export type CatalogEdition = {

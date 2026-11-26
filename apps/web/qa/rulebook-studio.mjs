@@ -66,11 +66,17 @@ async function assertNoHorizontalOverflow(page, label) {
       innerWidth: window.innerWidth,
       docOverflow,
       offenders,
+      visibleText: document.body.innerText,
     };
   });
   assert.ok(
     report.scrollWidth <= report.innerWidth && report.offenders.length === 0,
     `Horizontal overflow on ${label} (${report.scrollWidth} > ${report.innerWidth}): ${JSON.stringify(report.offenders)}`,
+  );
+  assert.doesNotMatch(
+    report.visibleText,
+    /Kartu Taktis|Dek Taktis|Tantangan Berani|Kutukan Komposabel|Perburuan Makro|observation_mcq|call_your_shot/i,
+    `Leaked AI-slop copy or raw schema identifier on ${label}`,
   );
 }
 

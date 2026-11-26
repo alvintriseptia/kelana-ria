@@ -132,7 +132,16 @@ const cardLabels: Record<ClaimCardInstance["effect"]["primitive"], [string, stri
   double_weight: ["Bobot Ganda", "double"],
   swap_challenge: ["Tukar", "swap"],
   instant_lock: ["Kunci Instan", "lock"],
-  sabotage_curse: ["Sabotase", "curse"],
+  sabotage_curse: ["Kutukan", "curse"],
+};
+
+const primitiveLabels: Record<string, string> = {
+  observation_mcq: "Pilihan Ganda",
+  observation_input: "Isian Singkat",
+  photo_proof: "Bukti Foto",
+  timed_micro_task: "Tugas Cepat",
+  call_your_shot: "Pilih Tantangan",
+  multi_step: "2 Langkah",
 };
 
 function landmarkStatus(landmark: ClaimLandmarkState): string {
@@ -179,7 +188,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let listings: ClaimPublicListing[] = [];
   let roomCode = new URLSearchParams(location.search).get("room") ?? "";
   let joinCode = roomCode;
-  let joinName = "Penantang";
+  let joinName = "Pemain";
   let live: ClaimRoomPayload | null = null;
   let activeOrderId: string | null = null;
   let statusMsg = "";
@@ -365,7 +374,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
             type: "create-free-room",
             packId: target.packId,
             version: target.version,
-            hostName: "Tuan Rumah",
+            hostName: "Host",
             requestId: pending.id,
           },
         });
@@ -680,7 +689,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     return `<section class="rb-shell" aria-label="Katalog Rulebook Claim the City">
       <div class="rb-card">
         <h2>Claim the City · Rulebook Packs (1–6 Pemain)</h2>
-        <p>Perebutan wilayah berbasis Klaim → Kunci → Rebut dengan tantangan tersembunyi multi-primitif dan dek kartu taktis. Semua papan, zona, dan aturan dimuat dari data RulebookPack.</p>
+        <p>Klaim, kunci, dan rebut landmark lewat tantangan lokasi serta kartu. Semua papan, zona, dan aturan dimuat dari data paket.</p>
         <div class="rb-actions">
           <button type="button" class="secondary" data-nav="studio">Buka Studio Kreator</button>
           <button type="button" class="secondary" data-nav="back">Kembali ke Beranda</button>
@@ -714,7 +723,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
             <h3>${escapeText(item.title)} <small>v${item.version}</small></h3>
             <p>${escapeText(item.summary)}</p>
             <p><small>Oleh ${escapeText(item.byline)} · Mulai: ${escapeText(item.startName)}${item.soloTargets ? ` · Target Solo: ${item.soloTargets.lockedLandmarks} kunci di ${item.soloTargets.distinctZones} zona` : ""}</small></p>
-            <p><small>Dek Taktis: ${item.tacticalDeckSummary.enabled ? `${item.tacticalDeckSummary.totalCards} kartu (maks. tangan ${item.tacticalDeckSummary.maxHandSize})` : "Nonaktif"} · Primitif: ${escapeText(item.challengePrimitives.join(", "))}</small></p>
+            <p><small>Dek Kartu: ${item.tacticalDeckSummary.enabled ? `${item.tacticalDeckSummary.totalCards} kartu (maks. tangan ${item.tacticalDeckSummary.maxHandSize})` : "Nonaktif"} · Tipe tantangan: ${escapeText(item.challengePrimitives.map((p) => primitiveLabels[p] ?? p).join(", "))}</small></p>
             <div class="rb-badges">
               ${item.zones.map((z) => `<span class="rb-badge">${escapeText(z.label)} · ${escapeText(z.name)} (${z.landmarkCount})</span>`).join("")}
             </div>
@@ -752,7 +761,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     return `<div class="rb-card" data-testid="active-challenge-modal">
       <div class="rb-badges">
         <span class="rb-badge">${attempt.isStealAttempt ? "⚡ Upaya Rebut & Kunci" : "🔓 Tantangan Kunci Landmark"}</span>
-        <span class="rb-badge">${escapeText(payload.primitive)}</span>
+        <span class="rb-badge">${escapeText(primitiveLabels[payload.primitive] ?? payload.primitive)}</span>
         ${payload.primitive === "multi_step" ? `<span class="rb-badge">Langkah ${attempt.currentStep + 1}/2</span>` : ""}
       </div>
       <h3>${escapeText(attempt.challenge.title)} · ${escapeText(lmName)}</h3>
@@ -760,10 +769,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
       ${
         payload.primitive === "call_your_shot" && !payload.chosenTier
-          ? `<p>Tema: <strong>${escapeText(payload.theme)}</strong>. Pilih tingkat risiko tantanganmu:</p>
+          ? `<p>Tema: <strong>${escapeText(payload.theme)}</strong>. Pilih tingkat tantanganmu:</p>
              <div class="rb-actions">
-               <button type="button" class="secondary" data-action="choose-shot-tier" data-landmark="${escapeText(attempt.landmarkId)}" data-tier="standard">Standar (Aman)</button>
-               <button type="button" class="primary" data-action="choose-shot-tier" data-landmark="${escapeText(attempt.landmarkId)}" data-tier="bold">Berani / Bold (+Hadiah Taktis)</button>
+               <button type="button" class="secondary" data-action="choose-shot-tier" data-landmark="${escapeText(attempt.landmarkId)}" data-tier="standard">Standar</button>
+               <button type="button" class="primary" data-action="choose-shot-tier" data-landmark="${escapeText(attempt.landmarkId)}" data-tier="bold">Ekstra (+1 Kartu)</button>
              </div>`
           : leaf
             ? renderLeafChallenge(leaf, attempt, room)
@@ -877,7 +886,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       ${
         room.activeCurses.length > 0
           ? `<div class="rb-card">
-              <h3>Kutukan Sabotase Aktif (${room.activeCurses.length})</h3>
+              <h3>Kutukan Aktif (${room.activeCurses.length})</h3>
               <ul class="rb-list">
                 ${room.activeCurses
                   .map((c) => {
@@ -1012,7 +1021,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     if (room.phase !== "active") return "<h2>Kartu</h2><p>Permainan sudah berakhir.</p>";
     const card = room.ownHand.find(item => item.instanceId === selectedCardId);
     if (!card) {
-      return `<div class="cg-section-title"><h2>Kartu Taktis</h2><span class="rb-badge">${room.ownHand.length}</span></div>
+      return `<div class="cg-section-title"><h2>Kartu</h2><span class="rb-badge">${room.ownHand.length}</span></div>
         ${room.ownHand.length === 0 ? "<p>Kunci atau rebut landmark untuk menarik kartu.</p>" : `<div class="cg-card-stack">
           ${room.ownHand.map(item => {
             const [label, art] = cardLabels[item.effect.primitive];
@@ -1366,7 +1375,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     if (action === "join-room") {
       const codeInput = (root.querySelector<HTMLInputElement>("#rb-claim-join-code")?.value ?? joinCode).trim();
       joinCode = codeInput;
-      joinName = (root.querySelector<HTMLInputElement>("#rb-claim-join-name")?.value ?? joinName).trim() || "Penantang";
+      joinName = (root.querySelector<HTMLInputElement>("#rb-claim-join-name")?.value ?? joinName).trim() || "Pemain";
       if (!codeInput) {
         reportError("join-code-required", { surface: "lobby", action: "join-room" }, "join");
         render();
@@ -1412,7 +1421,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
             type: "create-free-room",
             packId,
             version,
-            hostName: "Tuan Rumah",
+            hostName: "Host",
             requestId: pending.id,
           },
         });
@@ -1462,7 +1471,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
             transactionStatus: "settlement",
             statusCode: "200",
             currency: "IDR",
-            hostName: "Tuan Rumah",
+            hostName: "Host",
           },
         });
         if (ok && res.ok && res.pass) {

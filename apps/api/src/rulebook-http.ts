@@ -244,7 +244,7 @@ export function rulebookHandler(
         return json(response, 400, { error: "invalid-request" });
       }
       if (type === "play") {
-        const result = store.createFreeRoomFromRulebook(edition, version, cred, "Tuan Rumah", ts, false, mode, requestId);
+        const result = store.createFreeRoomFromRulebook(edition, version, cred, "Host", ts, false, mode, requestId);
         return json(response, result.ok ? 200 : 400, result);
       }
       if (type !== "buy" && type !== "check-payment" && type !== "simulate-payment") {
@@ -260,7 +260,7 @@ export function rulebookHandler(
       if (type === "simulate-payment" && order.paymentMode !== "recorded-sandbox") {
         return json(response, 400, { error: "simulation-unavailable" });
       }
-      const settlement = await store.settleVerifiedOrder(order.orderId, cred, "Tuan Rumah",
+      const settlement = await store.settleVerifiedOrder(order.orderId, cred, "Host",
         type === "simulate-payment" ? { transaction_status: "settlement", status_code: "200" } : undefined, ts);
       return json(response, settlement.ok ? 200 : 400, settlement);
     }

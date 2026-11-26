@@ -44,7 +44,7 @@ const CARD_PRIMITIVES: { id: HideSeekCardEffect["primitive"]; label: string; cat
   { id: "duplicate", label: "Duplikasi Kartu", cat: "powerup" },
   { id: "time_trap", label: "Perangkap Waktu (Time Trap)", cat: "powerup" },
   { id: "move_zone", label: "Pindah Zona (Move)", cat: "powerup" },
-  { id: "curse", label: "Kutukan Komposabel (Curse)", cat: "curse" },
+  { id: "curse", label: "Kutukan (Curse)", cat: "curse" },
 ];
 
 export function renderSeekStep3(
@@ -142,8 +142,8 @@ function renderSeekBook(
           <option value="false" ${!cfg?.enabled ? "selected" : ""}>Nonaktif</option>
         </select>
       </label>
-      <label class="rb-field"><span>Tarik Kartu (drawCount)</span><input id="ed-fam-draw" type="number" min="1" max="5" value="${cfg?.drawCount ?? 2}" ${dis}></label>
-      <label class="rb-field"><span>Simpan Kartu (keepCount)</span><input id="ed-fam-keep" type="number" min="1" max="5" value="${cfg?.keepCount ?? 1}" ${dis}></label>
+      <label class="rb-field"><span>Tarik Kartu</span><input id="ed-fam-draw" type="number" min="1" max="5" value="${cfg?.drawCount ?? 2}" ${dis}></label>
+      <label class="rb-field"><span>Simpan Kartu</span><input id="ed-fam-keep" type="number" min="1" max="5" value="${cfg?.keepCount ?? 1}" ${dis}></label>
     </div>
     ${editable ? `<button type="button" class="secondary" data-s3-action="save-family-cfg">Simpan Pengaturan Keluarga</button>` : ""}
 
@@ -177,7 +177,7 @@ function renderSeekBook(
                   : family === "thermometer"
                     ? `<label class="rb-field"><span>Jarak Tempuh Min (meter)</span><input id="ed-item-num" type="number" value="500" min="100"></label>`
                     : family === "matching"
-                      ? `<label class="rb-field"><span>Atribut Stasiun (attributeKey)</span><input id="ed-item-extra" value="kecamatan"></label>`
+                      ? `<label class="rb-field"><span>Atribut Stasiun</span><input id="ed-item-extra" value="kecamatan"></label>`
                       : family === "measuring"
                         ? `<label class="rb-field"><span>Kategori POI</span><input id="ed-item-extra" value="taman"></label>`
                         : family === "tentacles"
@@ -225,7 +225,7 @@ function renderSeekDeck(
             <h4>+ Komposer Kartu &amp; Kutukan</h4>
             <div data-testid="live-card-preview">${renderSeekCardTile(previewSeekCardFromState(state))}</div>
             <div class="rb-grid-2">
-              <label class="rb-field"><span>Primitif Kartu</span>
+              <label class="rb-field"><span>Tipe Kartu</span>
                 <select id="ed-card-prim" ${dis}>
                   ${CARD_PRIMITIVES.map(
                     (p) => `<option value="${p.id}" ${prim === p.id ? "selected" : ""}>${p.label}</option>`,
@@ -246,27 +246,27 @@ function renderSeekDeck(
                     ? `<label class="rb-field"><span>Slot Tambahan</span><input id="ed-card-val" type="number" min="1" max="2" value="1"></label>`
                     : prim === "curse"
                       ? `<div class="rb-grid-2">
-                          <label class="rb-field"><span>Biaya Lempar (Casting Cost)</span>
+                          <label class="rb-field"><span>Biaya Kartu</span>
                             <select id="ed-curse-cost">
-                              <option value="none">Gratis (none)</option>
-                              <option value="discard_cards">Buang 1 Kartu (discard_cards)</option>
-                              <option value="seeker_min_distance">Pencari min. 500 m (seeker_min_distance)</option>
+                              <option value="none">Gratis</option>
+                              <option value="discard_cards">Buang 1 Kartu</option>
+                              <option value="seeker_min_distance">Pencari min. 500 m</option>
                             </select>
                           </label>
                           <label class="rb-field"><span>Tipe Blokir</span>
                             <select id="ed-curse-blocker">
-                              <option value="block_questions">Blokir Pertanyaan (block_questions)</option>
-                              <option value="block_transit">Blokir Transit (block_transit)</option>
-                              <option value="none">Tanpa Blokir (none)</option>
+                              <option value="block_questions">Blokir Pertanyaan</option>
+                              <option value="block_transit">Blokir Transit</option>
+                              <option value="none">Tanpa Blokir</option>
                             </select>
                           </label>
-                          <label class="rb-field"><span>Syarat Hapus (Clear Condition)</span>
+                          <label class="rb-field"><span>Syarat Hapus</span>
                             <select id="ed-curse-clear">
-                              <option value="photo_challenge" ${state.curseClearType === "photo_challenge" ? "selected" : ""}>Tantangan Foto (photo_challenge)</option>
-                              <option value="timer" ${state.curseClearType === "timer" ? "selected" : ""}>Timer (timer)</option>
+                              <option value="photo_challenge" ${state.curseClearType === "photo_challenge" ? "selected" : ""}>Tantangan Foto</option>
+                              <option value="timer" ${state.curseClearType === "timer" ? "selected" : ""}>Timer</option>
                               <option value="next_n_questions" ${state.curseClearType === "next_n_questions" ? "selected" : ""}>N Pertanyaan Berikutnya</option>
                               <option value="gps_detour" ${state.curseClearType === "gps_detour" ? "selected" : ""}>Detour GPS POI</option>
-                              <option value="honor_task" ${state.curseClearType === "honor_task" ? "selected" : ""}>Tugas Honor (honor_task)</option>
+                              <option value="honor_task" ${state.curseClearType === "honor_task" ? "selected" : ""}>Tugas Lapangan</option>
                             </select>
                           </label>
                           <label class="rb-field"><span>Penalti Buyout (menit, 0 = tanpa buyout)</span><input id="ed-curse-buyout" type="number" min="0" max="20" value="5"></label>
@@ -282,12 +282,28 @@ function renderSeekDeck(
   </div>`;
 }
 
+const SEEK_EFFECT_CHIP_LABELS: Record<string, string> = {
+  veto: "Veto",
+  randomize: "Acak Pertanyaan",
+  discard_draw: "Buang & Tarik",
+  duplicate: "Duplikat Kartu",
+  move_zone: "Pindah Zona",
+};
+
+const SEEK_CLEAR_CHIP_LABELS: Record<CurseClearCondition["type"], string> = {
+  photo_challenge: "Hapus: Foto",
+  timer: "Hapus: Timer",
+  next_n_questions: "Hapus: Pertanyaan",
+  gps_detour: "Hapus: Detour GPS",
+  honor_task: "Hapus: Tugas",
+};
+
 function seekCardChips(card: HideSeekCardDefinition): CardPreviewChip[] {
   const ef = card.effect;
   if (ef.primitive === "time_bonus") return [{ label: `+${ef.minutes} menit`, tone: "ok" }];
   if (ef.primitive === "time_trap") return [{ label: `Perangkap +${ef.bonusMinutes}m`, tone: "warn" }];
   if (ef.primitive === "expand_hand") return [{ label: `+${ef.extraSlots} Slot`, tone: "ok" }];
-  if (ef.primitive !== "curse") return [{ label: ef.primitive }];
+  if (ef.primitive !== "curse") return [{ label: SEEK_EFFECT_CHIP_LABELS[ef.primitive] ?? "Powerup" }];
   const cost = ef.curse.castingCosts[0];
   const costLabel =
     cost?.type === "discard_cards"
@@ -301,7 +317,7 @@ function seekCardChips(card: HideSeekCardDefinition): CardPreviewChip[] {
       : ef.curse.blockerType === "block_transit"
         ? "Blokir Transit"
         : "Tanpa Blokir";
-  const clearLabel = `Hapus: ${ef.curse.clearCondition.type}`;
+  const clearLabel = SEEK_CLEAR_CHIP_LABELS[ef.curse.clearCondition.type];
   const mod = (ef.curse.effectModifiers ?? []).find((m) => m.type === "skip_penalty_minutes");
   const chips: CardPreviewChip[] = [
     { label: costLabel },

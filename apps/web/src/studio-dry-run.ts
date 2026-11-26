@@ -78,7 +78,7 @@ export function resolveValidationJump(path: string, format: RulebookFormat): Val
     return { step: 2, label: "Tahap 2 · Tantangan Lokasi", step2Tab: "primary", focusSelector: "#ed-chal-target" };
   }
   if (p.includes("deck") || p.includes("card")) {
-    return { step: 3, label: "Tahap 3 · Dek Taktis", claimSubTab: "deck" };
+    return { step: 3, label: "Tahap 3 · Dek Kartu", claimSubTab: "deck" };
   }
   return { step: 3, label: "Tahap 3 · Sesi & Skor", claimSubTab: "session", focusSelector: "#ed-claim-duration" };
 }
@@ -101,7 +101,7 @@ export function evaluateSeekDryRunClue(
 ): string {
   const anchors = record.snapshot.stations.filter((s) => s.eligibleHidingAnchor);
   const hiderSt = anchors.find((s) => s.id === state.seekAnchorId) ?? anchors[0];
-  if (!hiderSt) return "Tidak ada stasiun jangkar yang valid.";
+  if (!hiderSt) return "Tidak ada titik sembunyi yang valid.";
 
   const seekerCoord: GeoCoordinate =
     state.seekSeekerPosId === "start"
@@ -267,7 +267,7 @@ export function renderInteractiveDryRunPanel(
                 (l) => `<option value="${escapeText(l.id)}" ${state.claimLandmarkId === l.id ? "selected" : ""}>${escapeText(l.name)}</option>`,
               )
               .join("")}
-            <option value="backup" ${state.claimLandmarkId === "backup" ? "selected" : ""}>Backup Pool</option>
+            <option value="backup" ${state.claimLandmarkId === "backup" ? "selected" : ""}>Cadangan Umum</option>
           </select>
         </label>
         <label class="rb-field"><span>Varian untuk diuji</span><select id="dry-claim-variant">
@@ -291,7 +291,7 @@ export function renderInteractiveDryRunPanel(
                   ? `<p>Tema: ${escapeText(chal.payload.theme)}</p>
                      <div class="rb-actions">
                        <button type="button" class="secondary" data-dry-action="dry-shot-tier" data-tier="standard">Uji Standar</button>
-                       <button type="button" class="primary" data-dry-action="dry-shot-tier" data-tier="bold">Uji Bold</button>
+                       <button type="button" class="primary" data-dry-action="dry-shot-tier" data-tier="bold">Uji Ekstra</button>
                      </div>`
                   : leaf && !state.claimTestDone ? renderDryClaimLeaf(leaf, state) : ""
               }
@@ -326,12 +326,12 @@ export function renderInteractiveDryRunPanel(
   return `<div class="rb-card" data-testid="interactive-dry-run">
     <h4>Simulasi Dry-Run Interaktif (Hide &amp; Seek)</h4>
     <div class="rb-badges">
-      <span class="rb-badge">${anchors.length} jangkar aktif</span>
+      <span class="rb-badge">${anchors.length} titik sembunyi</span>
       <span class="rb-badge">${totalCards} total kartu (${curseCount} kutukan)</span>
       <span class="rb-badge">${clueOptions.length} petunjuk aktif</span>
     </div>
     <div class="rb-grid-2">
-      <label class="rb-field"><span>Jangkar Sembunyi Uji (Hider)</span>
+      <label class="rb-field"><span>Titik Sembunyi Uji (Hider)</span>
         <select id="dry-seek-anchor">
           ${anchors.map((s) => `<option value="${escapeText(s.id)}" ${state.seekAnchorId === s.id ? "selected" : ""}>${escapeText(s.name)}</option>`).join("")}
         </select>

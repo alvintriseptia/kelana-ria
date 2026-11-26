@@ -250,7 +250,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "warn",
   },
   "room-full": {
-    message: "Ruang sudah penuh. Minta tuan rumah membuat ruang baru atau pilih edisi lain.",
+    message: "Ruang sudah penuh. Minta Host membuat ruang baru atau pilih edisi lain.",
     placement: "inline-screen",
     tone: "warn",
   },
@@ -275,7 +275,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "warn",
   },
   "host-only": {
-    message: "Hanya tuan rumah ruang yang bisa melakukan aksi ini.",
+    message: "Hanya Host ruang yang bisa melakukan aksi ini.",
     placement: "inline-screen",
     tone: "info",
   },
@@ -473,7 +473,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     staleTarget: true,
   },
   "shot-tier-required": {
-    message: "Pilih tingkat tantangan Standar atau Berani terlebih dahulu sebelum melanjutkan.",
+    message: "Pilih tingkat tantangan Standar atau Ekstra terlebih dahulu sebelum melanjutkan.",
     placement: "toast",
     tone: "info",
   },
@@ -567,7 +567,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "info",
   },
   "seeking-only": {
-    message: "Aksi ini hanya tersedia saat fase perburuan berlangsung.",
+    message: "Aksi ini hanya tersedia saat fase pencarian berlangsung.",
     placement: "toast",
     tone: "info",
   },
@@ -782,7 +782,7 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "info",
   },
   "qa-host-only": {
-    message: "Hanya tuan rumah yang dapat memajukan waktu di ruang QA.",
+    message: "Hanya Host yang dapat memajukan waktu di ruang QA.",
     placement: "toast",
     tone: "info",
   },

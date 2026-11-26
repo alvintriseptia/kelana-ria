@@ -22,21 +22,21 @@ export type ClaimStep3State = {
 };
 
 const CHALLENGE_PRIMITIVES: { id: ClaimChallengePrimitive["primitive"]; label: string }[] = [
-  { id: "observation_mcq", label: "Pilihan Ganda (observation_mcq)" },
-  { id: "observation_input", label: "Isian Teks/Angka (observation_input)" },
-  { id: "photo_proof", label: "Bukti Foto (photo_proof)" },
-  { id: "timed_micro_task", label: "Tugas Cepat Bertimer (timed_micro_task)" },
-  { id: "call_your_shot", label: "Pilih Risiko Standar/Bold (call_your_shot)" },
-  { id: "multi_step", label: "Tantangan 2 Langkah (multi_step)" },
+  { id: "observation_mcq", label: "Pilihan Ganda" },
+  { id: "observation_input", label: "Isian Teks / Angka" },
+  { id: "photo_proof", label: "Bukti Foto" },
+  { id: "timed_micro_task", label: "Tugas Cepat Bertimer" },
+  { id: "call_your_shot", label: "Pilih Tingkat Tantangan" },
+  { id: "multi_step", label: "Tantangan 2 Langkah" },
 ];
 
 const CLAIM_CARD_PRIMITIVES: { id: ClaimCardEffect["primitive"]; label: string }[] = [
-  { id: "scout_challenge", label: "Intip Tantangan (scout_challenge)" },
-  { id: "shield_claim", label: "Perisai Klaim (shield_claim)" },
-  { id: "double_weight", label: "Bobot 2x (double_weight)" },
-  { id: "swap_challenge", label: "Tukar Tantangan (swap_challenge)" },
-  { id: "instant_lock", label: "Kunci Instan (instant_lock)" },
-  { id: "sabotage_curse", label: "Kutukan Sabotase (sabotage_curse)" },
+  { id: "scout_challenge", label: "Intai Tantangan" },
+  { id: "shield_claim", label: "Perisai Klaim" },
+  { id: "double_weight", label: "Bobot 2x" },
+  { id: "swap_challenge", label: "Tukar Tantangan" },
+  { id: "instant_lock", label: "Kunci Instan" },
+  { id: "sabotage_curse", label: "Kutukan (Curse)" },
 ];
 
 export function renderClaimStep3(
@@ -51,7 +51,7 @@ export function renderClaimStep3(
     <h3>3. Aturan Sesi &amp; Kartu Claim</h3>
     <div class="rb-actions" aria-label="Sub-tab builder Claim the City">
       <button type="button" class="${state.subTab === "session" ? "primary" : "secondary"}" data-c3-tab="session">Sesi &amp; Skor</button>
-      <button type="button" class="${state.subTab === "deck" ? "primary" : "secondary"}" data-c3-tab="deck">Dek Taktis (${totalCards})</button>
+      <button type="button" class="${state.subTab === "deck" ? "primary" : "secondary"}" data-c3-tab="deck">Dek Kartu (${totalCards})</button>
     </div>
 
     ${
@@ -89,7 +89,7 @@ function renderClaimSession(pack: ClaimRulebookPack, dis: string): string {
         </select>
       </label>
       <label class="rb-field"><span>Cooldown Gagal (menit)</span><input id="ed-claim-cooldown" type="number" min="0" max="30" value="${Math.round((pack.claiming.failCooldownMs ?? 300_000) / 60_000)}" ${dis}></label>
-      <label class="rb-field"><span>Batas Kartu Taktis</span><input id="ed-claim-hand" type="number" min="1" max="4" value="${pack.tacticalDeck.maxHandSize}" ${dis}></label>
+      <label class="rb-field"><span>Batas Kartu di Tangan</span><input id="ed-claim-hand" type="number" min="1" max="4" value="${pack.tacticalDeck.maxHandSize}" ${dis}></label>
     </div>
   </div>`;
 }
@@ -111,7 +111,7 @@ export function renderClaimChallenges(
   return `<div data-testid="claim-challenges-panel">
     <label class="rb-field"><span>Target Tantangan</span>
       <select id="ed-chal-target">
-        <option value="backup" ${isBackup ? "selected" : ""}>Backup Pool (${pack.challenges.backupPool.length} tantangan)</option>
+        <option value="backup" ${isBackup ? "selected" : ""}>Cadangan Umum (${pack.challenges.backupPool.length} tantangan)</option>
         ${pack.geography.landmarks
           .map(
             (lm) =>
@@ -131,7 +131,7 @@ export function renderClaimChallenges(
             : items
                 .map(
                   (item, idx) => `<li>
-                    <div><strong>${escapeText(item.title)}</strong> <span class="rb-badge">${escapeText(item.payload.primitive)}</span></div>
+                    <div><strong>${escapeText(item.title)}</strong> <span class="rb-badge">${escapeText(challengePrimitiveTileMeta(item.payload.primitive).short)}</span></div>
                     <small>${item.reviewed ? `Ditinjau ${escapeText(item.reviewedAt)}` : "Belum ditinjau"} · ${escapeText(item.verificationNotes)}</small>
                     ${item.estimatedSeconds ? `<small>Perkiraan ${item.estimatedSeconds} detik</small>` : ""}
                     <button type="button" class="secondary" data-c3-action="preview-challenge" data-index="${idx}">Pratinjau varian</button>
@@ -158,7 +158,7 @@ export function renderClaimChallenges(
               }).join("")}
             </div>
             <div class="rb-grid-2">
-              <label class="rb-field"><span>Primitif Tantangan</span>
+              <label class="rb-field"><span>Tipe Tantangan</span>
                 <select id="ed-chal-prim" ${dis}>
                   ${CHALLENGE_PRIMITIVES.map(
                     (p) => `<option value="${p.id}" ${prim === p.id ? "selected" : ""}>${p.label}</option>`,
@@ -216,9 +216,9 @@ export function renderClaimChallenges(
                       : prim === "call_your_shot"
                         ? `<div class="rb-grid-2">
                             <label class="rb-field"><span>Tema Tantangan</span><input id="ed-chal-theme" value="Detail arsitektur ruang publik"></label>
-                            <label class="rb-field"><span>Soal Standar (Foto)</span><input id="ed-chal-std" value="Foto papan nama depan lokasi."></label>
-                            <label class="rb-field"><span>Soal Bold (Isian Teks)</span><input id="ed-chal-bold" value="Sebutkan kata pertama pada plakat taman."></label>
-                            <label class="rb-field"><span>Jawaban Bold (koma)</span><input id="ed-chal-answer" value="taman, jakarta"></label>
+                            <label class="rb-field"><span>Tantangan Standar (Foto)</span><input id="ed-chal-std" value="Foto papan nama depan lokasi."></label>
+                            <label class="rb-field"><span>Tantangan Ekstra (Isian Teks)</span><input id="ed-chal-bold" value="Sebutkan kata pertama pada plakat taman."></label>
+                            <label class="rb-field"><span>Jawaban Ekstra (koma)</span><input id="ed-chal-answer" value="taman, jakarta"></label>
                           </div>`
                         : `<div class="rb-grid-2">
                             <label class="rb-field"><span>Langkah 1 (Foto)</span><input id="ed-chal-std" value="Foto gerbang masuk publik."></label>
@@ -248,7 +248,7 @@ function renderClaimDeck(
   const prim = state.cardPrimitive;
   return `<div data-testid="claim-deck-panel">
     <div class="rb-grid-2">
-      <label class="rb-field"><span>Status Dek Taktis</span>
+      <label class="rb-field"><span>Status Dek Kartu</span>
         <select id="ed-cdeck-enabled" ${dis}>
           <option value="true" ${pack.tacticalDeck.enabled ? "selected" : ""}>Aktif</option>
           <option value="false" ${!pack.tacticalDeck.enabled ? "selected" : ""}>Nonaktif</option>
@@ -259,7 +259,7 @@ function renderClaimDeck(
     ${editable ? `<button type="button" class="secondary" data-c3-action="save-deck-cfg">Simpan Pengaturan Dek</button>` : ""}
 
     <details class="rb-accordion">
-      <summary>Daftar Kartu Taktis (${pack.tacticalDeck.cards.length} jenis)</summary>
+      <summary>Daftar Kartu (${pack.tacticalDeck.cards.length} jenis)</summary>
       <div class="st-card-stack">
         ${pack.tacticalDeck.cards
           .map((card, idx) =>
@@ -277,10 +277,10 @@ function renderClaimDeck(
     ${
       editable
         ? `<div class="rb-card" data-testid="claim-card-composer">
-            <h4>+ Tambah Kartu Taktis</h4>
+            <h4>+ Tambah Kartu</h4>
             <div data-testid="live-card-preview">${renderClaimCardTile(previewClaimCardFromState(state))}</div>
             <div class="rb-grid-2">
-              <label class="rb-field"><span>Primitif Kartu</span>
+              <label class="rb-field"><span>Tipe Kartu</span>
                 <select id="ed-ccard-prim">
                   ${CLAIM_CARD_PRIMITIVES.map(
                     (p) => `<option value="${p.id}" ${prim === p.id ? "selected" : ""}>${p.label}</option>`,
@@ -288,8 +288,8 @@ function renderClaimDeck(
                 </select>
               </label>
               <label class="rb-field"><span>Salinan</span><input id="ed-ccard-copies" type="number" min="1" max="8" value="1"></label>
-              <label class="rb-field"><span>Judul Kartu</span><input id="ed-ccard-title" placeholder="Mis. Sabotase Lampu Merah"></label>
-              <label class="rb-field"><span>Deskripsi</span><input id="ed-ccard-desc" value="Kartu taktis kustom kreator."></label>
+              <label class="rb-field"><span>Judul Kartu</span><input id="ed-ccard-title" placeholder="Mis. Kutukan Lampu Merah"></label>
+              <label class="rb-field"><span>Deskripsi</span><input id="ed-ccard-desc" value="Kartu kustom kreator."></label>
             </div>
             ${
               prim === "shield_claim"
@@ -298,16 +298,16 @@ function renderClaimDeck(
                   ? `<div class="rb-grid-2">
                       <label class="rb-field"><span>Blokir</span>
                         <select id="ed-ccard-blocker">
-                          <option value="block_steals">Blokir Rebut (block_steals)</option>
-                          <option value="block_claims">Blokir Klaim (block_claims)</option>
-                          <option value="block_both">Blokir Keduanya (block_both)</option>
+                          <option value="block_steals">Blokir Rebut</option>
+                          <option value="block_claims">Blokir Klaim</option>
+                          <option value="block_both">Blokir Keduanya</option>
                         </select>
                       </label>
                       <label class="rb-field"><span>Durasi Timer Hapus (menit, maks 10)</span><input id="ed-ccard-mins" type="number" min="1" max="10" value="5"></label>
                     </div>`
                   : ""
             }
-            <button type="button" class="primary" data-c3-action="add-claim-card">+ Tambahkan Kartu Taktis</button>
+            <button type="button" class="primary" data-c3-action="add-claim-card">+ Tambahkan Kartu</button>
           </div>`
         : ""
     }
@@ -461,15 +461,22 @@ function claimCardChips(card: ClaimCardDefinition): CardPreviewChip[] {
     const clearLabel =
       ef.clearCondition.type === "timer"
         ? `Hapus: ${Math.round(ef.clearCondition.durationMs / 60_000)}m`
-        : `Hapus: ${ef.clearCondition.type}`;
+        : "Hapus: Tantangan";
+    const blockerLabel =
+      ef.blockerType === "block_steals"
+        ? "Blokir Rebut"
+        : ef.blockerType === "block_claims"
+          ? "Blokir Klaim"
+          : "Blokir Keduanya";
     return [
-      { label: `Blokir: ${ef.blockerType}`, tone: "danger" },
+      { label: blockerLabel, tone: "danger" },
       { label: clearLabel, tone: "warn" },
     ];
   }
   if (ef.primitive === "double_weight") return [{ label: "Bobot 2x", tone: "ok" }];
   if (ef.primitive === "instant_lock") return [{ label: "Kunci Instan", tone: "ok" }];
-  return [{ label: ef.primitive }];
+  if (ef.primitive === "scout_challenge") return [{ label: "Intai Tantangan" }];
+  return [{ label: "Tukar Tantangan" }];
 }
 
 function renderClaimCardTile(card: ClaimCardDefinition, actionsHtml?: string): string {
@@ -498,14 +505,14 @@ function previewClaimCardFromState(state: ClaimStep3State): ClaimCardDefinition 
   return {
     id: "preview",
     copies: 1,
-    title: "Pratinjau Kartu Taktis",
+    title: "Pratinjau Kartu",
     description: meta.label,
     effect,
   };
 }
 
 export function renderClaimLiveCardPreview(root: HTMLElement, state: ClaimStep3State): string {
-  const built = buildClaimCardFromForm(root, state, "Pratinjau Kartu Taktis");
+  const built = buildClaimCardFromForm(root, state, "Pratinjau Kartu");
   return renderClaimCardTile(built ?? previewClaimCardFromState(state));
 }
 
@@ -516,7 +523,7 @@ export function buildClaimCardFromForm(
 ): ClaimCardDefinition | null {
   const title = root.querySelector<HTMLInputElement>("#ed-ccard-title")?.value.trim() || fallbackTitle;
   if (!title) return null;
-  const description = root.querySelector<HTMLInputElement>("#ed-ccard-desc")?.value.trim() || "Kartu taktis kustom.";
+  const description = root.querySelector<HTMLInputElement>("#ed-ccard-desc")?.value.trim() || "Kartu kustom.";
   const copies = Math.max(1, Number(root.querySelector<HTMLInputElement>("#ed-ccard-copies")?.value ?? 1));
   const prim = state.cardPrimitive;
   let effect: ClaimCardEffect;

@@ -1402,25 +1402,25 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             1,
             Number(root.querySelector<HTMLInputElement>("#ed-cdeck-maxc")?.value ?? 1),
           );
-          await persistDraft(pack, snap, "Pengaturan Dek Taktis disimpan.");
+          await persistDraft(pack, snap, "Pengaturan Dek Kartu disimpan.");
           return;
         }
         if (c3Action === "add-claim-card") {
           const card = buildClaimCardFromForm(root, claimStep3);
           if (!card) {
-            errorMsg = "Judul kartu taktis wajib diisi.";
+            errorMsg = "Judul kartu wajib diisi.";
             render();
             return;
           }
           pack.tacticalDeck.cards.push(card);
-          await persistDraft(pack, snap, `Kartu taktis ${card.title} ditambahkan.`);
+          await persistDraft(pack, snap, `Kartu ${card.title} ditambahkan.`);
           return;
         }
         if (c3Action === "delete-claim-card") {
           const idx = Number(btn.dataset.index ?? -1);
           if (idx >= 0) {
             pack.tacticalDeck.cards.splice(idx, 1);
-            await persistDraft(pack, snap, "Kartu taktis dihapus.");
+            await persistDraft(pack, snap, "Kartu dihapus.");
           }
         }
       })();
@@ -1813,7 +1813,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           dryRunSummary = `Dry-Run OK: ${active.pack.geography.zones.length} zona, ${active.pack.geography.landmarks.length} landmark (uji ${lm?.name ?? "-"}), ${active.pack.challenges.backupPool.length} tantangan cadangan, siap diajukan.`;
         } else {
           const st = active.snapshot.stations[0];
-          dryRunSummary = `Dry-Run OK: ${active.snapshot.stations.length} stasiun aktif, jangkar uji ${st?.name ?? "-"} (radius ${active.pack.geography.hidingZoneRadiusMeters}m), ${active.pack.deck.cards.length} jenis kartu, siap diajukan.`;
+          dryRunSummary = `Dry-Run OK: ${active.snapshot.stations.length} stasiun aktif, titik sembunyi uji ${st?.name ?? "-"} (radius ${active.pack.geography.hidingZoneRadiusMeters}m), ${active.pack.deck.cards.length} jenis kartu, siap diajukan.`;
         }
         render();
         return;

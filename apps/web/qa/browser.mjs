@@ -120,7 +120,8 @@ async function verifyClaimPractice(page, results, mode, hasDeck = true) {
   if (hasDeck) {
     await cardLesson.click();
     await dialog.getByRole('heading', { name: 'Kartu di tangan' }).waitFor();
-    assert.match(await dialog.innerText(), /Kamu mengunci landmark dan mendapat satu kartu taktis/);
+    assert.match(await dialog.innerText(), /Kamu mengunci landmark dan mendapat satu kartu\./);
+    assert.doesNotMatch(await dialog.innerText(), /Kartu Taktis|Dek Taktis|Tantangan Berani/i);
     const hand = dialog.getByRole('region', { name: 'Tangan latihan' });
     assert.deepEqual(await hand.locator('strong').allTextContents(), ['Intip Tantangan']);
     assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth));

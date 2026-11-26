@@ -12,11 +12,11 @@ export function practiceDeck(edition: CatalogEdition, mode: RulebookPlayMode, fa
     const earns = triggers?.onLock || false;
     const triggerNames = [
       triggers?.onSteal && mode === "group" ? "merebut landmark" : "",
-      triggers?.onBoldChallenge ? "menyelesaikan tantangan berani yang memberi kartu" : "",
+      triggers?.onBoldChallenge ? "menyelesaikan tantangan ekstra yang memberi kartu" : "",
     ].filter(Boolean);
     if (!earns && !triggerNames.length) return;
-    const reason = earns ? "Kamu mengunci landmark dan mendapat satu kartu taktis."
-      : "Lihat contoh kartu taktis yang bisa kamu temukan di edisi ini.";
+    const reason = earns ? "Kamu mengunci landmark dan mendapat satu kartu."
+      : "Lihat contoh kartu yang bisa kamu temukan di edisi ini.";
     const extra = triggerNames.length ? ` Kamu ${earns ? "juga " : ""}bisa mendapat kartu saat ${triggerNames.join(" atau ")}.` : "";
     return {
       examples, draw: 1, keep: 1, handLimit: rules.maxHandSize, decisionMs: 0, earns,

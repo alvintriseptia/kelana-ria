@@ -149,7 +149,7 @@ try {
   assert.equal(seeking.now, seeking.releaseAt);
   const staleDeadline = await post(host, { ...jumpToRelease, actionId: "stale-phase" });
   assert.equal((await staleDeadline.json()).error, "qa-deadline-changed");
-  await guest.getByText("Perburuan Makro", { exact: false }).first().waitFor();
+  await guest.getByText("Fase Cari", { exact: false }).first().waitFor();
   await guest.getByRole("button", { name: "Mode QA" }).click();
   assert.equal(await guest.locator('[data-action="qa-advance"]').count(), 0);
   assert.equal(await guest.getByLabel("Lokasi simulasi kamu").inputValue(), "csw-asean");

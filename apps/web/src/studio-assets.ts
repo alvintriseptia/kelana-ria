@@ -17,7 +17,7 @@ const VARIANT_META: Record<CardPreviewVariant, { tag: string }> = {
   time_bonus: { tag: "BONUS" },
   powerup: { tag: "POWER UP" },
   curse: { tag: "KUTUKAN" },
-  tactical: { tag: "TAKTIS" },
+  tactical: { tag: "KARTU" },
 };
 
 const QUESTION_META: Record<
@@ -75,8 +75,8 @@ const PRIMITIVE_META: Record<
     svg: `<svg viewBox="0 0 48 32" aria-hidden="true"><rect width="48" height="32" rx="6" fill="#fdf4f6"/><circle cx="24" cy="17" r="9.5" fill="#fff" stroke="#9f214b" stroke-width="1.8"/><path d="M24 12v5l3.5 2M20 5h8" stroke="#9f214b" stroke-width="1.8" stroke-linecap="round"/></svg>`,
   },
   call_your_shot: {
-    short: "Call Your Shot",
-    badge: "Bold +1",
+    short: "Pilih Tantangan",
+    badge: "Ekstra +1",
     svg: `<svg viewBox="0 0 48 32" aria-hidden="true"><rect width="48" height="32" rx="6" fill="#fef4d6"/><path d="M26 5L14 18h8l-2 9 14-14h-8z" fill="#ffce55" stroke="#153d34" stroke-width="1.5" stroke-linejoin="round"/></svg>`,
   },
   multi_step: {
