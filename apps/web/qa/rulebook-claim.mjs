@@ -920,7 +920,105 @@ try {
     await presGuestCtx.close();
   }
 
-  console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Live Presence + Unified Studio + One-Time Pack Ownership & Restore)");
+  // #142: Home Gabung Ruang modal, Lobby Invite Card + offline SVG QR, inline rename, ready toggle, dynamic Claim teams, leave/cancel confirmations & SSE canceled screen
+  const lHostCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const lG2Ctx = await browser.newContext({ viewport: { width: 320, height: 640 } });
+  const lG3Ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const lHost = await lHostCtx.newPage();
+  const lG2 = await lG2Ctx.newPage();
+  const lG3 = await lG3Ctx.newPage();
+  try {
+    await lHost.goto(baseUrl, { waitUntil: "networkidle" });
+    await lHost.locator('.cat-card[data-pack-id="official-jakarta-compact-claim"]').click();
+    await lHost.getByRole("button", { name: "Grup", exact: true }).click();
+    await lHost.getByRole("button", { name: "Main Grup", exact: true }).click();
+    await lHost.getByTestId("lobby-invite-card").waitFor();
+    const lobbyCode = (await lHost.getByTestId("lobby-room-code").innerText()).trim();
+    assert.match(lobbyCode, /^RC-/);
+    assert.ok(await lHost.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Claim lobby with Invite Card (390x844)");
+
+    // Offline inline-SVG QR modal fires zero network requests
+    let qrNetworkCount = 0;
+    const onQrReq = () => { qrNetworkCount++; };
+    lHost.on("request", onQrReq);
+    await lHost.getByTestId("show-qr-btn").click();
+    const qrModal = lHost.getByTestId("qr-modal");
+    await qrModal.waitFor();
+    assert.equal(await qrModal.locator("svg.lobby-qr-svg path").count(), 1, "QR modal must render inline SVG");
+    assert.equal(qrNetworkCount, 0, "Offline SVG QR modal must make zero network requests");
+    assert.ok(await lHost.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on QR modal (390x844)");
+    lHost.off("request", onQrReq);
+    await lHost.keyboard.press("Escape");
+    await qrModal.waitFor({ state: "hidden" });
+
+    // Host inline nickname edit (rename-seat)
+    await lHost.getByTestId("edit-own-name").click();
+    await lHost.fill("#cg-rename-input", "Kapten Andi");
+    await lHost.getByTestId("save-own-name").click();
+    await lHost.waitForFunction(() => document.body.textContent.includes("Kapten Andi"));
+
+    // Guest 2 joins from Catalog Home Gabung Ruang modal on 320x640 with lowercase + spaces
+    await lG2.goto(baseUrl, { waitUntil: "networkidle" });
+    await lG2.getByTestId("home-join-room-btn").click();
+    const joinModal = lG2.getByTestId("join-room-modal");
+    await joinModal.waitFor();
+    assert.ok(await lG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Home Gabung Ruang modal (320x640)");
+    await lG2.fill("#cat-join-code", `  ${lobbyCode.toLowerCase()}  `);
+    await lG2.fill("#cat-join-name", "Bela");
+    await lG2.getByTestId("join-modal-submit").click();
+    await lG2.getByTestId("claim-team-switcher").waitFor();
+    assert.ok(await lG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Claim Group lobby (320x640)");
+
+    // Guest 3 joins via Home Gabung Ruang modal as Ciko
+    await lG3.goto(baseUrl, { waitUntil: "networkidle" });
+    await lG3.getByTestId("home-join-room-btn").click();
+    await lG3.fill("#cat-join-code", lobbyCode);
+    await lG3.fill("#cat-join-name", "Ciko");
+    await lG3.getByTestId("join-modal-submit").click();
+    await lG3.getByTestId("claim-team-switcher").waitFor();
+    await lHost.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (3/4)"));
+
+    // Dynamic Claim teams: G2 & G3 join Tim 1 -> all 3 on 1 team -> Host Mulai Permainan disabled + hint visible
+    await lG2.locator('button[data-action="join-team"]').first().click();
+    await lG3.locator('button[data-action="join-team"]').first().click();
+    await lHost.getByTestId("not-enough-teams-hint").waitFor();
+    assert.equal(await lHost.locator('button[data-action="start-match"]').isDisabled(), true, "Start must be disabled with <2 teams");
+
+    // G3 clicks + Tim Baru -> forms 2v1 layout (Andi+Bela vs Ciko) -> Mulai Permainan enabled again
+    await lG3.getByTestId("new-team-btn").click();
+    await lHost.waitForFunction(() => !document.querySelector('[data-testid="not-enough-teams-hint"]'));
+    assert.equal(await lHost.locator('button[data-action="start-match"]').isDisabled(), false, "Start must enable with >=2 teams");
+
+    // G2 check-in start + toggle Tandai Siap <-> Batal Siap
+    await lG2.locator('button[data-action="sim-start-checkin"]').click();
+    await lG2.locator('button[data-action="mark-ready"]').click();
+    await lG2.locator('button[data-action="unmark-ready"]').waitFor();
+    await lG2.locator('button[data-action="unmark-ready"]').click();
+    await lG2.locator('button[data-action="mark-ready"]').waitFor();
+
+    // G3 leaves lobby cleanly via Tinggalkan Lobi confirmation dialog -> Host sees 2/4
+    await lG3.getByTestId("lobby-leave-btn").click();
+    await lG3.getByTestId("confirm-dialog").waitFor();
+    await lG3.getByTestId("confirm-dialog-submit").click();
+    await lG3.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+    await lHost.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (2/4)"));
+
+    // Host cancels room via Batalkan Ruang -> G2 immediately sees SSE canceled-room-card
+    await lHost.getByTestId("lobby-leave-btn").click();
+    await lHost.getByTestId("confirm-dialog").waitFor();
+    await lHost.getByTestId("confirm-dialog-submit").click();
+    await lHost.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+    await lG2.getByTestId("canceled-room-card").waitFor({ timeout: 5000 });
+    assert.match(await lG2.getByTestId("canceled-room-card").innerText(), /Host membatalkan ruang ini/);
+    await lG2.getByRole("button", { name: "Kembali ke Katalog" }).click();
+    await lG2.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+  } finally {
+    await lHostCtx.close();
+    await lG2Ctx.close();
+    await lG3Ctx.close();
+  }
+
+  console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Live Presence + Unified Studio + One-Time Pack Ownership + Lobby Teams/QR/Leave)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

@@ -314,6 +314,36 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     placement: "inline-screen",
     tone: "warn",
   },
+  "not-enough-teams": {
+    message: "Minimal 2 tim berbeda diperlukan untuk memulai permainan grup.",
+    placement: "inline-screen",
+    tone: "warn",
+  },
+  "invalid-seat-name": {
+    message: "Nama pemain harus berisi 1–32 karakter. Periksa kembali namamu.",
+    placement: "inline-field",
+    tone: "warn",
+  },
+  "invalid-team-id": {
+    message: "Pilihan tim belum valid. Pilih tim lain lalu coba lagi.",
+    placement: "toast",
+    tone: "warn",
+  },
+  "teams-unavailable-in-solo": {
+    message: "Pengaturan tim hanya tersedia pada mode grup.",
+    placement: "toast",
+    tone: "info",
+  },
+  "invalid-turn-order": {
+    message: "Urutan giliran belum valid. Muat ulang ruang lalu coba lagi.",
+    placement: "toast",
+    tone: "warn",
+  },
+  "player-left": {
+    message: "Kamu sudah keluar dari pertandingan ini.",
+    placement: "inline-screen",
+    tone: "info",
+  },
   "players-not-ready": {
     message: "Belum semua pemain siap. Pastikan semua peserta sudah check-in dan menekan Tandai Siap.",
     placement: "inline-screen",
