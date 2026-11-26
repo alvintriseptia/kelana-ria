@@ -22,6 +22,7 @@ import { fetchApiJson, resolvePlayerError, type PlayerErrorSurface, type PlayerE
 import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { clearActiveRoom, saveActiveRoom } from "./active-room-storage";
+import { createRoomEventBridge } from "./room-events";
 import { answerText, incomingQuestion, questionDeck, questionNames, questionOptions, rewardCard } from "./seek-game-panels";
 import "./rulebook-seek-play.css";
 
@@ -250,7 +251,15 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let mapKey = "";
   let mapRequest = 0;
   let mapConfigRequest: ReturnType<typeof fetchMapConfig> | undefined;
-  let pollActive = false;
+  const roomEvents = createRoomEventBridge({
+    signal: lifecycle.signal,
+    getActiveRoom: () =>
+      live && roomCode && !live.room.outcome
+        ? { code: roomCode, stateRev: live.stateRev ?? 0 }
+        : null,
+    isBusy: () => busy || actionPending,
+    onSync: () => refreshRoom(false, true),
+  });
   let clockBase = performance.now();
   let roomNow = 0;
   let pendingAction: PendingSeekAction | null = null;
@@ -597,6 +606,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         clockBase = performance.now();
         updateClock();
       }
+      roomEvents.markSynced();
       if (!background && !skipRender) render();
       return;
     }
@@ -657,6 +667,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         qaAdvanceRetry = undefined;
       }
       syncRoomUrl(roomCode);
+      roomEvents.markSynced();
       if (unchanged) {
         updateClock();
         return;
@@ -1594,6 +1605,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       roomCode = "";
       joinCode = "";
       syncRoomUrl("");
+      roomEvents.sync();
       render();
       void loadCatalog();
       return;
@@ -2078,19 +2090,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     }).finally(() => {
       actionPending = false;
       root.removeAttribute("aria-busy");
+      if (!pendingAction) roomEvents.sync();
     });
-  }, { signal: lifecycle.signal });
-
-  window.addEventListener("online", () => {
-    if (!document.hidden && !busy && !actionPending && roomCode) {
-      void refreshRoom(false, true).catch(() => {});
-    }
-  }, { signal: lifecycle.signal });
-
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && navigator.onLine && !busy && !actionPending && roomCode) {
-      void refreshRoom(false, true).catch(() => {});
-    }
   }, { signal: lifecycle.signal });
 
   document.addEventListener("pointerdown", event => {
@@ -2108,11 +2109,6 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   }, { signal: lifecycle.signal });
 
   const ticker = window.setInterval(updateClock, 1000);
-  const poller = window.setInterval(() => {
-    if (!live || live.room.outcome || busy || actionPending || pollActive || document.hidden || !navigator.onLine) return;
-    pollActive = true;
-    void refreshRoom(false, true).catch(() => {}).finally(() => { pollActive = false; });
-  }, 3000);
   void loadCatalog().catch((error) => {
     if (!lifecycle.signal.aborted) {
       reportError(error, { surface: "catalog", action: "load-catalog" }, "catalog");
@@ -2121,9 +2117,9 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   });
   return () => {
     lifecycle.abort();
+    roomEvents.destroy();
     window.clearTimeout(previewTimer);
     root.removeAttribute("aria-busy");
-    window.clearInterval(poller);
     window.clearInterval(ticker);
     closeMap();
   };

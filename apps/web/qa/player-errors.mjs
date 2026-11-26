@@ -476,6 +476,7 @@ try {
   });
 
   await resetAlertLog(page);
+  await page.evaluate(() => window.dispatchEvent(new Event("offline")));
   await playCardBtn.click();
   await staleToast.waitFor();
   assert.match(await staleToast.innerText(), /Koneksi terganggu/);
@@ -484,7 +485,7 @@ try {
   // Trigger reconnect ('online') -> reconciles authoritative state from server, consumes card cleanly,
   // clears toast, and produces ZERO repeated toasts or duplicate play-card calls!
   await Promise.all([
-    page.waitForResponse((r) => r.url().includes(`/api/rulebooks/rooms/${claimRoomCode}`) && r.status() === 200),
+    page.waitForResponse((r) => r.url().includes(`/api/rulebooks/rooms/${claimRoomCode}`) && !r.url().endsWith("/events") && r.status() === 200),
     page.evaluate(() => window.dispatchEvent(new Event("online"))),
   ]);
   await page.waitForFunction(

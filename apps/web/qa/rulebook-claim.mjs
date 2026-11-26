@@ -237,25 +237,33 @@ try {
   await pageP3.locator(".cg-game").waitFor();
   await ctxP3.setOffline(true);
 
-  // P1 checks in taman-literasi (vulnerable claim) then Bails -> broadcasts "Terbuka untuk direbut!"
+  // Ensure P2's map & SSE stream are active, then P1 claims & bails taman-literasi -> P2 receives update via SSE (< 1.5s) while MapLibre stays connected
+  await pageP2.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
+  const p2MapCanvas = await pageP2.locator("#rb-claim-map-host .maplibregl-canvas").elementHandle();
   await checkIn(pageP1, "taman-literasi");
   await pageP1.waitForSelector('button[data-action="bail-challenge"]');
+  const bailSentAt = Date.now();
   await clickAndWaitPost(pageP1, 'button[data-action="bail-challenge"]');
 
-  // P2 refreshes -> sees "Open to steal!" alert -> steals & locks taman-literasi immediately
-  await pageP2.waitForSelector('[data-testid="open-to-steal-alert"]');
+  // P2 receives "Open to steal!" alert via SSE well before 3s poll without tearing down MapLibre
+  await pageP2.waitForSelector('[data-testid="open-to-steal-alert"]', { timeout: 1500 });
+  assert.ok(Date.now() - bailSentAt < 1500, "P2 must receive bail mutation via SSE before a 3-second poll cycle");
+  assert.equal(await p2MapCanvas.evaluate(el => el.isConnected), true, "SSE push must keep MapLibre instance mounted in-place");
+  assert.ok(await pageP2.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on P2 after SSE push");
   await pageP2.getByLabel("Lainnya").click();
   await pageP2.click('button[data-action="refresh"]');
   await pageP2.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
   await checkIn(pageP2, "taman-literasi");
   await pageP2.waitForSelector('button[data-action="submit-mcq"]');
   await pageP2.emulateMedia({ reducedMotion: "reduce" });
+  const stealSentAt = Date.now();
   await clickAndWaitPost(pageP2, 'button[data-action="submit-mcq"]');
   await pageP2.waitForFunction(() =>
     document.querySelector('.cg-selected[data-landmark-id="taman-literasi"]')?.textContent?.includes("Terkunci"),
   );
   const stealNotice = pageP1.locator('[data-activity-message][data-notice-kind="steal"]');
-  await stealNotice.waitFor();
+  await stealNotice.waitFor({ timeout: 1500 });
+  assert.ok(Date.now() - stealSentAt < 1500, "P1 must receive steal notice via SSE before a 3-second poll cycle");
   const animatedSteal = pageP1.locator('[data-map-point="taman-literasi"][data-game-motion^="steal:"]');
   await animatedSteal.waitFor({ state: "attached" });
   await pageP1.locator('[data-map-point="zone:blok-m"][data-game-motion^="role:"]').waitFor({ state: "attached" });
@@ -287,18 +295,24 @@ try {
   await activityPanel.getByText(/Taman Literasi.*bisa direbut/).waitFor();
   assert.ok(await pageP3.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageP3.screenshot({ path: path.join(results, "rulebook-claim-recent-activity.png") });
+
+  // Abort SSE /events on P2 -> verify automatic 3s polling fallback delivers rival photo review cleanly
+  await pageP2.route(`**/api/rulebooks/rooms/${roomCode}/events`, route => route.abort());
+  await pageP2.reload();
+  await pageP2.locator(".cg-game").waitFor();
   await checkIn(pageP1, "taman-ayodya");
   await pageP1.locator("input[data-cg-photo]").setInputFiles(proof);
   await clickAndWaitPost(pageP1, 'button[data-action="submit-photo"]');
   const rivalProof = pageP2.getByAltText("Foto bukti untuk ditinjau");
-  await rivalProof.waitFor();
+  await rivalProof.waitFor({ timeout: 8000 });
   await pageP2.waitForFunction(() => document.querySelector(".cg-proof")?.naturalWidth > 0);
   const proofPath = await rivalProof.getAttribute("src");
   assert.equal((await fetch(new URL(proofPath, baseUrl))).status, 404);
   await clickAndWaitPost(pageP2, 'button[data-action="review-rival-photo"][data-approve="false"]');
   assert.equal((await ctxP2.request.get(new URL(proofPath, baseUrl).href)).status(), 404);
   now += 3 * 60 * 60 * 1000;
-  await pageP2.getByTestId("claim-outcome").waitFor();
+  await pageP2.getByTestId("claim-outcome").waitFor({ timeout: 8000 });
+  await pageP2.unroute(`**/api/rulebooks/rooms/${roomCode}/events`);
   assert.match(await pageP2.getByTestId("claim-outcome").innerText(), /Pemenang · Dina.*Landmark yang terkunci/s);
   await pageP2.getByRole("link", { name: "Buka ringkasan" }).click();
   await pageP2.getByRole("heading", { name: "Pemenang · Dina" }).waitFor();
