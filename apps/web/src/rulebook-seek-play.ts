@@ -14,9 +14,18 @@ import type {
   SeekEngineRoomView,
   RulebookEntitlementSummary,
 } from "@kelana-ria/contracts";
-import type { BoardMapOptions, mountBoardMap } from "./board-map";
+import type { BoardMapHandle, BoardMapOptions, BoardMapUpdateOptions, mountBoardMap } from "./board-map";
 import { escapeText } from "./solo-view";
 import { getLocation } from "./device-location";
+import {
+  createLiveLocationWatcher,
+  formatDistanceShort,
+  haversineMeters,
+  renderDirectionsLink,
+  renderDistanceMeter,
+  renderStartPointCard,
+  type LiveLocationStatus,
+} from "./live-location";
 import { fetchMapConfig } from "./map-config";
 import { fetchApiJson, resolvePlayerError, type PlayerErrorSurface, type PlayerErrorTone } from "./player-errors";
 import { createPlayerToast, renderInlineAlert } from "./player-toast";
@@ -169,15 +178,6 @@ function curseClearLabel(clearType: string): string {
   return curseClearLabels[clearType] ?? clearType;
 }
 
-function distanceMeters(start: GeoCoordinate, end: GeoCoordinate): number {
-  const radians = Math.PI / 180;
-  const latDelta = (end.latitude - start.latitude) * radians;
-  const lonDelta = (end.longitude - start.longitude) * radians;
-  const squared = Math.sin(latDelta / 2) ** 2 +
-    Math.cos(start.latitude * radians) * Math.cos(end.latitude * radians) * Math.sin(lonDelta / 2) ** 2;
-  return 12_742_000 * Math.asin(Math.sqrt(Math.min(1, squared)));
-}
-
 function idr(amount: number): string {
   return amount === 0 ? "Gratis (Resmi)" : `Rp ${amount.toLocaleString("id-ID")} · Beli sekali`;
 }
@@ -288,6 +288,153 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   let roomNow = 0;
   let pendingAction: PendingSeekAction | null = null;
   let focusRestoreTarget: Record<string, string | undefined> | null = null;
+  let selfFix: LocationFix | null = null;
+  let liveLocationStatus: LiveLocationStatus = "prompt";
+  let startMapExpanded = false;
+  let startMiniMapHandle: BoardMapHandle | undefined;
+  let startMiniMapRoomCode = "";
+  let startMiniMapReq = 0;
+
+  function destroyStartMiniMap() {
+    startMiniMapReq++;
+    startMiniMapHandle?.destroy();
+    startMiniMapHandle = undefined;
+    startMiniMapRoomCode = "";
+  }
+
+  function buildStartMiniMapState(payload: RoomPayload): BoardMapUpdateOptions {
+    const sp = payload.room.turnStartPoint;
+    return {
+      start: { ...sp, x: 50, y: 50 },
+      startLabel: "Awal",
+      checkpoints: [],
+      selfLocation: selfFix ? { latitude: selfFix.latitude, longitude: selfFix.longitude, accuracy: selfFix.accuracy } : undefined,
+      checkInTarget: { center: sp, radiusMeters: payload.publicBoard.checkInRadiusMeters },
+      onRequestSelfLocation: () => liveLocation.start(),
+    };
+  }
+
+  async function syncStartMiniMap(host: HTMLElement, payload: RoomPayload) {
+    if (startMiniMapHandle && startMiniMapRoomCode === payload.room.code) {
+      startMiniMapHandle.update(buildStartMiniMapState(payload));
+      return;
+    }
+    const reqId = ++startMiniMapReq;
+    startMiniMapHandle?.destroy();
+    startMiniMapHandle = undefined;
+    startMiniMapRoomCode = payload.room.code;
+    try {
+      mapConfigRequest ??= fetchMapConfig(lifecycle.signal);
+      const [{ mountBoardMap: mountMap }, mapCfg] = await Promise.all([
+        import("./board-map"),
+        mapConfigRequest,
+      ]);
+      if (reqId !== startMiniMapReq || !host.isConnected || !live || live.room.code !== payload.room.code || live.room.phase !== "lobby" || !startMapExpanded) {
+        return;
+      }
+      const handle = mountMap({
+        container: host,
+        config: mapCfg,
+        camera: { center: [payload.room.turnStartPoint.longitude, payload.room.turnStartPoint.latitude], zoom: 15.2 },
+        ...buildStartMiniMapState(live),
+      });
+      if (reqId !== startMiniMapReq) handle.destroy();
+      else startMiniMapHandle = handle;
+    } catch {
+      if (reqId === startMiniMapReq) destroyStartMiniMap();
+    }
+  }
+
+  function updateLobbyOrRegroupProximityInPlace() {
+    if (!live) return;
+    if (live.room.phase === "lobby") {
+      const card = root.querySelector<HTMLElement>('[data-testid="lobby-start-card"]');
+      if (card) {
+        const meter = renderDistanceMeter({
+          fix: selfFix,
+          target: live.room.turnStartPoint,
+          checkInRadiusMeters: live.publicBoard.checkInRadiusMeters,
+          maxGpsAccuracyMeters: live.publicBoard.maxGpsAccuracyMeters,
+          status: liveLocationStatus,
+          testId: "lobby-distance-meter",
+          showEnableChip: true,
+        });
+        const prev = card.querySelector('[data-testid="lobby-distance-meter"], [data-testid="enable-live-location-btn"], .loc-meter-row');
+        if (prev && meter.html) {
+          const tmp = document.createElement("div");
+          tmp.innerHTML = meter.html;
+          const nextEl = tmp.firstElementChild;
+          if (nextEl) prev.replaceWith(nextEl);
+        }
+        const checkBtn = root.querySelector<HTMLButtonElement>('button[data-action="sim-start-checkin"]');
+        if (checkBtn) checkBtn.classList.toggle("loc-btn-ready", meter.proximity.state === "ready");
+      }
+      if (startMiniMapHandle && startMiniMapRoomCode === live.room.code) {
+        startMiniMapHandle.update(buildStartMiniMapState(live));
+      }
+      return;
+    }
+    if (live.room.phase === "regroup" && live.room.regroupPoint) {
+      const meter = renderDistanceMeter({
+        fix: selfFix,
+        target: live.room.regroupPoint,
+        checkInRadiusMeters: live.publicBoard.checkInRadiusMeters,
+        maxGpsAccuracyMeters: live.publicBoard.maxGpsAccuracyMeters,
+        status: liveLocationStatus,
+        testId: "regroup-distance-meter",
+        showEnableChip: true,
+      });
+      const prev = root.querySelector('[data-testid="regroup-distance-meter"], [data-testid="enable-live-location-btn"], .loc-meter-row');
+      if (prev && meter.html) {
+        const tmp = document.createElement("div");
+        tmp.innerHTML = meter.html;
+        const nextEl = tmp.firstElementChild;
+        if (nextEl) prev.replaceWith(nextEl);
+      }
+      const regroupBtn = root.querySelector<HTMLButtonElement>('button[data-action="regroup"]');
+      if (regroupBtn) regroupBtn.classList.toggle("loc-btn-ready", meter.proximity.state === "ready");
+    }
+  }
+
+  // Strictly local self-location watcher: Hide & Seek never transmits watchPosition fixes to the server.
+  let isRendering = false;
+  const liveLocation = createLiveLocationWatcher({
+    signal: lifecycle.signal,
+    onFix: (fix) => {
+      selfFix = fix;
+      if (!live || lifecycle.signal.aborted || isRendering) return;
+      if (live.room.phase === "lobby" || live.room.phase === "regroup") {
+        updateLobbyOrRegroupProximityInPlace();
+        return;
+      }
+      if (isBoardPhase(live.room)) {
+        if (mapHandle && mapRoomCode === live.room.code && mapHost && !mapFailed) {
+          mapHandle.update(buildSeekMapState(mapHost, live, mapRequest));
+        }
+        if (panel === "board") {
+          render();
+        }
+      }
+    },
+    onStatusChange: (nextStatus) => {
+      liveLocationStatus = nextStatus;
+      if (!live || lifecycle.signal.aborted || isRendering) return;
+      if (live.room.phase === "lobby" || live.room.phase === "regroup") {
+        updateLobbyOrRegroupProximityInPlace();
+      } else if (isBoardPhase(live.room) && panel === "board") {
+        render();
+      }
+    },
+  });
+  liveLocationStatus = liveLocation.getStatus();
+
+  function syncLiveLocation() {
+    if (!live || live.room.outcome || live.room.phase === "canceled") {
+      liveLocation.stop();
+      return;
+    }
+    liveLocation.checkPermissionAndAutoStart();
+  }
 
   function isBoardPhase(room: SeekEngineRoomView) {
     return room.phase === "head_start" || room.phase === "seeking" || room.phase === "endgame";
@@ -464,7 +611,9 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     if (room && point && await isSimulatedLocationAllowed(lifecycle.signal)) {
       return { latitude: point.latitude, longitude: point.longitude, accuracy: 10, timestamp: room.now };
     }
-    return getLocation();
+    const fix = await getLocation();
+    liveLocation.setManualFix(fix);
+    return fix;
   }
 
   function pointById(id: string | undefined) {
@@ -888,6 +1037,12 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       : Math.min(228, Math.floor(host.clientHeight / 3));
     const canHide = room.role === "hider" && ((room.phase === "head_start" && !room.ownAnchorStationId) || room.moveZoneUntil !== undefined);
     const candidates = room.candidateStationIds && new Set(room.candidateStationIds);
+    const selectedTargetPoint =
+      [room.turnStartPoint, ...publicBoard.stations].find((p) => p.id === stationId) ??
+      (anchor || undefined);
+    const checkInTarget = selectedTargetPoint
+      ? { center: selectedTargetPoint, radiusMeters: publicBoard.checkInRadiusMeters }
+      : undefined;
 
     return {
       focusPoints,
@@ -895,6 +1050,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       startLabel: "Awal",
       fitPadding: { top: 147, bottom, left: 36, right: 45 },
       startSelectable: room.role === "seeker" || (canHide && publicBoard.stations.some(station => station.id === room.turnStartPoint.id)),
+      selectedId: stationId || undefined,
+      selfLocation: selfFix ? { latitude: selfFix.latitude, longitude: selfFix.longitude, accuracy: selfFix.accuracy } : undefined,
+      checkInTarget,
+      onRequestSelfLocation: () => liveLocation.start(),
       deductionBoundary: publicBoard.boundaryPolygon,
       thermometer,
       checkpoints: [
@@ -1186,7 +1345,18 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
       ${
         room.phase === "lobby"
-          ? `<div class="rb-card">
+          ? (() => {
+              const startCard = renderStartPointCard({
+                startPoint: room.turnStartPoint,
+                fix: selfFix,
+                checkInRadiusMeters: payload.publicBoard.checkInRadiusMeters,
+                maxGpsAccuracyMeters: payload.publicBoard.maxGpsAccuracyMeters,
+                status: liveLocationStatus,
+                mapExpanded: startMapExpanded,
+                mapHostId: "sg-start-minimap",
+              });
+              return `<div class="rb-card">
+              ${startCard.html}
               ${renderLobbyInviteCard({ roomCode: room.code, inviteUrl, copiedCode, copiedLink })}
               <div class="lobby-team-head">
                 <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
@@ -1223,7 +1393,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               </ul>
               ${slotAlert("lobby-checkin")}
               <div class="rb-actions">
-                <button type="button" class="secondary" data-action="sim-start-checkin">Check-in di ${escapeText(room.turnStartPoint.name)}</button>
+                <button type="button" class="secondary${startCard.proximity.state === "ready" ? " loc-btn-ready" : ""}" data-action="sim-start-checkin">Check-in di ${escapeText(room.turnStartPoint.name)}</button>
                 ${ownSeat?.ready
                   ? `<button type="button" class="secondary" data-action="unmark-ready">Batal Siap</button>`
                   : `<button type="button" class="primary" data-action="mark-ready">Tandai Siap</button>`}
@@ -1235,7 +1405,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
               ${exitSpec ? `<div class="lobby-footer-exit">
                 <button type="button" class="secondary lobby-danger-btn" data-action="confirm-leave" data-testid="lobby-leave-btn">${escapeText(exitSpec.label)}</button>
               </div>` : ""}
-            </div>`
+            </div>`;
+            })()
           : ""
       }
 
@@ -1248,13 +1419,30 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         ${room.startedAt !== null ? `<a class="cat-link" href="/?recap=${encodeURIComponent(room.code)}">Buka ringkasan</a>` : ""}
       </div>` : ""}
 
-      ${room.phase === "regroup" ? `<div class="rb-card">
+      ${room.phase === "regroup" ? (() => {
+        const regroupMeter = room.regroupPoint
+          ? renderDistanceMeter({
+              fix: selfFix,
+              target: room.regroupPoint,
+              checkInRadiusMeters: payload.publicBoard.checkInRadiusMeters,
+              maxGpsAccuracyMeters: payload.publicBoard.maxGpsAccuracyMeters,
+              status: liveLocationStatus,
+              testId: "regroup-distance-meter",
+              showEnableChip: true,
+            })
+          : null;
+        return `<div class="rb-card" data-testid="seek-regroup-card">
         <h3>Berkumpul Kembali</h3>
-        ${room.regroupPoint ? `<p>Titik awal berikutnya · ${escapeText(room.regroupPoint.name)}</p>` : ""}
+        ${room.regroupPoint ? `<p>Titik awal berikutnya · <strong>${escapeText(room.regroupPoint.name)}</strong></p>` : ""}
         ${room.phaseEndsAt === null ? "" : `<p>Sisa waktu berkumpul · <span data-deadline="${room.phaseEndsAt}"></span></p>`}
+        ${room.regroupPoint ? `<div class="cg-selected-meta-actions">
+          ${regroupMeter?.html ?? ""}
+          ${renderDirectionsLink(room.regroupPoint, { testId: "regroup-directions-link" })}
+        </div>` : ""}
         ${slotAlert("regroup-checkin")}
-        <button type="button" class="primary" data-action="regroup">Check-in untuk giliran berikutnya</button>
-      </div>` : ""}
+        <button type="button" class="primary${regroupMeter?.proximity.state === "ready" ? " loc-btn-ready" : ""}" data-action="regroup">Check-in untuk giliran berikutnya</button>
+      </div>`;
+      })() : ""}
 
       <div class="rb-card">
         <h3>Riwayat Petunjuk (${room.questions.length})</h3>
@@ -1341,17 +1529,38 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const checkpoints = canHide ? publicBoard.stations : [room.turnStartPoint, ...publicBoard.stations.filter(point => point.id !== room.turnStartPoint.id)];
     const selectedId = stationId || (payload.qa ? qaPoint(payload).id : "");
     const selected = checkpoints.find(station => station.id === selectedId);
-    const stationList = mapFailed && (canHide || !isHider) ? `<div class="sg-picks" role="group" aria-label="Pilih titik">${checkpoints.map(station =>
-      `<button type="button" class="sg-pick" data-action="select-station" data-station="${escapeText(station.id)}" aria-pressed="${station.id === selected?.id}">${escapeText(station.name)}</button>`
-    ).join("")}</div>` : "";
+    const ownAnchor = isHider && room.ownAnchorStationId
+      ? publicBoard.stations.find(station => station.id === room.ownAnchorStationId)
+      : undefined;
+    const focusStation = selected ?? ownAnchor ?? room.turnStartPoint;
+    const stationMeter = focusStation
+      ? renderDistanceMeter({
+          fix: selfFix,
+          target: focusStation,
+          checkInRadiusMeters: publicBoard.checkInRadiusMeters,
+          maxGpsAccuracyMeters: publicBoard.maxGpsAccuracyMeters,
+          status: liveLocationStatus,
+          testId: "seek-station-distance-meter",
+          showEnableChip: true,
+        })
+      : null;
+    const readyClass = stationMeter?.proximity.state === "ready" ? " loc-btn-ready" : "";
+    const stationList = mapFailed && (canHide || !isHider) ? `<div class="sg-picks" role="group" aria-label="Pilih titik">${checkpoints.map(station => {
+      const dist = selfFix ? ` · ${formatDistanceShort(haversineMeters(selfFix, station))}` : "";
+      return `<button type="button" class="sg-pick" data-action="select-station" data-station="${escapeText(station.id)}" aria-pressed="${station.id === selected?.id}">${escapeText(station.name)}${dist}</button>`;
+    }).join("")}</div>` : "";
     return `<h2 id="sg-panel-title" tabindex="-1">${canHide ? "Pilih tempat sembunyi" : selected ? escapeText(selected.name) : "Check-in"}</h2>
       ${room.phase === "head_start" ? `<p>${isHider ? (canHide ? "Pilih stasiun pada peta, lalu kunci lokasi sebelum pencarian dimulai." : "Lokasi terkunci. Tetap di zona sampai waktu sembunyi habis.") : "Pencarian dimulai saat waktu sembunyi habis."}</p>` : ""}
+      ${focusStation ? `<div class="cg-selected-meta-actions">
+        ${stationMeter?.html ?? ""}
+        ${renderDirectionsLink(focusStation, { testId: "seek-station-directions-link" })}
+      </div>` : ""}
       ${mapFailed ? '<p role="status">Peta tidak tersedia. Pilih titik dari daftar.</p><button type="button" class="sg-quiet" data-action="retry-map">Muat ulang peta</button>' : ""}
       ${stationList}
       ${slotAlert("board-checkin")}
-      ${canHide && selected ? `<button type="button" class="sg-main" data-action="lock-anchor" data-station="${escapeText(selected.id)}" ${busy ? "disabled" : ""}>Kunci lokasi</button>` : ""}
-      ${!isHider && room.phase === "seeking" ? `<button type="button" class="sg-pick" data-action="seeker-check-in" ${busy ? "disabled" : ""}>Perbarui posisi</button>` : ""}
-      ${!isHider && room.phase !== "head_start" ? `<button type="button" class="sg-main" data-action="trigger-endgame" data-station="${escapeText(selected?.id ?? "")}" ${busy ? "disabled" : ""}>Check-in turun dari transit</button>` : ""}
+      ${canHide && selected ? `<button type="button" class="sg-main${readyClass}" data-action="lock-anchor" data-station="${escapeText(selected.id)}" ${busy ? "disabled" : ""}>Kunci lokasi</button>` : ""}
+      ${!isHider && room.phase === "seeking" ? `<button type="button" class="sg-pick${readyClass}" data-action="seeker-check-in" ${busy ? "disabled" : ""}>Perbarui posisi</button>` : ""}
+      ${!isHider && room.phase !== "head_start" ? `<button type="button" class="sg-main${readyClass}" data-action="trigger-endgame" data-station="${escapeText(selected?.id ?? "")}" ${busy ? "disabled" : ""}>Check-in turun dari transit</button>` : ""}
       ${isHider && room.phase === "endgame" && room.foundCode ? `<p>Berikan kode saat pencari menemukanmu.</p>
         <div class="rb-found-code" data-testid="hider-found-code">${escapeText(room.foundCode)}</div>
         ${room.hiderFrozen ? "<p>Posisi terkunci</p>" : '<button type="button" class="sg-main" data-action="confirm-freeze">Kunci posisi sekarang</button>'}` : ""}
@@ -1417,7 +1626,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         const picked = entries.find(entry => entry.itemId === option);
         const thermometer = family === "thermometer" ? {
           started: room.thermometerStart !== null,
-          distance: room.thermometerStart && thermometerEnd ? distanceMeters(room.thermometerStart, thermometerEnd) : undefined,
+          distance: room.thermometerStart && thermometerEnd ? haversineMeters(room.thermometerStart, thermometerEnd) : undefined,
         } : undefined;
         const preview = family === "photo" || family === "thermometer" ? undefined : renderDraftPreview();
         return questionOptions(family, entries, picked, deck.questionsBlocked || deck.bannedFamilies.includes(family), thermometer, busy, preview)
@@ -1468,6 +1677,12 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
 
   function render() {
     if (lifecycle.signal.aborted) return;
+    isRendering = true;
+    try {
+      syncLiveLocation();
+    } finally {
+      isRendering = false;
+    }
     const menuFocused = document.activeElement === root.querySelector(".sg-room-menu summary");
     const room = live?.room;
     activityUi.update(room, live?.activity);
@@ -1477,6 +1692,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       activityUi.mount(null);
       toast.setLayout("page");
       closeMap();
+      destroyStartMiniMap();
       renderedTurn = "";
       const focusedInput = document.activeElement instanceof HTMLInputElement && root.contains(document.activeElement)
         ? { id: document.activeElement.id, start: document.activeElement.selectionStart, end: document.activeElement.selectionEnd }
@@ -1485,6 +1701,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
         ? { ...document.activeElement.dataset }
         : null;
       root.innerHTML = live ? renderRoom(live) : renderCatalog();
+      if (live && room?.phase === "lobby" && startMapExpanded) {
+        const miniHost = root.querySelector<HTMLElement>("#sg-start-minimap");
+        if (miniHost) void syncStartMiniMap(miniHost, live);
+      }
       if (menuFocused) {
         root.querySelector<HTMLElement>(".sg-room-menu summary")?.focus({ preventScroll: true });
       } else if (!busy) {
@@ -1503,6 +1723,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       updateClock();
       return;
     }
+    destroyStartMiniMap();
     const turn = `${room.code}/${room.turnNumber}/${room.role}/${room.phase}`;
     const isHider = room.role === "hider";
     const activeDraw = isHider ? (live.deck as SeekDeckHiderView).activeDraw : null;
@@ -1619,7 +1840,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     if (roleEffect) playGameMotion(controls.querySelector(".sg-role"), "role", roleEffect.sequence);
     if (cardEffect) playGameMotion(controls.querySelector(isHider ? '[data-panel="hand"]' : '[data-panel="board"]'), "update", cardEffect.sequence);
     if (deduction) playGameMotion(controls.querySelector(".sg-map-result"), "update", deduction.sequence);
-    const nextMapKey = JSON.stringify([room.code, room.turnNumber, room.role, room.phase, room.ownAnchorStationId, room.seekerPosition, room.questions, room.deductionResetAt, room.moveZoneUntil, room.thermometerStart, thermometerEnd, answerChoice]);
+    const nextMapKey = JSON.stringify([room.code, room.turnNumber, room.role, room.phase, room.ownAnchorStationId, room.seekerPosition, room.questions, room.deductionResetAt, room.moveZoneUntil, room.thermometerStart, thermometerEnd, answerChoice, stationId]);
     if (mapFailed) {
       if (mapKey) {
         mapRequest++;
@@ -1738,6 +1959,17 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
     if (!btn || busy || actionPending || btn.disabled) return;
 
+    const locAction = btn.dataset.locAction;
+    if (locAction === "enable-live-location") {
+      liveLocation.start();
+      return;
+    }
+    if (locAction === "toggle-start-map" && live) {
+      startMapExpanded = !startMapExpanded;
+      render();
+      return;
+    }
+
     const lobbyAction = btn.dataset.lobbyAction;
     if (lobbyAction && live) {
       const inviteUrl = `${location.origin}/?play=rulebook-seek&room=${encodeURIComponent(live.room.code)}`;
@@ -1798,6 +2030,9 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     if (nav === "catalog") {
       if (live?.pass.mode || live?.room.phase === "canceled") return onBack();
       live = null;
+      startMapExpanded = false;
+      destroyStartMiniMap();
+      liveLocation.stop();
       drawKey = "";
       pendingId = "";
       statusMsg = "";
@@ -2378,10 +2613,12 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   return () => {
     lifecycle.abort();
     closeLobbyDialog();
+    liveLocation.stop();
     roomEvents.destroy();
     window.clearTimeout(previewTimer);
     root.removeAttribute("aria-busy");
     window.clearInterval(ticker);
     closeMap();
+    destroyStartMiniMap();
   };
 }

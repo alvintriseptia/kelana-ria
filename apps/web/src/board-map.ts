@@ -50,6 +50,9 @@ export type BoardMapOptions = {
   radarCircles?: BoardMapRadarCircle[];
   deductionOverlays?: SeekDeductionOverlay[];
   hidingZone?: { center: GeoCoordinate; radiusMeters: number };
+  selfLocation?: { latitude: number; longitude: number; accuracy: number };
+  checkInTarget?: { center: GeoCoordinate; radiusMeters: number };
+  onRequestSelfLocation?: () => void;
   onSelect?: (checkpointId: string) => void;
   onSelectStart?: () => void;
   onError?: (reason: string) => void;
@@ -61,6 +64,7 @@ export type BoardMapHandle = {
   getCamera: () => BoardCamera | undefined;
   setQuestionPreview: (preview?: SeekMapPreview, padding?: Required<maplibregl.PaddingOptions>) => void;
   focusQuestionPreview: (padding: maplibregl.PaddingOptions) => void;
+  recenterToSelf: () => void;
   pulseDeduction: (geometry: SeekDeductionOverlay["type"]) => void;
   update: (next: BoardMapUpdateOptions) => void;
   destroy: () => void;
@@ -349,6 +353,34 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
   let deductionPulse: number | undefined;
   let resetDeductionPulse: (() => void) | undefined;
   const markerMap = new Map<string, BoardMarkerEntry>();
+  let selfMarker: maplibregl.Marker | undefined;
+  let selfMarkerEl: HTMLSpanElement | undefined;
+  let recenterBtn: HTMLButtonElement | undefined;
+
+  function recenterToSelf() {
+    if (!map || destroyed) return;
+    const fix = current.selfLocation;
+    if (!fix) {
+      current.onRequestSelfLocation?.();
+      return;
+    }
+    const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    map.easeTo({
+      center: [fix.longitude, fix.latitude],
+      zoom: Math.max(map.getZoom(), 15.5),
+      duration: reduced ? 0 : 350,
+    });
+  }
+
+  function syncRecenterButton() {
+    if (!recenterBtn) return;
+    const hasFix = Boolean(current.selfLocation);
+    const visible = hasFix || Boolean(current.onRequestSelfLocation);
+    recenterBtn.hidden = !visible;
+    recenterBtn.dataset.hasFix = hasFix ? "true" : "false";
+    recenterBtn.setAttribute("aria-label", hasFix ? "Pusatkan ke posisiku" : "Aktifkan & pusatkan ke posisiku");
+    recenterBtn.title = hasFix ? "Pusatkan ke posisiku" : "Aktifkan lokasi";
+  }
 
   function syncRadarList() {
     const radars = current.radarCircles ?? [];
@@ -557,6 +589,87 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         paint: { "line-color": "#9f214b", "line-width": 4, "line-dasharray": [2, 2] },
       });
     }
+
+    const selfLoc = current.selfLocation;
+    const selfAccuracyData: GeoJSON.FeatureCollection = selfLoc
+      ? {
+          type: "FeatureCollection",
+          features: [
+            {
+              type: "Feature",
+              properties: { accuracy: Math.round(selfLoc.accuracy) },
+              geometry: {
+                type: "Polygon",
+                coordinates: [circlePolygon(selfLoc, Math.max(8, selfLoc.accuracy), 48)],
+              },
+            },
+          ],
+        }
+      : { type: "FeatureCollection", features: [] };
+    const selfAccSrc = map.getSource<maplibregl.GeoJSONSource>("self-accuracy");
+    if (selfAccSrc) {
+      selfAccSrc.setData(selfAccuracyData);
+    } else if (selfLoc) {
+      map.addSource("self-accuracy", { type: "geojson", data: selfAccuracyData });
+      map.addLayer({
+        id: "self-accuracy-fill",
+        type: "fill",
+        source: "self-accuracy",
+        paint: { "fill-color": "#2563eb", "fill-opacity": 0.14 },
+      });
+      map.addLayer({
+        id: "self-accuracy-outline",
+        type: "line",
+        source: "self-accuracy",
+        paint: { "line-color": "#3b82f6", "line-width": 1.5, "line-opacity": 0.55 },
+      });
+    }
+    if (selfLoc) {
+      container.dataset.selfLocation = `${selfLoc.latitude.toFixed(6)},${selfLoc.longitude.toFixed(6)},${Math.round(selfLoc.accuracy)}`;
+    } else {
+      delete container.dataset.selfLocation;
+    }
+
+    const checkInTarget = current.checkInTarget;
+    const checkInRingData: GeoJSON.FeatureCollection =
+      checkInTarget && checkInTarget.radiusMeters > 0
+        ? {
+            type: "FeatureCollection",
+            features: [
+              {
+                type: "Feature",
+                properties: { radiusMeters: Math.round(checkInTarget.radiusMeters) },
+                geometry: {
+                  type: "Polygon",
+                  coordinates: [circlePolygon(checkInTarget.center, checkInTarget.radiusMeters, 48)],
+                },
+              },
+            ],
+          }
+        : { type: "FeatureCollection", features: [] };
+    const ringSrc = map.getSource<maplibregl.GeoJSONSource>("checkin-target-ring");
+    if (ringSrc) {
+      ringSrc.setData(checkInRingData);
+    } else if (checkInTarget && checkInTarget.radiusMeters > 0) {
+      map.addSource("checkin-target-ring", { type: "geojson", data: checkInRingData });
+      map.addLayer({
+        id: "checkin-target-fill",
+        type: "fill",
+        source: "checkin-target-ring",
+        paint: { "fill-color": "#0f766e", "fill-opacity": 0.08 },
+      });
+      map.addLayer({
+        id: "checkin-target-outline",
+        type: "line",
+        source: "checkin-target-ring",
+        paint: { "line-color": "#0f766e", "line-width": 2.5, "line-dasharray": [3, 2] },
+      });
+    }
+    if (checkInTarget && checkInTarget.radiusMeters > 0) {
+      container.dataset.checkInTarget = String(Math.round(checkInTarget.radiusMeters));
+    } else {
+      delete container.dataset.checkInTarget;
+    }
   }
 
   function syncMarkers() {
@@ -695,6 +808,28 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         markerMap.delete(key);
       }
     }
+
+    const selfLoc = current.selfLocation;
+    if (selfLoc) {
+      if (!selfMarker) {
+        selfMarkerEl = document.createElement("span");
+        selfMarkerEl.className = "board-map-self-dot";
+        selfMarkerEl.dataset.testid = "map-self-dot";
+        selfMarkerEl.dataset.selfLocation = "true";
+        selfMarkerEl.setAttribute("role", "img");
+        selfMarkerEl.setAttribute("aria-label", "Posisimu saat ini");
+        selfMarker = new maplibregl.Marker({ element: selfMarkerEl })
+          .setLngLat([selfLoc.longitude, selfLoc.latitude])
+          .addTo(map);
+      } else {
+        selfMarker.setLngLat([selfLoc.longitude, selfLoc.latitude]);
+      }
+    } else if (selfMarker) {
+      selfMarker.remove();
+      selfMarker = undefined;
+      selfMarkerEl = undefined;
+    }
+    syncRecenterButton();
   }
 
   function focusQuestionPreview(padding: maplibregl.PaddingOptions) {
@@ -773,6 +908,27 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       if (padding) map.setPadding(padding);
 
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+      const recenterControl: maplibregl.IControl = {
+        onAdd() {
+          const wrap = document.createElement("div");
+          wrap.className = "maplibregl-ctrl board-map-recenter-ctrl";
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "board-map-recenter-btn";
+          btn.dataset.testid = "map-recenter-btn";
+          btn.textContent = "◎";
+          btn.addEventListener("click", () => recenterToSelf());
+          recenterBtn = btn;
+          syncRecenterButton();
+          wrap.append(btn);
+          return wrap;
+        },
+        onRemove() {
+          recenterBtn?.parentElement?.remove();
+          recenterBtn = undefined;
+        },
+      };
+      map.addControl(recenterControl, "top-right");
 
       map.on("load", () => {
         styleLoaded = true;
@@ -834,6 +990,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       drawQuestionPreview();
     },
     focusQuestionPreview,
+    recenterToSelf,
     pulseDeduction(geometry) {
       if (!map || !styleLoaded || destroyed) return;
       window.clearTimeout(deductionPulse);
@@ -883,6 +1040,12 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       window.clearTimeout(deductionPulse);
       delete container.dataset.mapReady;
       delete container.dataset.questionPreview;
+      delete container.dataset.selfLocation;
+      delete container.dataset.checkInTarget;
+      selfMarker?.remove();
+      selfMarker = undefined;
+      selfMarkerEl = undefined;
+      recenterBtn = undefined;
       for (const entry of markerMap.values()) entry.marker.remove();
       markerMap.clear();
       map?.remove();
