@@ -1,4 +1,8 @@
+import type { RulebookFormat } from "@kelana-ria/contracts";
 import { escapeText } from "./escape-text";
+import { resolveDefaultPlayerName, saveRememberedGuestName } from "./guest-name";
+import { fetchApiJson, resolvePlayerError, type PlayerErrorTone } from "./player-errors";
+import { renderInlineAlert } from "./player-toast";
 import { renderQrSvg } from "./qr-svg";
 import "./lobby-ui.css";
 
@@ -241,3 +245,180 @@ export function openConfirmDialog(options: {
   document.body.appendChild(backdrop);
   backdrop.querySelector<HTMLButtonElement>('[data-confirm-btn="cancel"]')?.focus({ preventScroll: true });
 }
+
+export function renderPostMatchActions(opts: {
+  roomCode: string;
+  packId: string;
+  version: number;
+  started: boolean;
+  canPlayAgain: boolean;
+  busy?: boolean;
+}): string {
+  const disabledAttr = opts.busy ? " disabled" : "";
+  const recapLink = opts.started
+    ? `<a class="cat-link" href="/?recap=${encodeURIComponent(opts.roomCode)}" data-testid="postmatch-recap-link">Buka ringkasan</a>`
+    : "";
+  const packHref = `/?edition=${encodeURIComponent(opts.packId)}&version=${encodeURIComponent(String(opts.version))}`;
+
+  if (opts.canPlayAgain) {
+    return `<div class="postmatch-actions" data-testid="postmatch-actions">
+      <button type="button" class="sg-main" data-action="play-again" data-testid="postmatch-play-again"${disabledAttr}>Main Lagi</button>
+      <div class="postmatch-secondary-row">
+        ${recapLink}
+        <button type="button" class="secondary" data-nav="catalog" data-testid="postmatch-back-catalog"${disabledAttr}>Kembali ke Katalog</button>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="postmatch-actions" data-testid="postmatch-actions">
+    <button type="button" class="sg-main" data-action="join-new-room" data-testid="postmatch-join-new-room"${disabledAttr}>Gabung Ruang Baru</button>
+    <div class="postmatch-secondary-row">
+      <a class="cat-link" href="${escapeText(packHref)}" data-testid="postmatch-view-pack">Lihat Paket Ini</a>
+      ${recapLink}
+      <button type="button" class="secondary" data-nav="catalog" data-testid="postmatch-back-catalog"${disabledAttr}>Kembali ke Katalog</button>
+    </div>
+  </div>`;
+}
+
+export function openQuickJoinRoomDialog(options: {
+  authenticatedDisplayName?: string | null;
+  authenticated?: boolean;
+  onJoined: (format: RulebookFormat, roomCode: string) => void;
+}): void {
+  activeDialogClose?.();
+  const abort = new AbortController();
+  const { signal } = abort;
+  const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "lobby-dialog-backdrop";
+  backdrop.dataset.testid = "join-room-modal";
+
+  let codeDraft = "";
+  let nameDraft = resolveDefaultPlayerName(options.authenticatedDisplayName, "");
+  let joining = false;
+  let modalError: { message: string; tone: PlayerErrorTone } | null = null;
+
+  function close(restoreFocus = true) {
+    if (signal.aborted) return;
+    abort.abort();
+    backdrop.remove();
+    if (activeDialogClose === close) activeDialogClose = null;
+    if (restoreFocus && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+  }
+  activeDialogClose = () => close(false);
+
+  function render() {
+    if (signal.aborted) return;
+    backdrop.innerHTML = `<section class="lobby-dialog" role="dialog" aria-modal="true" aria-labelledby="quick-join-title">
+      <div class="lobby-dialog-head">
+        <h2 id="quick-join-title">Gabung Ruang Baru</h2>
+        <button type="button" class="secondary lobby-icon-btn" data-quick-join-btn="close" aria-label="Tutup dialog gabung ruang" ${joining ? "disabled" : ""}>×</button>
+      </div>
+      <p class="lobby-dialog-body">Masukkan kode undangan baru dari Host (RC-… atau RB-…).</p>
+      ${modalError ? renderInlineAlert(modalError.message, modalError.tone, 'data-testid="join-modal-alert"') : ""}
+      <form class="lobby-rename-form" data-quick-join-form>
+        <label class="rb-field" style="width:100%">
+          <span>Kode Ruang</span>
+          <input id="cat-join-code" name="roomCode" type="text" autocomplete="off" placeholder="RC-XXXXXX atau RB-XXXXXX" value="${escapeText(codeDraft)}" required ${joining ? "disabled" : ""}>
+        </label>
+        <label class="rb-field" style="width:100%">
+          <span>Nama Pemain</span>
+          <input id="cat-join-name" name="name" type="text" maxlength="32" placeholder="Mis. Dina" value="${escapeText(nameDraft)}" ${joining ? "disabled" : ""}>
+        </label>
+        <div class="lobby-dialog-actions" style="width:100%">
+          <button type="button" class="secondary" data-quick-join-btn="close" ${joining ? "disabled" : ""}>Batal</button>
+          <button type="submit" class="primary" data-testid="join-modal-submit" ${joining ? "disabled" : ""}>${joining ? "Masuk…" : "Gabung Ruang"}</button>
+        </div>
+      </form>
+    </section>`;
+  }
+
+  async function submitJoin() {
+    const normalizedCode = codeDraft.trim().replace(/\s+/g, "").toUpperCase();
+    codeDraft = normalizedCode;
+    if (!normalizedCode) {
+      const resolved = resolvePlayerError("join-code-required", { surface: "lobby", action: "join-room" });
+      modalError = { message: resolved.message, tone: resolved.tone };
+      render();
+      backdrop.querySelector<HTMLInputElement>("#cat-join-code")?.focus({ preventScroll: true });
+      return;
+    }
+    const chosenName = nameDraft.trim() || resolveDefaultPlayerName(options.authenticatedDisplayName, "Pemain");
+    joining = true;
+    modalError = null;
+    render();
+    try {
+      const { ok, status, data } = await fetchApiJson<{
+        ok?: boolean;
+        format?: RulebookFormat;
+        roomCode?: string;
+        error?: string;
+      }>("/api/rulebooks", {
+        signal,
+        body: { type: "join-room", roomCode: normalizedCode, name: chosenName },
+      });
+      if (signal.aborted) return;
+      if (!ok || !data.ok || !data.format) {
+        const resolved = resolvePlayerError(
+          { error: data.error ?? "room-not-found", status },
+          { surface: "lobby", action: "join-room", target: normalizedCode },
+        );
+        modalError = { message: resolved.message, tone: resolved.tone };
+        return;
+      }
+      if (!options.authenticated) saveRememberedGuestName(chosenName);
+      const targetCode = data.roomCode ?? normalizedCode;
+      close(false);
+      options.onJoined(data.format, targetCode);
+    } catch (error) {
+      if (!signal.aborted) {
+        const resolved = resolvePlayerError(error, { surface: "lobby", action: "join-room", target: normalizedCode });
+        modalError = { message: resolved.message, tone: resolved.tone };
+      }
+    } finally {
+      if (!signal.aborted) {
+        joining = false;
+        render();
+        backdrop.querySelector<HTMLInputElement>("#cat-join-code")?.focus({ preventScroll: true });
+      }
+    }
+  }
+
+  backdrop.addEventListener("input", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement)) return;
+    if (target.id === "cat-join-code") {
+      const cleaned = target.value.replace(/\s+/g, "").toUpperCase();
+      codeDraft = cleaned;
+      if (target.value !== cleaned) target.value = cleaned;
+    } else if (target.id === "cat-join-name") {
+      nameDraft = target.value;
+    }
+  }, { signal });
+
+  backdrop.addEventListener("submit", (event) => {
+    const form = (event.target as HTMLElement | null)?.closest("[data-quick-join-form]");
+    if (!form) return;
+    event.preventDefault();
+    if (!joining) void submitJoin();
+  }, { signal });
+
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop && !joining) return close(true);
+    const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-quick-join-btn]");
+    if (btn?.dataset.quickJoinBtn === "close" && !joining) close(true);
+  }, { signal });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !joining) {
+      event.preventDefault();
+      close(true);
+    }
+  }, { signal });
+
+  render();
+  document.body.appendChild(backdrop);
+  backdrop.querySelector<HTMLInputElement>("#cat-join-code")?.focus({ preventScroll: true });
+}
+

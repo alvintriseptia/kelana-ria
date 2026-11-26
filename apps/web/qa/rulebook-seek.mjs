@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { openEdition } from "./catalog.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
+import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
 import { buyPublishedDraft, openDraft, openReview, reviewerKey, signInQaContext, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -376,17 +377,41 @@ try {
   await clickAndWaitPost(pageG2, 'button[data-action="ask-clue"]');
   await refreshSeekRoom(pageCreator);
   await pageCreator.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
-  await pageCreator.locator("#sg-clue-photo").setInputFiles({
-    name: "test-public-station.png",
-    mimeType: "image/png",
-    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAABAAAAAKCAIAAAAy3EnLAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAFUlEQVQYlWNwyIogCTGMasgakqEEAE4woUHUV2UvAAAAAElFTkSuQmCC", "base64"),
-  });
+  const seekPhotoInput = pageCreator.locator("#sg-clue-photo");
+  assert.equal(await seekPhotoInput.getAttribute("capture"), "environment", "Seek photo input must default to rear camera");
+  assert.equal(await seekPhotoInput.getAttribute("accept"), "image/*");
+  const seekCaptureBox = await pageCreator.getByTestId("photo-capture-btn").boundingBox();
+  assert.ok(seekCaptureBox && seekCaptureBox.height >= 44, "Seek Ambil Foto button must meet 44px touch target");
+
+  // Corrupt non-image file rejected cleanly without enabling submit
+  await seekPhotoInput.setInputFiles(buildCorruptPhotoFile());
+  await pageCreator.getByRole("alert").filter({ hasText: /foto|format|JPEG/i }).waitFor();
+  assert.equal(await pageCreator.locator('button[data-action="answer-photo"]').isDisabled(), true);
+
+  // Large > 2 MB (4.1 MB, 1600x640) image is automatically downscaled to <= 1280px JPEG < 2 MB client-side
+  const largeSeekPhoto = buildLargeTestPhotoFile(1600, 640);
+  assert.ok(largeSeekPhoto.buffer.byteLength > 2 * 1024 * 1024);
+  await seekPhotoInput.setInputFiles(largeSeekPhoto);
+  await pageCreator.locator('img[alt="Pratinjau foto petunjuk"]').waitFor();
+  const seekPreviewWidth = await pageCreator.getByTestId("photo-preview-img").evaluate((img) => img.naturalWidth);
+  assert.equal(seekPreviewWidth, 1280, "Seek photo must downscale 1600px image to 1280px");
+  assert.match(await pageCreator.getByTestId("photo-size-badge").innerText(), /Siap unggah · \d+ KB/);
+  await pageCreator.getByTestId("photo-retake-btn").waitFor();
+  assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek photo preview (390x844)");
+
+  // Hapus clears preview and disables Kirim foto; re-attaching large photo uploads cleanly
+  await pageCreator.getByTestId("photo-clear-btn").click();
+  assert.equal(await pageCreator.getByTestId("photo-preview-img").count(), 0);
+  assert.equal(await pageCreator.locator('button[data-action="answer-photo"]').isDisabled(), true);
+  await pageCreator.locator("#sg-clue-photo").setInputFiles(largeSeekPhoto);
   await pageCreator.locator('img[alt="Pratinjau foto petunjuk"]').waitFor();
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-photo"]');
   const photoId = (await snapshot()).room.questions.at(-1).photoId;
   assert.ok(photoId);
   const photoUrl = `${baseUrl}/api/rulebooks/rooms/${roomCode}/photos/${photoId}`;
-  assert.equal((await ctxG2.request.get(photoUrl)).headers()["content-type"], "image/jpeg");
+  const uploadedSeekPhoto = await ctxG2.request.get(photoUrl);
+  assert.equal(uploadedSeekPhoto.headers()["content-type"], "image/jpeg");
+  assert.ok((await uploadedSeekPhoto.body()).byteLength < 2 * 1024 * 1024, "Uploaded Seek JPEG must be well under 2 MB");
   assert.equal((await fetch(photoUrl)).status, 404);
 
   // Force a live style failure and use the map's fallback to select the same checkpoint.
@@ -456,6 +481,45 @@ try {
   assert.equal(next.phase, "head_start");
   now = next.releaseAt + 24 * 60 * 60 * 1000;
   await refreshSeekRoom(pageG2);
+  // #144: Non-host paid guest sees Gabung Ruang Baru + Lihat Paket Ini + Buka ringkasan (NO Main Lagi)
+  assert.equal(await pageG2.getByTestId("postmatch-play-again").count(), 0, "Non-host paid Seek guest must not see Main Lagi");
+  await pageG2.getByTestId("postmatch-join-new-room").waitFor();
+  assert.equal(await pageG2.getByTestId("postmatch-view-pack").getAttribute("href"), "/?edition=pack-senopati-seek&version=1");
+  assert.ok(await pageG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek finished screen for paid guest (390x844)");
+
+  // Paid Host refreshes finished room -> sees Main Lagi + Buka ringkasan + Kembali ke Katalog -> taps Main Lagi -> brand-new paid Seek lobby!
+  await refreshSeekRoom(pageCreator);
+  const seekPlayAgainBtn = pageCreator.getByTestId("postmatch-play-again");
+  await seekPlayAgainBtn.waitFor();
+  const seekPlayAgainBox = await seekPlayAgainBtn.boundingBox();
+  assert.ok(seekPlayAgainBox && seekPlayAgainBox.height >= 44, "Seek Main Lagi button must meet 44px touch target");
+  await pageCreator.getByTestId("postmatch-back-catalog").waitFor();
+  assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek finished screen for Host (390x844)");
+  await seekPlayAgainBtn.click();
+  await pageCreator.waitForFunction((oldCode) => {
+    const code = new URL(location.href).searchParams.get("room");
+    return Boolean(code && code !== oldCode && document.body.textContent.includes("Ruang Tunggu"));
+  }, roomCode);
+  const seekReplayCode = new URL(pageCreator.url()).searchParams.get("room");
+  const seekReplayMeta = await (await ctxCreator.request.get(`${baseUrl}/api/rulebooks/rooms/${seekReplayCode}`)).json();
+  assert.equal(seekReplayMeta.pass.packId, "pack-senopati-seek");
+  assert.equal(seekReplayMeta.pass.version, 1);
+
+  // Non-host paid guest on 320x640 taps Gabung Ruang Baru -> enters Host's new room code -> joins new lobby cleanly
+  await pageG3.setViewportSize({ width: 320, height: 640 });
+  await refreshSeekRoom(pageG3);
+  assert.equal(await pageG3.getByTestId("postmatch-play-again").count(), 0);
+  assert.ok(await pageG3.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek finished screen for paid guest (320x640)");
+  await pageG3.getByTestId("postmatch-join-new-room").click();
+  await pageG3.getByTestId("join-room-modal").waitFor();
+  assert.ok(await pageG3.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek Gabung Ruang Baru modal (320x640)");
+  await pageG3.fill("#cat-join-code", seekReplayCode);
+  await pageG3.getByTestId("join-modal-submit").click();
+  await pageG3.waitForFunction((targetCode) => {
+    return new URL(location.href).searchParams.get("room") === targetCode && document.body.textContent.includes("Ruang Tunggu");
+  }, seekReplayCode);
+  await ctxG3.close();
+
   await pageG2.getByRole("link", { name: "Buka ringkasan" }).click();
   await pageG2.getByRole("heading", { name: "Giliran sembunyi" }).waitFor();
   assert.match(await pageG2.locator(".recap-shell").innerText(), /Giliran 1 · Ditemukan · 3 pertanyaan dijawab/);

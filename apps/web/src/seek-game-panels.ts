@@ -7,6 +7,7 @@ import type {
   SeekPublicBoard,
 } from "@kelana-ria/contracts";
 import { escapeText } from "./solo-view";
+import { renderPhotoCaptureWidget, type PreparedPhoto } from "./photo-capture";
 
 export const questionNames: Record<HideSeekQuestionFamily, string> = {
   radar: "Radar",
@@ -109,7 +110,12 @@ const objectiveChoices = {
 };
 
 export function incomingQuestion(
-  question: SeekEngineQuestion, selected: string, pois: SeekPublicBoard["pois"], photoPreview: string, extras: string, busy: boolean,
+  question: SeekEngineQuestion,
+  selected: string,
+  pois: SeekPublicBoard["pois"],
+  photoDraft: { prepared: PreparedPhoto | null; processing: boolean; uploading?: boolean } | null,
+  extras: string,
+  busy: boolean,
 ): string {
   const answer = question.privateComputedAnswer;
   const choices = question.family === "photo" ? [] : question.family === "tentacles"
@@ -123,10 +129,17 @@ export function incomingQuestion(
     </div>
     ${question.prompt && question.prompt !== question.label ? `<p>${escapeText(question.prompt)}</p>` : ""}
     <p class="sg-reward-note">${rewardLabel(question.drawBatches)}</p>
-    ${question.family === "photo" ? `<p>Foto tempat umum. Hindari orang yang dapat dikenali. JPEG, PNG, atau WebP, maks. 2 MB.</p>
-      <label class="rb-field">Ambil atau pilih foto<input id="sg-clue-photo" type="file" accept="image/jpeg,image/png,image/webp" ${busy ? "disabled" : ""}></label>
-      ${photoPreview ? `<img class="sg-clue-photo" src="${escapeText(photoPreview)}" alt="Pratinjau foto petunjuk">` : ""}
-      <button type="button" class="sg-main" data-action="answer-photo" data-qid="${escapeText(question.id)}" ${busy || !photoPreview ? "disabled" : ""}>Kirim foto</button>`
+    ${question.family === "photo" ? `${renderPhotoCaptureWidget({
+      inputId: "sg-clue-photo",
+      targetAttrName: "data-sg-photo",
+      targetId: question.id,
+      prepared: photoDraft?.prepared,
+      processing: photoDraft?.processing,
+      disabled: busy,
+      hintText: "Foto tempat umum. Hindari orang yang dapat dikenali (otomatis diperkecil < 2 MB).",
+      previewAlt: "Pratinjau foto petunjuk",
+    })}
+      <button type="button" class="sg-main" data-action="answer-photo" data-qid="${escapeText(question.id)}" ${busy || photoDraft?.processing || !photoDraft?.prepared ? "disabled" : ""}>${photoDraft?.uploading ? "Mengunggah…" : "Kirim foto"}</button>`
       : `<div class="sg-picks" role="group" aria-label="Jawaban">${choices.map(([code, label]) => `<button type="button" class="sg-pick" data-action="choose-answer" data-answer="${escapeText(code)}" aria-pressed="${selected === code}">${escapeText(label)}</button>`).join("")}</div>
         ${selected && answer ? `<p class="sg-answer-check" data-correct="${selected === answer.code}" role="status">${selected === answer.code ? "✓ Jawaban cocok dengan peta" : "✕ Jawaban belum cocok dengan peta"}</p>` : ""}
         <button type="button" class="sg-main" data-action="answer-pending" data-qid="${escapeText(question.id)}" ${busy || !answer || selected !== answer.code ? "disabled" : ""}>Kirim jawaban</button>`}

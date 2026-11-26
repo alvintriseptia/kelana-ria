@@ -38,10 +38,13 @@ import {
   copyToClipboard,
   openConfirmDialog,
   openQrModal,
+  openQuickJoinRoomDialog,
   renderCanceledRoomCard,
   renderLobbyInviteCard,
+  renderPostMatchActions,
   teamVisual,
 } from "./lobby-ui";
+import { preparePhotoFile, renderPhotoCaptureWidget, type PhotoDraftState } from "./photo-capture";
 import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
 import { escapeText } from "./solo-view";
 import "./rulebook-seek-play.css";
@@ -189,12 +192,6 @@ function clockLabel(ms: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function photoPicker(target: string): string {
-  return `<label class="rb-field"><span>Foto bukti (JPEG, PNG, WebP · maks. 2 MB)</span>
-    <input data-cg-photo="${escapeText(target)}" type="file" accept="image/jpeg,image/png,image/webp">
-  </label>`;
-}
-
 function readSessionId(key: string): string | undefined {
   try {
     return sessionStorage.getItem(key) ?? undefined;
@@ -249,6 +246,52 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let startMiniMapRoomCode = "";
   let startMiniMapReq = 0;
   let landmarkSort: "zone" | "nearest" = "zone";
+  const photoDrafts = new Map<string, PhotoDraftState>();
+  let photoDraftSeq = 0;
+  let uploadingPhotoTarget = "";
+
+  function photoPicker(target: string): string {
+    const draft = photoDrafts.get(target);
+    return renderPhotoCaptureWidget({
+      targetAttrName: "data-cg-photo",
+      targetId: target,
+      prepared: draft?.prepared,
+      processing: draft?.processing,
+      disabled: busy,
+      hintText: "Ambil foto bukti langsung di lokasi (otomatis diperkecil < 2 MB).",
+    });
+  }
+
+  function handlePhotoInput(targetId: string, file: File | undefined, isCurse: boolean) {
+    const slot: ClaimInlineSlot = isCurse ? "curse-action" : "challenge-photo";
+    if (!file) {
+      photoDrafts.delete(targetId);
+      render();
+      return;
+    }
+    const seq = ++photoDraftSeq;
+    if (inlineError?.slot === slot && inlineError.targetId === targetId) inlineError = null;
+    const promise = preparePhotoFile(file);
+    photoDrafts.set(targetId, { processing: true, prepared: null, promise, seq });
+    render();
+    void promise.then(
+      (prepared) => {
+        if (lifetime.signal.aborted) return;
+        const current = photoDrafts.get(targetId);
+        if (!current || current.seq !== seq) return;
+        photoDrafts.set(targetId, { processing: false, prepared, seq });
+        render();
+      },
+      (error) => {
+        if (lifetime.signal.aborted) return;
+        const current = photoDrafts.get(targetId);
+        if (!current || current.seq !== seq) return;
+        photoDrafts.delete(targetId);
+        reportError(error, { action: "submit-photo", target: targetId }, slot, targetId);
+        render();
+      },
+    );
+  }
 
   function updateConnectionPill() {
     const pill = root.querySelector<HTMLElement>("[data-cg-conn-pill]");
@@ -910,35 +953,36 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     const curseInstanceId = button.dataset.curse;
     const targetId = landmarkId ?? curseInstanceId ?? "";
     const slot: ClaimInlineSlot = curseInstanceId ? "curse-action" : "challenge-photo";
-    const input = Array.from(root.querySelectorAll<HTMLInputElement>("input[data-cg-photo]"))
-      .find(element => element.dataset.cgPhoto === targetId);
-    const file = input?.files?.[0];
-    if (!file) {
-      reportError("photo-required", { action: "submit-photo", target: targetId }, slot, targetId);
-      return;
+    const draft = photoDrafts.get(targetId);
+    let prepared = draft?.prepared ?? null;
+    if (!prepared && draft?.processing && draft.promise) {
+      try {
+        prepared = await draft.promise;
+      } catch (error) {
+        reportError(error, { action: "submit-photo", target: targetId }, slot, targetId);
+        return;
+      }
     }
-    if (file.size > 2 * 1024 * 1024) {
-      reportError("photo-too-large", { action: "submit-photo", target: targetId }, slot, targetId);
-      return;
+    if (!prepared) {
+      const input = Array.from(root.querySelectorAll<HTMLInputElement>("input[data-cg-photo]"))
+        .find(element => element.dataset.cgPhoto === targetId);
+      const file = input?.files?.[0];
+      if (!file) {
+        reportError("photo-required", { action: "submit-photo", target: targetId }, slot, targetId);
+        return;
+      }
+      try {
+        prepared = await preparePhotoFile(file);
+        photoDrafts.set(targetId, { processing: false, prepared, seq: ++photoDraftSeq });
+      } catch (error) {
+        reportError(error, { action: "submit-photo", target: targetId }, slot, targetId);
+        return;
+      }
     }
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      reportError("invalid-photo", { action: "submit-photo", target: targetId }, slot, targetId);
-      return;
-    }
-    let photoBase64: string;
-    try {
-      photoBase64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
-        reader.onerror = () => reject({ code: "photo-unreadable" });
-        reader.readAsDataURL(file);
-      });
-    } catch (error) {
-      reportError(error, { action: "submit-photo", target: targetId }, slot, targetId);
-      return;
-    }
-    const signature = JSON.stringify([roomCode, "submit-photo", landmarkId, curseInstanceId, file.name, file.size]);
+    const signature = JSON.stringify([roomCode, "submit-photo", landmarkId, curseInstanceId, prepared.byteLength, prepared.base64.slice(0, 32)]);
     const pending = ensurePendingAction(signature, "submit-photo", { landmarkId });
+    uploadingPhotoTarget = targetId;
+    render();
     try {
       const { ok, status, data: res } = await fetchApiJson<{ error?: string }>("/api/rulebooks/claim-photo", {
         signal: lifetime.signal,
@@ -947,13 +991,14 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           actionId: pending.id,
           landmarkId,
           curseInstanceId,
-          photoBase64,
+          photoBase64: prepared.base64,
         },
       });
       clearPendingAction();
       if (res.error || !ok) {
         reportError({ error: res.error ?? "invalid-photo", status }, { action: "submit-photo", target: targetId }, slot, targetId);
       } else {
+        photoDrafts.delete(targetId);
         inlineError = null;
         toast.clear();
         toast.resetDedupe();
@@ -963,6 +1008,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       if (lifetime.signal.aborted) return;
       const resolved = reportError(error, { action: "submit-photo", target: targetId }, slot, targetId);
       if (!resolved.uncertain) clearPendingAction();
+    } finally {
+      uploadingPhotoTarget = "";
     }
   }
 
@@ -1288,12 +1335,13 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       const autoSec = attempt.pendingPhoto
         ? Math.max(0, Math.ceil((attempt.pendingPhoto.autoApproveAt - room.now) / 1000))
         : Math.round(leaf.autoApproveMs / 1000);
+      const isUploading = uploadingPhotoTarget === attempt.landmarkId;
       return `<p>${escapeText(leaf.prompt)}</p>
         ${
           attempt.pendingPhoto
             ? `<p role="status">Foto bukti terkirim · Disetujui otomatis dalam <strong data-cg-countdown="${attempt.pendingPhoto.autoApproveAt}">${clockLabel(autoSec * 1000)}</strong>.</p>`
             : `${photoPicker(attempt.landmarkId)}${slotAlert("challenge-photo", attempt.landmarkId)}<div class="rb-actions">
-                <button type="button" class="primary" data-action="submit-photo" data-landmark="${escapeText(attempt.landmarkId)}">Unggah Foto Bukti</button>
+                <button type="button" class="primary" data-action="submit-photo" data-landmark="${escapeText(attempt.landmarkId)}">${isUploading ? "Mengunggah…" : "Unggah Foto Bukti"}</button>
               </div>`
         }`;
     }
@@ -1308,7 +1356,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           : leaf.taskType === "sub_point_gps"
             ? `${slotAlert("challenge-gps", attempt.landmarkId)}<button type="button" class="primary" data-action="submit-timed-gps" data-landmark="${escapeText(attempt.landmarkId)}" data-lat="${leaf.subPoint?.latitude ?? 0}" data-lng="${leaf.subPoint?.longitude ?? 0}">Check-in Sub-Titik (${escapeText(leaf.subPoint?.label ?? "Target")})</button>`
             : leaf.taskType === "photo_proof"
-              ? `${photoPicker(attempt.landmarkId)}${slotAlert("challenge-photo", attempt.landmarkId)}<button type="button" class="primary" data-action="submit-photo" data-landmark="${escapeText(attempt.landmarkId)}">Kirim Foto</button>`
+              ? `${photoPicker(attempt.landmarkId)}${slotAlert("challenge-photo", attempt.landmarkId)}<button type="button" class="primary" data-action="submit-photo" data-landmark="${escapeText(attempt.landmarkId)}">${uploadingPhotoTarget === attempt.landmarkId ? "Mengunggah…" : "Kirim Foto"}</button>`
               : `<label class="rb-field"><span>Jawaban Cepat</span><input id="claim-input-answer"></label>
                  ${slotAlert("challenge-input", attempt.landmarkId)}
                  <button type="button" class="primary" data-action="submit-input" data-landmark="${escapeText(attempt.landmarkId)}">Kirim Jawaban Cepat</button>`
@@ -1369,7 +1417,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
                       ${slotAlert("curse-action", c.curseInstanceId)}
                       <div class="rb-actions">
                         ${isTarget && c.clearCondition.type === "gps_detour" ? `<button type="button" class="primary" data-action="clear-curse-gps" data-curse="${escapeText(c.curseInstanceId)}">Check-in Lokasi</button>` : ""}
-                        ${isTarget && c.clearCondition.type === "photo_challenge" && !c.pendingPhoto ? `<button type="button" class="primary" data-action="submit-curse-photo" data-curse="${escapeText(c.curseInstanceId)}">Kirim Foto Bukti</button>` : ""}
+                        ${isTarget && c.clearCondition.type === "photo_challenge" && !c.pendingPhoto ? `<button type="button" class="primary" data-action="submit-curse-photo" data-curse="${escapeText(c.curseInstanceId)}">${uploadingPhotoTarget === c.curseInstanceId ? "Mengunggah…" : "Kirim Foto Bukti"}</button>` : ""}
                         ${isTarget && c.clearCondition.type === "honor_task" ? `<button type="button" class="primary" data-action="clear-curse-honor" data-curse="${escapeText(c.curseInstanceId)}">Selesaikan Tugas</button>` : ""}
                         ${isCaster && c.pendingPhoto ? `<button type="button" class="primary" data-action="review-curse-photo" data-curse="${escapeText(c.curseInstanceId)}" data-approve="true">Setujui Foto</button>` : ""}
                         ${isCaster && c.pendingPhoto ? `<button type="button" class="secondary" data-action="review-curse-photo" data-curse="${escapeText(c.curseInstanceId)}" data-approve="false">Tolak Foto</button>` : ""}
@@ -1804,8 +1852,11 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       }).join("")}</ul>`;
   }
 
-  function renderScore(room: ClaimEngineRoomView): string {
+  function renderScore(payload: ClaimRoomPayload): string {
+    const { room, pass } = payload;
     const solo = room.soloProgress;
+    const ownSeat = room.seats.find((s) => s.seatId === room.seatId);
+    const canPlayAgain = !pass.paid || Boolean(ownSeat?.isHost) || ownedPackIds.includes(pass.packId);
     return `${renderResult(room)}
       ${room.outcome && room.ownLearningExplanation ? learningExplanation(room.ownLearningExplanation.text) : ""}
       ${room.outcome ? "" : "<h2>Skor Ronde</h2>"}
@@ -1818,8 +1869,14 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       </li>`).join("")}</ul>
       <p class="cg-rank-rule">Urutan skor · Zona dikuasai › Landmark terkunci › Total landmark</p>`}
       ${renderRivalPositionsList(room)}
-      ${room.outcome && room.startedAt !== null ? `<a class="cat-link" href="/?recap=${encodeURIComponent(room.code)}">Buka ringkasan</a>` : ""}
-      ${room.outcome ? '<button type="button" class="sg-main" data-nav="catalog">Pilih Papan Lagi</button>' : ""}`;
+      ${room.outcome ? renderPostMatchActions({
+        roomCode: room.code,
+        packId: pass.packId,
+        version: pass.version,
+        started: room.startedAt !== null,
+        canPlayAgain,
+        busy,
+      }) : ""}`;
   }
 
   function learningExplanation(text: string): string {
@@ -1991,8 +2048,6 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     const checked = sheet.querySelector<HTMLInputElement>('input[name="claim-mcq"]:checked');
     const hint = sheet.querySelector<HTMLDetailsElement>("[data-claim-hint]");
     const oldDraftKey = sheet.dataset.draftKey;
-    const proofInputs = new Map(Array.from(sheet.querySelectorAll<HTMLInputElement>("input[data-cg-photo]"))
-      .map(input => [input.dataset.cgPhoto, input]));
     const draftKey = room.ownActiveAttempt ? JSON.stringify([room.ownActiveAttempt.landmarkId, room.ownActiveAttempt.challenge, room.ownActiveAttempt.currentStep]) : "";
     const restoreId = document.activeElement instanceof HTMLInputElement && sheet.contains(document.activeElement) ? document.activeElement.id : "";
     const activeBtnDataset = document.activeElement instanceof HTMLButtonElement && sheet.contains(document.activeElement)
@@ -2007,7 +2062,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     sheet.dataset.draftKey = draftKey;
     sheet.hidden = folded;
     sheet.innerHTML = `${activeScreenAlert}${renderRivalCard(room)}
-      ${panel === "activity" ? renderRoomActivity(live.activity, Date.now() + serverOffset) : panel === "cards" ? renderCards(room) : panel === "score" ? renderScore(room) : `
+      ${panel === "activity" ? renderRoomActivity(live.activity, Date.now() + serverOffset) : panel === "cards" ? renderCards(room) : panel === "score" ? renderScore(live) : `
         ${room.ownActiveAttempt
           ? renderActiveAttempt(room.ownActiveAttempt, room) + (room.ownActiveAttempt.landmarkId !== selectedId && selectedId ? renderLandmark(live) : "")
           : renderLandmark(live)}
@@ -2026,12 +2081,6 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       if (checked) {
         const radio = Array.from(sheet.querySelectorAll<HTMLInputElement>('input[name="claim-mcq"]')).find(input => input.value === checked.value);
         if (radio) radio.checked = true;
-      }
-    }
-    for (const input of sheet.querySelectorAll<HTMLInputElement>("input[data-cg-photo]")) {
-      const original = proofInputs.get(input.dataset.cgPhoto);
-      if (original?.files?.length && (draftKey === oldDraftKey || input.dataset.cgPhoto !== room.ownActiveAttempt?.landmarkId)) {
-        input.replaceWith(original);
       }
     }
     sheet.scrollTop = previousScroll;
@@ -2094,6 +2143,12 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   }, { signal: lifetime.signal });
 
   root.addEventListener("change", event => {
+    if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-cg-photo")) {
+      const targetId = event.target.dataset.cgPhoto ?? "";
+      const isCurse = Boolean(live?.room.activeCurses.some((c) => c.curseInstanceId === targetId));
+      handlePhotoInput(targetId, event.target.files?.[0], isCurse);
+      return;
+    }
     if (event.target instanceof HTMLSelectElement && event.target.hasAttribute("data-claim-hand")) {
       challengeHandId = event.target.value;
       return;
@@ -2117,6 +2172,86 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         });
     }
   }, { signal: lifetime.signal });
+
+  async function switchToClaimRoom(nextCode: string, nextStatus = "") {
+    roomCode = nextCode;
+    joinCode = nextCode;
+    live = null;
+    cachedBoard = null;
+    roomEtag = null;
+    selectedId = selectedCardId = selectedRivalId = selectedRivalPinSeatId = challengeHandId = "";
+    photoDrafts.clear();
+    uploadingPhotoTarget = "";
+    startMapExpanded = false;
+    destroyClaimMap();
+    destroyStartMiniMap();
+    panel = "challenge";
+    mapFailed = false;
+    folded = false;
+    statusMsg = nextStatus;
+    inlineError = null;
+    pendingAction = null;
+    toast.clear();
+    syncRoomUrl(nextCode);
+    await refreshRoom();
+  }
+
+  async function executePlayAgain() {
+    if (!live || busy) return;
+    const { room, pass } = live;
+    const ownSeat = room.seats.find((s) => s.seatId === room.seatId);
+    const replayMode: RulebookPlayMode = pass.mode ?? (room.isSolo ? "solo" : "group");
+    const isOwnedPaid = pass.paid;
+    const hostName = resolveDefaultPlayerName(getCachedAuth()?.user?.displayName, ownSeat?.name ?? "Pemain");
+    const requestType = isOwnedPaid ? "create-owned-room" : "create-free-room";
+    const pending = ensurePendingAction(
+      `play-again:${room.code}:${pass.packId}:${pass.version}:${replayMode}`,
+      requestType,
+    );
+    busy = true;
+    root.setAttribute("aria-busy", "true");
+    inlineError = null;
+    render();
+    try {
+      const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; roomCode?: string; error?: string }>(
+        "/api/rulebooks",
+        {
+          signal: lifetime.signal,
+          body: {
+            type: requestType,
+            packId: pass.packId,
+            version: pass.version,
+            mode: replayMode,
+            hostName,
+            requestId: pending.id,
+          },
+        },
+      );
+      clearPendingAction();
+      if (lifetime.signal.aborted) return;
+      if (ok && res.ok && res.roomCode) {
+        await switchToClaimRoom(res.roomCode, `Ruang baru ${res.roomCode} siap dimainkan.`);
+        return;
+      }
+      reportError(
+        { error: res.error ?? "invalid-request", status },
+        { surface: "claim", action: requestType, target: pass.packId },
+        "lobby",
+      );
+    } catch (error) {
+      if (!lifetime.signal.aborted) {
+        const resolved = reportError(error, { surface: "claim", action: requestType, target: pass.packId }, "lobby");
+        if (!resolved.uncertain) clearPendingAction();
+      }
+    } finally {
+      busy = false;
+      if (!lifetime.signal.aborted) {
+        root.removeAttribute("aria-busy");
+        render();
+        if (!pendingAction) roomEvents.sync();
+      }
+    }
+  }
 
   async function executeConfirmedLeave(toastText: string) {
     if (!live || busy) return;
@@ -2154,6 +2289,13 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   root.addEventListener("click", (event) => {
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
     if (!btn || busy) return;
+    const clearPhotoTarget = btn.dataset.photoClear;
+    if (clearPhotoTarget !== undefined) {
+      photoDrafts.delete(clearPhotoTarget);
+      if (inlineError?.targetId === clearPhotoTarget) inlineError = null;
+      render();
+      return;
+    }
     const locAction = btn.dataset.locAction;
     if (locAction === "enable-live-location") {
       liveLocation.start();
@@ -2225,6 +2367,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       roomCode = "";
       joinCode = "";
       selectedId = selectedCardId = selectedRivalId = selectedRivalPinSeatId = challengeHandId = "";
+      photoDrafts.clear();
+      uploadingPhotoTarget = "";
       startMapExpanded = false;
       destroyStartMiniMap();
       stopPresenceWatch();
@@ -2246,6 +2390,31 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
     const action = btn.dataset.action;
     if (!action) return;
+    if (action === "play-again" && live) {
+      void executePlayAgain();
+      return;
+    }
+    if (action === "join-new-room") {
+      const auth = getCachedAuth();
+      openQuickJoinRoomDialog({
+        authenticatedDisplayName: auth?.user?.displayName,
+        authenticated: auth?.authenticated,
+        onJoined: (format, nextCode) => {
+          if (format === "claim-the-city") {
+            void switchToClaimRoom(nextCode);
+          } else {
+            const url = new URL(location.href);
+            url.searchParams.set("play", "rulebook-seek");
+            url.searchParams.set("room", nextCode);
+            url.searchParams.delete("pack");
+            url.searchParams.delete("launch");
+            history.pushState({ fromChooser: true }, "", url);
+            window.dispatchEvent(new PopStateEvent("popstate"));
+          }
+        },
+      });
+      return;
+    }
     if (action === "sort-landmarks") {
       const nextSort = btn.dataset.sort === "nearest" ? "nearest" : "zone";
       landmarkSort = nextSort;

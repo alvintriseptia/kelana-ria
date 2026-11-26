@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { openEdition } from "./catalog.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
+import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
 import { openReview, reviewerKey, signInQaContext, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -129,10 +130,38 @@ try {
   }
   await pageSolo.getByRole("button", { name: "Tantangan", exact: true }).click();
 
-  // Lock taman-ayodya via photo_proof (2nd zone!)
+  // Lock taman-ayodya via photo_proof (2nd zone!) — verify #144 rear-camera capture, corrupt rejection, >2MB auto-compression & preview
   await checkIn(pageSolo, "taman-ayodya");
   await pageSolo.waitForSelector('button[data-action="submit-photo"]');
-  await pageSolo.locator("input[data-cg-photo]").setInputFiles(proof);
+  const claimPhotoInput = pageSolo.locator("input[data-cg-photo]");
+  assert.equal(await claimPhotoInput.getAttribute("capture"), "environment", "Claim photo input must default to rear camera");
+  assert.equal(await claimPhotoInput.getAttribute("accept"), "image/*");
+  const captureBtnBox = await pageSolo.getByTestId("photo-capture-btn").boundingBox();
+  assert.ok(captureBtnBox && captureBtnBox.height >= 44, "Ambil Foto button must meet 44px touch target");
+
+  // Corrupt non-image upload shows clean Indonesian inline error without crashing
+  await claimPhotoInput.setInputFiles(buildCorruptPhotoFile());
+  await pageSolo.getByRole("alert").filter({ hasText: /foto|format|JPEG/i }).waitFor();
+  assert.equal(await pageSolo.getByTestId("photo-preview-img").count(), 0, "Corrupt file must not render preview");
+
+  // Large > 2 MB (4.1 MB, 1600x640) image is automatically downscaled to <=1280px JPEG < 2 MB client-side
+  const largeClaimPhoto = buildLargeTestPhotoFile(1600, 640);
+  assert.ok(largeClaimPhoto.buffer.byteLength > 2 * 1024 * 1024, "Test fixture must exceed 2 MB raw cap");
+  await claimPhotoInput.setInputFiles(largeClaimPhoto);
+  await pageSolo.getByTestId("photo-preview-img").waitFor();
+  const claimPreviewWidth = await pageSolo.getByTestId("photo-preview-img").evaluate((img) => img.naturalWidth);
+  assert.equal(claimPreviewWidth, 1280, "Large 1600px image must be downscaled to 1280px longest edge");
+  const claimBadgeText = await pageSolo.getByTestId("photo-size-badge").innerText();
+  assert.match(claimBadgeText, /Siap unggah · \d+ KB/);
+  await pageSolo.getByTestId("photo-retake-btn").waitFor();
+  await pageSolo.getByTestId("photo-clear-btn").waitFor();
+  assert.ok(await pageSolo.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero horizontal overflow on Claim photo preview (390x844)");
+
+  // Hapus clears the preview; re-attaching large photo uploads cleanly to /api/rulebooks/claim-photo
+  await pageSolo.getByTestId("photo-clear-btn").click();
+  assert.equal(await pageSolo.getByTestId("photo-preview-img").count(), 0, "Hapus must clear photo preview");
+  await pageSolo.locator("input[data-cg-photo]").setInputFiles(largeClaimPhoto);
+  await pageSolo.getByTestId("photo-preview-img").waitFor();
   await clickAndWaitPost(pageSolo, 'button[data-action="submit-photo"]');
   await pageSolo.waitForFunction(() => document.body.textContent.includes("2/4 terkunci"));
 
@@ -729,6 +758,9 @@ try {
     await phonePage.getByText("Pass Berbayar").waitFor();
     const restoredRoomCode = new URL(phonePage.url()).searchParams.get("room");
     assert.ok(restoredRoomCode && restoredRoomCode.startsWith("RC-"), "Signed-in second device must launch paid room cleanly");
+    await newPhone.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "room-action", roomCode: restoredRoomCode, action: { type: "leave", actionId: "leave-restored-room" } },
+    });
   } finally {
     await newPhone.close();
   }
@@ -1160,7 +1192,119 @@ try {
     await navNarrowCtx.close();
   }
 
-  console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Live Presence + Unified Studio + One-Time Pack Ownership + Lobby Teams/QR/Leave + Self-Location/Distance/Directions)");
+  // #144: Post-match Main Lagi (free Solo & paid Group Host) + non-host paid-guest Gabung Ruang Baru & Lihat Paket Ini
+  now += 61_000;
+  const pmHostCtx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const pmGuestCtx = await browser.newContext({ viewport: { width: 320, height: 640 } });
+  const pmHost = await pmHostCtx.newPage();
+  const pmGuest = await pmGuestCtx.newPage();
+  try {
+    // 1) Free Solo match finishes -> Main Lagi creates a fresh Solo lobby for the exact same pack/version/mode
+    const freeCreated = await (await pmHostCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "create-free-room", packId: "official-jakarta-compact-claim", version: 1, mode: "solo", hostName: "SoloReplay" },
+    })).json();
+    const freeCode = freeCreated.roomCode;
+    const freeMeta = await (await pmHostCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${freeCode}`)).json();
+    const freeSp = freeMeta.publicBoard.startPoint;
+    await pmHostCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "room-action", roomCode: freeCode, action: { type: "check-in-start", actionId: "pm-free-ci", fix: { latitude: freeSp.latitude, longitude: freeSp.longitude, accuracy: 10, timestamp: freeMeta.room.now } } },
+    });
+    await pmHostCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "room-action", roomCode: freeCode, action: { type: "ready", actionId: "pm-free-rdy", ready: true } },
+    });
+    await pmHostCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "room-action", roomCode: freeCode, action: { type: "start", actionId: "pm-free-start" } },
+    });
+    now += 3 * 60 * 60 * 1000;
+    await pmHost.goto(`${baseUrl}/?play=rulebook-claim&room=${freeCode}`, { waitUntil: "networkidle" });
+    await pmHost.getByTestId("claim-outcome").waitFor();
+    const soloPlayAgainBtn = pmHost.getByTestId("postmatch-play-again");
+    await soloPlayAgainBtn.waitFor();
+    const soloBtnBox = await soloPlayAgainBtn.boundingBox();
+    assert.ok(soloBtnBox && soloBtnBox.height >= 44, "Main Lagi button must meet 44px touch target");
+    assert.ok(await pmHost.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Claim finished screen (390x844)");
+    await soloPlayAgainBtn.click();
+    await pmHost.waitForFunction((oldCode) => {
+      const code = new URL(location.href).searchParams.get("room");
+      return Boolean(code && code !== oldCode && document.body.textContent.includes("Ruang Tunggu"));
+    }, freeCode);
+    const freeReplayCode = new URL(pmHost.url()).searchParams.get("room");
+    const freeReplayMeta = await (await pmHostCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${freeReplayCode}`)).json();
+    assert.equal(freeReplayMeta.pass.packId, "official-jakarta-compact-claim");
+    assert.equal(freeReplayMeta.pass.version, 1);
+    assert.equal(freeReplayMeta.pass.mode, "solo");
+
+    // 2) Paid Group match finishes -> Host taps Main Lagi; non-host Guest sees Gabung Ruang Baru + Lihat Paket Ini (NO Main Lagi) and joins Host's new room
+    now += 61_000;
+    await signInQaContext(pmHostCtx, baseUrl, "buyer-v1@kelana.test", "Pembeli 1");
+    const paidCreated = await (await pmHostCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "create-owned-room", packId: "pack-senopati-claim", version: 1, mode: "group", hostName: "Pembeli 1" },
+    })).json();
+    assert.equal(paidCreated.ok, true, `Expected paid group room creation to succeed: ${JSON.stringify(paidCreated)}`);
+    const paidCode = paidCreated.roomCode;
+    await pmGuestCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "join-room", roomCode: paidCode, name: "Tamu Berbayar" },
+    });
+    const paidMeta = await (await pmHostCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${paidCode}`)).json();
+    const paidSp = paidMeta.publicBoard.startPoint;
+    for (const [idx, ctx] of [pmHostCtx, pmGuestCtx].entries()) {
+      await ctx.request.post(`${baseUrl}/api/rulebooks`, {
+        data: { type: "room-action", roomCode: paidCode, action: { type: "check-in-start", actionId: `pm-paid-ci-${idx}`, fix: { latitude: paidSp.latitude, longitude: paidSp.longitude, accuracy: 10, timestamp: paidMeta.room.now } } },
+      });
+      await ctx.request.post(`${baseUrl}/api/rulebooks`, {
+        data: { type: "room-action", roomCode: paidCode, action: { type: "ready", actionId: `pm-paid-rdy-${idx}`, ready: true } },
+      });
+    }
+    await pmHostCtx.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "room-action", roomCode: paidCode, action: { type: "start", actionId: "pm-paid-start" } },
+    });
+    now += 3 * 60 * 60 * 1000;
+
+    await pmHost.goto(`${baseUrl}/?play=rulebook-claim&room=${paidCode}`, { waitUntil: "networkidle" });
+    await pmGuest.goto(`${baseUrl}/?play=rulebook-claim&room=${paidCode}`, { waitUntil: "networkidle" });
+    await pmHost.getByTestId("claim-outcome").waitFor();
+    await pmGuest.getByTestId("claim-outcome").waitFor();
+
+    // Paid non-host guest must NOT see Main Lagi; sees Gabung Ruang Baru + Lihat Paket Ini + Buka ringkasan with zero 320x640 overflow
+    assert.equal(await pmGuest.getByTestId("postmatch-play-again").count(), 0, "Non-host paid guest must not see Main Lagi");
+    const guestJoinNewBtn = pmGuest.getByTestId("postmatch-join-new-room");
+    const guestViewPackLink = pmGuest.getByTestId("postmatch-view-pack");
+    await guestJoinNewBtn.waitFor();
+    await guestViewPackLink.waitFor();
+    const guestJoinBox = await guestJoinNewBtn.boundingBox();
+    assert.ok(guestJoinBox && guestJoinBox.height >= 44, "Gabung Ruang Baru CTA must meet 44px touch target");
+    assert.equal(await guestViewPackLink.getAttribute("href"), "/?edition=pack-senopati-claim&version=1");
+    assert.ok(await pmGuest.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on paid guest Claim finished screen (320x640)");
+
+    // Host taps Main Lagi -> opens brand-new paid Group lobby for pack-senopati-claim v1
+    await pmHost.getByTestId("postmatch-play-again").click();
+    await pmHost.waitForFunction((oldCode) => {
+      const code = new URL(location.href).searchParams.get("room");
+      return Boolean(code && code !== oldCode && document.body.textContent.includes("Ruang Tunggu"));
+    }, paidCode);
+    const paidReplayCode = new URL(pmHost.url()).searchParams.get("room");
+    const paidReplayMeta = await (await pmHostCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${paidReplayCode}`)).json();
+    assert.equal(paidReplayMeta.pass.packId, "pack-senopati-claim");
+    assert.equal(paidReplayMeta.pass.version, 1);
+    assert.equal(paidReplayMeta.pass.mode, "group");
+
+    // Non-host guest taps Gabung Ruang Baru -> enters Host's brand-new room code -> lands directly in Host's new lobby
+    await guestJoinNewBtn.click();
+    const qjDialog = pmGuest.getByTestId("join-room-modal");
+    await qjDialog.waitFor();
+    assert.ok(await pmGuest.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Gabung Ruang Baru modal (320x640)");
+    await pmGuest.fill("#cat-join-code", paidReplayCode);
+    await pmGuest.getByTestId("join-modal-submit").click();
+    await pmGuest.waitForFunction((targetCode) => {
+      return new URL(location.href).searchParams.get("room") === targetCode && document.body.textContent.includes("Ruang Tunggu");
+    }, paidReplayCode);
+    assert.ok(await pmGuest.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow after guest joins Host's new Claim lobby (320x640)");
+  } finally {
+    await pmHostCtx.close();
+    await pmGuestCtx.close();
+  }
+
+  console.log("qa:rulebook-claim passed (Solo + 3-player Claim-Lock-Steal + Live Presence + Unified Studio + One-Time Pack Ownership + Lobby Teams/QR/Leave + Self-Location/Distance/Directions + Photo Compression/Post-Match Main Lagi)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));
