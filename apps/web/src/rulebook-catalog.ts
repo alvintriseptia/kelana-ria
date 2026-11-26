@@ -24,19 +24,21 @@ import {
   renderAccountChip,
 } from "./auth-modal";
 import { escapeText } from "./escape-text";
-import {
-  readRememberedGuestName,
-  resolveDefaultPlayerName,
-  saveRememberedGuestName,
-} from "./guest-name";
+import { readRememberedGuestName } from "./guest-name";
+import { openJoinRoomModal } from "./join-room-modal";
 import { fetchApiJson, resolvePlayerError, type PlayerErrorTone } from "./player-errors";
 import { createPlayerToast, renderInlineAlert } from "./player-toast";
+import { mountPwaInstallPrompt } from "./pwa-install";
 import jakartaCover from "./assets/jakarta.webp";
 import "./rulebook-catalog.css";
 
 const endpoint = "/api/rulebooks/catalog";
 const cacheKey = "kelana-rulebook-catalog";
 const formatNames = { "claim-the-city": "Claim the City", "hide-and-seek": "Hide & Seek" } as const;
+const formatSubtitles: Record<RulebookFormat, string> = {
+  "claim-the-city": "Rebut & kunci landmark nyata untuk kuasai zona kota.",
+  "hide-and-seek": "Sembunyi di stasiun transit; pencari melacak lewat radar & petunjuk.",
+};
 const resumePhaseLabels: Record<ActiveRulebookRoomPhase, string> = {
   lobby: "Ruang Tunggu",
   active: "Ronde Aktif",
@@ -143,7 +145,7 @@ function store(key: string, value: unknown) {
 }
 
 function detailHref(item: Edition) {
-  return `/?${new URLSearchParams({ edition: item.packId, version: String(item.version) })}`;
+  return `/catalog?${new URLSearchParams({ edition: item.packId, version: String(item.version) })}`;
 }
 
 function price(item: Edition) {
@@ -366,8 +368,13 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     return `${action("practice", "Coba Panduan")}${payment(item)}`;
   }
 
+  let pwaSlotController: AbortController | null = null;
+  let scrolledHash = false;
+
   function render() {
     if (signal.aborted) return;
+    pwaSlotController?.abort();
+    pwaSlotController = null;
     const item = selected();
     if (item?.format === "hide-and-seek" || (item && item.minPlayers > 1)) mode = "group";
     if (item?.maxPlayers === 1) mode = "solo";
@@ -380,7 +387,7 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       ? renderInlineAlert(inlineError.message, inlineError.tone)
       : "";
     if (pack) {
-      const back = '<a class="cat-back" href="/" data-catalog-link>‹ Katalog</a>';
+      const back = '<a class="cat-back" href="/catalog" data-catalog-link>‹ Katalog</a>';
       document.title = item ? `${item.title} · Kelana Ria` : "Edisi · Kelana Ria";
       root.innerHTML = item ? `<article class="cat-detail" aria-label="Detail edisi">
         <div class="catalog-top">${back}${renderAccountChip(authState)}</div>
@@ -418,15 +425,33 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
       ${renderAccountChip(authState)}
       <button type="button" id="chooser-studio" class="secondary" data-cat-action="studio">Studio Kreator</button></div></div>
       ${activeRoom ? renderResumeBanner(activeRoom) : ""}
+      <div class="pwa-install-slot" data-pwa-install-slot hidden></div>
       ${offline}
       ${editions ? (Object.keys(formatNames) as RulebookFormat[]).map(format => {
         const cards = editions.filter(edition => edition.format === format);
         return cards.length ? `<section class="catalog-group" aria-labelledby="catalog-${format}">
-          <h2 id="catalog-${format}"><span aria-hidden="true" class="cat-mark ${format}">${format === "claim-the-city" ? "◆" : "◎"}</span>${escapeText(formatNames[format])}</h2>
+          <div class="catalog-group-head">
+            <h2 id="catalog-${format}"><span aria-hidden="true" class="cat-mark ${format}">${format === "claim-the-city" ? "◆" : "◎"}</span>${escapeText(formatNames[format])}</h2>
+            <p class="catalog-group-sub" data-testid="catalog-subtitle-${format}">${escapeText(formatSubtitles[format])}</p>
+          </div>
           <div class="catalog-grid">${cards.map(edition => catalogCard(edition, isOwned(edition.packId))).join("")}</div>
         </section>` : "";
       }).join("") + (editions.length ? "" : '<p role="status">Belum ada edisi yang bisa dimainkan.</p>')
         : loading ? '<p class="catalog-loading" role="status">Memuat katalog…</p>' : ""}`;
+    const pwaSlot = root.querySelector<HTMLElement>("[data-pwa-install-slot]");
+    if (pwaSlot) {
+      pwaSlotController = new AbortController();
+      mountPwaInstallPrompt(pwaSlot, pwaSlotController.signal);
+    }
+    if (editions && location.hash && !scrolledHash) {
+      const targetId = location.hash.slice(1);
+      const anchor = targetId ? document.getElementById(targetId) : null;
+      if (anchor) {
+        scrolledHash = true;
+        const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        anchor.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+      }
+    }
     focusTitle();
   }
 
@@ -513,141 +538,12 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     });
   }
 
-  function openJoinRoomModal() {
-    const modalAbort = new AbortController();
-    const onParentAbort = () => modalAbort.abort();
-    signal.addEventListener("abort", onParentAbort, { once: true });
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const backdrop = document.createElement("div");
-    backdrop.className = "cat-modal-backdrop";
-    backdrop.dataset.testid = "join-room-modal";
-
-    let codeDraft = "";
-    let nameDraft = resolveDefaultPlayerName(authState?.user?.displayName, "");
-    let joining = false;
-    let modalError: { message: string; tone: PlayerErrorTone } | null = null;
-
-    function close(restoreFocus = true) {
-      if (modalAbort.signal.aborted) return;
-      signal.removeEventListener("abort", onParentAbort);
-      modalAbort.abort();
-      backdrop.remove();
-      if (restoreFocus && previousFocus?.isConnected) {
-        previousFocus.focus({ preventScroll: true });
-      }
-    }
-
-    function renderModal() {
-      if (modalAbort.signal.aborted) return;
-      backdrop.innerHTML = `<section class="cat-modal" role="dialog" aria-modal="true" aria-labelledby="cat-join-title">
-        <div class="cat-modal-head">
-          <h2 id="cat-join-title">Gabung Ruang</h2>
-          <button type="button" class="secondary cat-modal-close" data-join-btn="close" aria-label="Tutup dialog gabung ruang" ${joining ? "disabled" : ""}>×</button>
-        </div>
-        <p class="cat-modal-note">Masukkan kode undangan Claim the City (RC-…) atau Hide &amp; Seek (RB-…) dari Host.</p>
-        ${modalError ? renderInlineAlert(modalError.message, modalError.tone, 'data-testid="join-modal-alert"') : ""}
-        <form class="cat-modal-form" data-join-form>
-          <label class="cat-modal-field">
-            <span>Kode Ruang</span>
-            <input id="cat-join-code" class="cat-modal-code-input" name="roomCode" type="text" autocomplete="off" placeholder="RC-XXXXXX atau RB-XXXXXX" value="${escapeText(codeDraft)}" required ${joining ? "disabled" : ""}>
-          </label>
-          <label class="cat-modal-field">
-            <span>Nama Pemain</span>
-            <input id="cat-join-name" name="name" type="text" maxlength="32" placeholder="Mis. Dina" value="${escapeText(nameDraft)}" ${joining ? "disabled" : ""}>
-          </label>
-          <div class="cat-modal-actions">
-            <button type="button" class="secondary" data-join-btn="close" ${joining ? "disabled" : ""}>Batal</button>
-            <button type="submit" class="primary" data-testid="join-modal-submit" ${joining ? "disabled" : ""}>${joining ? "Masuk…" : "Gabung Ruang"}</button>
-          </div>
-        </form>
-      </section>`;
-    }
-
-    async function submitJoin() {
-      const normalizedCode = codeDraft.trim().replace(/\s+/g, "").toUpperCase();
-      codeDraft = normalizedCode;
-      if (!normalizedCode) {
-        const resolved = resolvePlayerError("join-code-required", { surface: "lobby", action: "join-room" });
-        modalError = { message: resolved.message, tone: resolved.tone };
-        renderModal();
-        backdrop.querySelector<HTMLInputElement>("#cat-join-code")?.focus({ preventScroll: true });
-        return;
-      }
-      const chosenName = nameDraft.trim() || resolveDefaultPlayerName(authState?.user?.displayName, "Pemain");
-      joining = true;
-      modalError = null;
-      renderModal();
-      try {
-        const { ok, status, data } = await fetchApiJson<{
-          ok?: boolean;
-          format?: RulebookFormat;
-          roomCode?: string;
-          error?: string;
-        }>("/api/rulebooks", {
-          signal: modalAbort.signal,
-          body: { type: "join-room", roomCode: normalizedCode, name: chosenName },
-        });
-        if (modalAbort.signal.aborted) return;
-        if (!ok || !data.ok || !data.format) {
-          const resolved = resolvePlayerError(
-            { error: data.error ?? "room-not-found", status },
-            { surface: "lobby", action: "join-room", target: normalizedCode },
-          );
-          modalError = { message: resolved.message, tone: resolved.tone };
-          return;
-        }
-        if (!authState?.authenticated) saveRememberedGuestName(chosenName);
-        const targetCode = data.roomCode ?? normalizedCode;
-        close(false);
-        options.openRoom(data.format, targetCode);
-      } catch (error) {
-        if (!modalAbort.signal.aborted) {
-          const resolved = resolvePlayerError(error, { surface: "lobby", action: "join-room", target: normalizedCode });
-          modalError = { message: resolved.message, tone: resolved.tone };
-        }
-      } finally {
-        if (!modalAbort.signal.aborted) {
-          joining = false;
-          renderModal();
-          backdrop.querySelector<HTMLInputElement>("#cat-join-code")?.focus({ preventScroll: true });
-        }
-      }
-    }
-
-    backdrop.addEventListener("input", (event) => {
-      const target = event.target;
-      if (!(target instanceof HTMLInputElement)) return;
-      if (target.id === "cat-join-code") {
-        const cleaned = target.value.replace(/\s+/g, "").toUpperCase();
-        codeDraft = cleaned;
-        if (target.value !== cleaned) target.value = cleaned;
-      } else if (target.id === "cat-join-name") {
-        nameDraft = target.value;
-      }
-    }, { signal: modalAbort.signal });
-
-    backdrop.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (!joining) void submitJoin();
-    }, { signal: modalAbort.signal });
-
-    backdrop.addEventListener("click", (event) => {
-      const target = event.target;
-      if (target === backdrop && !joining) return close(true);
-      if (!(target instanceof Element)) return;
-      if (target.closest('[data-join-btn="close"]') && !joining) close(true);
-    }, { signal: modalAbort.signal });
-
-    document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape" && !joining) {
-        event.preventDefault();
-        close(true);
-      }
-    }, { signal: modalAbort.signal });
-
-    renderModal();
-    document.body.appendChild(backdrop);
-    backdrop.querySelector<HTMLInputElement>("#cat-join-code")?.focus({ preventScroll: true });
+  function openCatalogJoinModal() {
+    openJoinRoomModal({
+      signal,
+      authState,
+      onJoined: options.openRoom,
+    });
   }
 
   async function submit(type: string, item: Edition) {
@@ -757,7 +653,7 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
     const control = target.closest<HTMLButtonElement>("[data-cat-action]");
     const type = control?.dataset.catAction;
     if (type === "open-join-modal") {
-      openJoinRoomModal();
+      openCatalogJoinModal();
       return;
     }
     if (type === "studio") {
@@ -824,5 +720,8 @@ export function mountRulebookCatalog(root: HTMLElement, options: Options, focusH
   }, { signal });
   render();
   void load();
-  return () => lifetime.abort();
+  return () => {
+    pwaSlotController?.abort();
+    lifetime.abort();
+  };
 }

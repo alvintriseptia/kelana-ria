@@ -20,7 +20,13 @@ const MIME_TYPES: Record<string, string> = {
 
 function cacheControlFor(pathname: string): string {
   if (pathname.startsWith("/assets/")) return "public, max-age=31536000, immutable";
-  if (pathname === "/" || pathname === "/index.html" || pathname === "/sw.js" || pathname === "/manifest.webmanifest") {
+  if (
+    pathname === "/" ||
+    pathname === "/catalog" ||
+    pathname === "/index.html" ||
+    pathname === "/sw.js" ||
+    pathname === "/manifest.webmanifest"
+  ) {
     return "no-cache";
   }
   return "public, max-age=3600";
@@ -45,7 +51,7 @@ export function staticHandler(staticDir: string) {
     }
     if (decodedPath.includes("\0") || decodedPath.includes("\\")) return false;
 
-    const relativePath = decodedPath === "/" ? "/index.html" : decodedPath;
+    const relativePath = decodedPath === "/" || decodedPath === "/catalog" ? "/index.html" : decodedPath;
     if (relativePath.split("/").some((segment) => segment === "..")) return false;
 
     const candidate = resolve(rootDir, `.${relativePath}`);

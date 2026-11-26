@@ -258,7 +258,7 @@ export function renderPostMatchActions(opts: {
   const recapLink = opts.started
     ? `<a class="cat-link" href="/?recap=${encodeURIComponent(opts.roomCode)}" data-testid="postmatch-recap-link">Buka ringkasan</a>`
     : "";
-  const packHref = `/?edition=${encodeURIComponent(opts.packId)}&version=${encodeURIComponent(String(opts.version))}`;
+  const packHref = `/catalog?edition=${encodeURIComponent(opts.packId)}&version=${encodeURIComponent(String(opts.version))}`;
 
   if (opts.canPlayAgain) {
     return `<div class="postmatch-actions" data-testid="postmatch-actions">

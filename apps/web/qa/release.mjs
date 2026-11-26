@@ -7,7 +7,7 @@ import { chromium } from "playwright";
 import { preview } from "vite";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { phoneOptions } from "./profile.mjs";
-import { openEdition } from "./catalog.mjs";
+import { catalogUrl, openEdition } from "./catalog.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const results = join(root, "qa-results");
@@ -62,7 +62,7 @@ try {
   }
 
   async function launchFromRoot(page, { players, format, board }) {
-    await page.goto(origin, { waitUntil: "networkidle" });
+    await page.goto(catalogUrl(origin), { waitUntil: "networkidle" });
     await page.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
     await openEdition(page, format, board);
     if (format === "claim-the-city" && players === 2) {

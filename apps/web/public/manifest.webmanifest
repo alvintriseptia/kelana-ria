@@ -5,7 +5,7 @@
   "lang": "id",
   "description": "Permainan jelajah kota Jakarta.",
   "scope": "/",
-  "start_url": "/",
+  "start_url": "/catalog",
   "display": "standalone",
   "background_color": "#f7f6ed",
   "theme_color": "#f7f6ed",

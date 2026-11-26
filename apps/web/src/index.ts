@@ -1,7 +1,11 @@
 import copy from "./locales/id.json" with { type: "json" };
+import { mountLandingPage } from "./landing-page";
+import { initPwaInstallCapture } from "./pwa-install";
 import { mountRulebookCatalog } from "./rulebook-catalog";
 
 export type { GameConfiguration } from "@kelana-ria/contracts";
+
+initPwaInstallCapture();
 
 const guide = document.querySelector<HTMLDialogElement>("#guide")!;
 const setup = document.getElementById("setup")!;
@@ -11,21 +15,31 @@ let navigation = 0;
 let routeEvents = new AbortController();
 const practice = document.querySelector<HTMLDialogElement>("#edition-practice")!;
 
-function navigateCatalog(href: string) {
+function navigateRoute(href: string) {
   history.pushState(null, "", href);
   void showRoute(true);
 }
 
 function returnToSetup() {
-  if (history.state?.fromChooser) {
-    history.back();
-    return;
-  }
-  history.replaceState(null, "", "/");
+  history.replaceState(null, "", "/catalog");
   void showRoute(true);
 }
 
-async function showRoute(focusCatalog = false) {
+function openRoom(format: "claim-the-city" | "hide-and-seek", code: string) {
+  const query = new URLSearchParams({
+    play: format === "hide-and-seek" ? "rulebook-seek" : "rulebook-claim",
+    room: code,
+  });
+  history.pushState({ fromCatalog: true }, "", `/?${query}`);
+  void showRoute();
+}
+
+function openStudio() {
+  history.pushState({ fromChooser: true }, "", "/?play=rulebook-studio");
+  void showRoute();
+}
+
+async function showRoute(focusHeading = false) {
   const currentNavigation = ++navigation;
   routeEvents.abort();
   routeEvents = new AbortController();
@@ -43,7 +57,9 @@ async function showRoute(focusCatalog = false) {
       const { mountRulebookRecap } = await import("./rulebook-recap");
       if (currentNavigation === navigation) mountRulebookRecap(play, params.get("recap"), routeEvents.signal, sharedId);
     } catch {
-      if (currentNavigation === navigation) play.innerHTML = '<p role="alert">Ringkasan belum bisa dibuka. Muat ulang untuk mencoba lagi.</p><a href="/">Kembali ke katalog</a>';
+      if (currentNavigation === navigation) {
+        play.innerHTML = '<p role="alert">Ringkasan belum bisa dibuka. Muat ulang untuk mencoba lagi.</p><a href="/catalog">Kembali ke katalog</a>';
+      }
     }
     return;
   }
@@ -58,6 +74,7 @@ async function showRoute(focusCatalog = false) {
   if (unsupportedSeek) {
     params.delete("play");
     params.delete("room");
+    url.pathname = "/catalog";
     history.replaceState(null, "", url);
   } else if (requestedSeek) {
     params.set("players", "2");
@@ -81,31 +98,37 @@ async function showRoute(focusCatalog = false) {
   if (!playing && params.has("play")) {
     params.delete("play");
     params.delete("room");
+    url.pathname = "/catalog";
     history.replaceState(history.state, "", url);
   }
   setup.hidden = playing;
   play.hidden = !playing;
   if (!playing) {
     play.replaceChildren();
-    unmountPlay = mountRulebookCatalog(setup, {
-      navigate: navigateCatalog,
-      openRoom: (format, code) => {
-        const query = new URLSearchParams({
-          play: format === "hide-and-seek" ? "rulebook-seek" : "rulebook-claim",
-          room: code,
-        });
-        history.pushState({ fromCatalog: true }, "", `/?${query}`);
-        void showRoute();
-      },
-      async openPractice(edition, mode) {
-        const { mountEditionPractice } = await import("./edition-practice");
-        if (currentNavigation === navigation && !practice.open) mountEditionPractice(practice, edition, mode);
-      },
-      openStudio: () => {
-        history.pushState({ fromChooser: true }, "", "/?play=rulebook-studio");
-        void showRoute();
-      },
-    }, focusCatalog);
+    const isCatalogPath =
+      url.pathname === "/catalog" ||
+      url.pathname === "/catalog/" ||
+      params.has("edition");
+    if (isCatalogPath) {
+      unmountPlay = mountRulebookCatalog(setup, {
+        navigate: navigateRoute,
+        openRoom,
+        async openPractice(edition, selectedMode) {
+          const { mountEditionPractice } = await import("./edition-practice");
+          if (currentNavigation === navigation && !practice.open) {
+            mountEditionPractice(practice, edition, selectedMode);
+          }
+        },
+        openStudio,
+      }, focusHeading);
+    } else {
+      unmountPlay = mountLandingPage(setup, {
+        navigate: navigateRoute,
+        openRoom,
+        openStudio,
+        openAbout: () => guide.showModal(),
+      }, focusHeading);
+    }
     return;
   }
   setup.replaceChildren();
@@ -154,8 +177,8 @@ for (const [key, value] of Object.entries(copy)) {
 document.querySelector<HTMLAnchorElement>("a.brand")?.addEventListener("click", event => {
   if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
-  if (location.pathname !== "/" || location.search !== "") {
-    navigateCatalog("/");
+  if (location.pathname !== "/" || location.search !== "" || location.hash !== "") {
+    navigateRoute("/");
   } else {
     void showRoute(true);
   }
