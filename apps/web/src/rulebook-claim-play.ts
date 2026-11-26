@@ -19,6 +19,7 @@ import { createPlayerToast, renderInlineAlert } from "./player-toast";
 import { claimDecidingMetric, claimResultReasons } from "./rulebook-claim-result";
 import { isSimulatedLocationAllowed } from "./runtime-config";
 import { clearActiveRoom, saveActiveRoom } from "./active-room-storage";
+import { fetchAuthMe, getCachedAuth, onAuthChange, openAuthModal } from "./auth-modal";
 import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
 import { escapeText } from "./solo-view";
 import "./rulebook-seek-play.css";
@@ -217,10 +218,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   let listings: ClaimPublicListing[] = [];
   let ownedPackIds: string[] = [];
   let entitlements: RulebookEntitlementSummary[] = [];
-  let settledRestore: { roomCode: string; restoreCode: string; copied: boolean } | null = null;
   let roomCode = new URLSearchParams(location.search).get("room") ?? "";
   let joinCode = roomCode;
-  let joinName = "Pemain";
+  let joinName = getCachedAuth()?.user?.displayName || "Pemain";
+  let joinNameEdited = false;
   let live: ClaimRoomPayload | null = null;
   let cachedBoard: { code: string; board: ClaimRoomPayload["publicBoard"] } | null = null;
   let roomEtag: { code: string; includeBoard: boolean; value: string } | null = null;
@@ -1058,21 +1059,6 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         .join("")}
 
       ${
-        settledRestore
-          ? `<div class="rb-card" data-testid="restore-code-card">
-              <div class="rb-badges"><span class="rb-badge rb-badge-owned"><span aria-hidden="true">✓</span> Dimiliki</span></div>
-              <h3>Simpan Kode Pemulihan</h3>
-              <p>Paket ini sekarang milikmu dan bisa dimainkan ulang kapan saja. Simpan kode ini sebelum masuk ruang:</p>
-              <p><code data-testid="restore-code-value">${escapeText(settledRestore.restoreCode)}</code></p>
-              <div class="rb-actions">
-                <button type="button" class="secondary" data-action="copy-settled-restore">${settledRestore.copied ? "✓ Tersalin" : "Salin kode"}</button>
-                <button type="button" class="primary" data-action="enter-settled-room">Masuk Ruang (${escapeText(settledRestore.roomCode)})</button>
-              </div>
-            </div>`
-          : ""
-      }
-
-      ${
         activeOrderId
           ? `<div class="rb-card">
               <h3>Pembayaran Uji Midtrans</h3>
@@ -1709,7 +1695,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     const target = event.target;
     if (!(target instanceof HTMLInputElement)) return;
     if (target.id === "rb-claim-join-code") joinCode = target.value;
-    if (target.id === "rb-claim-join-name") joinName = target.value;
+    if (target.id === "rb-claim-join-name") {
+      joinName = target.value;
+      joinNameEdited = true;
+    }
   }, { signal: lifetime.signal });
 
   root.addEventListener("change", event => {
@@ -1767,24 +1756,6 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     if (action === "close-rival-card") {
       selectedRivalPinSeatId = "";
       render();
-      return;
-    }
-    if (action === "copy-settled-restore" && settledRestore) {
-      const codeToCopy = settledRestore.restoreCode;
-      void (async () => {
-        let copied = false;
-        try {
-          if (navigator.clipboard?.writeText) {
-            await navigator.clipboard.writeText(codeToCopy);
-            copied = true;
-          }
-        } catch {
-          copied = false;
-        }
-        if (lifetime.signal.aborted || !settledRestore) return;
-        settledRestore = { ...settledRestore, copied };
-        render();
-      })();
       return;
     }
     if (action === "panel") {
@@ -1874,7 +1845,6 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         });
         clearPendingAction(persistKey);
         if (ok && res.ok && res.roomCode) {
-          settledRestore = null;
           roomCode = res.roomCode;
           joinCode = res.roomCode;
           statusMsg = `Ruang Claim ${roomCode} berhasil dibuat.`;
@@ -1888,21 +1858,12 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       } else if (action === "resume-owned") {
         const targetRoom = btn.dataset.room ?? "";
         if (targetRoom) {
-          settledRestore = null;
           roomCode = targetRoom;
           joinCode = targetRoom;
           toast.clear();
           toast.resetDedupe();
           await refreshRoom(false, false, true);
         }
-      } else if (action === "enter-settled-room" && settledRestore) {
-        const targetRoom = settledRestore.roomCode;
-        settledRestore = null;
-        roomCode = targetRoom;
-        joinCode = targetRoom;
-        toast.clear();
-        toast.resetDedupe();
-        await refreshRoom(false, false, true);
       } else if (action === "buy-pack") {
         render();
         const packId = btn.dataset.pack ?? "";
@@ -1924,6 +1885,13 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           statusMsg = `Order ${activeOrderId} dibuat (Uji Pembayaran).`;
           toast.clear();
           toast.resetDedupe();
+        } else if (status === 401 || res.error === "auth-required") {
+          openAuthModal({
+            reason: "Masuk dengan email agar paket tersimpan permanen di akunmu.",
+            onSignedIn: () => {
+              if (!lifetime.signal.aborted) void loadCatalog();
+            },
+          });
         } else {
           reportError({ error: res.error ?? "invalid-request", status }, { surface: "checkout", action: "buy-pack", target: packId }, "catalog");
           if (res.error === "pack-already-owned") void loadCatalog();
@@ -1931,7 +1899,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       } else if (action === "settle-order") {
         render();
         const orderId = btn.dataset.order ?? "";
-        const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; pass?: { roomCode: string }; restoreCode?: string; error?: string }>("/api/rulebooks", {
+        const { ok, status, data: res } = await fetchApiJson<{ ok?: boolean; pass?: { roomCode: string }; error?: string }>("/api/rulebooks", {
           signal: lifetime.signal,
           body: {
             type: "verify-settlement",
@@ -1946,16 +1914,17 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
           activeOrderId = null;
           toast.clear();
           toast.resetDedupe();
-          if (res.restoreCode) {
-            settledRestore = { roomCode: res.pass.roomCode, restoreCode: res.restoreCode, copied: false };
-            statusMsg = "Pembayaran lunas! Simpan Kode Pemulihan sebelum masuk ruang.";
-            void loadCatalog();
-          } else {
-            roomCode = res.pass.roomCode;
-            joinCode = res.pass.roomCode;
-            statusMsg = `Pembayaran lunas! Ruang ${roomCode} terbuka.`;
-            await refreshRoom(false, false, true);
-          }
+          roomCode = res.pass.roomCode;
+          joinCode = res.pass.roomCode;
+          statusMsg = `Pembayaran lunas! Ruang ${roomCode} terbuka.`;
+          await refreshRoom(false, false, true);
+        } else if (status === 401 || res.error === "auth-required") {
+          openAuthModal({
+            reason: "Masuk dengan email agar paket tersimpan permanen di akunmu.",
+            onSignedIn: () => {
+              if (!lifetime.signal.aborted) void loadCatalog();
+            },
+          });
         } else {
           reportError({ error: res.error ?? "payment-pending", status }, { surface: "checkout", action: "settle-order", target: orderId }, "catalog");
         }
@@ -2068,6 +2037,24 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       if (!pendingAction) roomEvents.sync();
     });
   }, { signal: lifetime.signal });
+
+  function applySignedInJoinName(displayName?: string | null) {
+    if (!displayName || joinNameEdited) return;
+    joinName = displayName;
+    const nameInput = root.querySelector<HTMLInputElement>("#rb-claim-join-name");
+    if (nameInput) nameInput.value = joinName;
+  }
+
+  onAuthChange((next) => {
+    applySignedInJoinName(next.user?.displayName);
+    if (!live) void loadCatalog();
+  }, lifetime.signal);
+
+  if (!getCachedAuth()) {
+    void fetchAuthMe(lifetime.signal).then((fresh) => {
+      if (!lifetime.signal.aborted) applySignedInJoinName(fresh.user?.displayName);
+    });
+  }
 
   void isSimulatedLocationAllowed(lifetime.signal).then(allowed => {
     demoLocation = allowed;

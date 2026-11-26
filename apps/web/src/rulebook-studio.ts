@@ -1,4 +1,5 @@
 import type {
+  AuthMeReply,
   ClaimCardEffect,
   ClaimChallengePrimitive,
   CurseClearCondition,
@@ -12,6 +13,13 @@ import type {
   RulebookFormat,
   RulebookValidationIssue,
 } from "@kelana-ria/contracts";
+import {
+  fetchAuthMe,
+  getCachedAuth,
+  onAuthChange,
+  openAuthModal,
+  renderAccountChip,
+} from "./auth-modal";
 import { escapeText } from "./solo-view";
 import {
   buildClaimCardFromForm,
@@ -123,6 +131,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let reviewerKey = "";
   let reviewVersions: StudioVersionRecord[] = [];
   let selectedKey = view === "editor" ? `${params.get("draft") ?? ""}@${Number(params.get("version"))}` : "";
+  let authState: AuthMeReply | null = getCachedAuth();
+  let authRequired = false;
   let loading = true;
   let busy = false;
   let validationErrors: RulebookValidationIssue[] = [];
@@ -503,6 +513,26 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
   }
 
+  function openStudioAuthModal() {
+    openAuthModal({
+      reason: "Masuk dengan email untuk menyimpan draf, publikasi, dan pendapatan kreator.",
+    });
+  }
+
+  function handleStudioAuthRequired() {
+    authRequired = true;
+    authState = {
+      authenticated: false,
+      user: null,
+      allowSandboxOtp: Boolean(authState?.allowSandboxOtp),
+    };
+    versions = [];
+    earnings = [];
+    errorMsg = "";
+    loading = false;
+    render();
+  }
+
   async function apiJson<T>(path: string, body?: unknown, key?: string): Promise<T> {
     const headers = new Headers();
     if (body !== undefined) headers.set("content-type", "application/json");
@@ -512,7 +542,11 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    return (await res.json()) as T;
+    const parsed = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (res.status === 401 && !parsed.error) {
+      parsed.error = "auth-required";
+    }
+    return parsed as T;
   }
 
   async function refresh() {
@@ -527,10 +561,15 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           errorMsg = "Kunci peninjau belum cocok. Periksa lalu coba lagi.";
         } else reviewVersions = data.versions ?? [];
       } else {
-        const data = await apiJson<{ versions?: StudioVersionRecord[]; earnings?: StudioEarningsRecord[]; listings?: StudioTemplate[]; reviewEnabled?: boolean }>(
+        const data = await apiJson<{ versions?: StudioVersionRecord[]; earnings?: StudioEarningsRecord[]; listings?: StudioTemplate[]; reviewEnabled?: boolean; error?: string }>(
           "/api/rulebooks?role=writer",
         );
         if (seq !== refreshSeq || signal.aborted) return;
+        if (data.error === "auth-required") {
+          handleStudioAuthRequired();
+          return;
+        }
+        authRequired = false;
         versions = data.versions ?? [];
         earnings = data.earnings ?? [];
         const official = (data.listings ?? []).filter(item => item.isOfficial);
@@ -769,6 +808,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         ${view === "home" ? '<button type="button" class="secondary" data-nav="back">‹ Katalog</button>'
           : `<button type="button" class="secondary" data-studio-view="${view === "template" ? "format" : view === "import" ? "template" : "home"}">${view === "template" ? "‹ Pilih format" : view === "import" ? "‹ Pilih templat" : "‹ Studio"}</button>`}
         ${view === "review" ? '<button type="button" class="secondary" data-nav="catalog">Katalog Publik</button>' : ""}
+        ${renderAccountChip(authState)}
       </div>
       <h2 id="studio-page-heading" tabindex="-1">${escapeText(heading)}</h2>
       ${active ? `<p class="studio-context">${escapeText(formatLabels[active.format])} · ${escapeText(active.packId)} v${active.version} · ${escapeText(statusLabel(active.status))}</p>`
@@ -778,6 +818,20 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       ${issues && step === 2 ? `<details data-map-validation ${showingMapIssues ? "open" : ""}>
         <summary>${validationErrors.length} hal perlu diperiksa</summary>${issues}</details>` : issues}
     </div>`;
+
+    if (authRequired && view !== "review") {
+      stepperSlot.innerHTML = "";
+      destroyStep2Map();
+      bodySlot.innerHTML = `<div class="rb-card" data-testid="studio-auth-gate">
+        <h3>Masuk untuk membuka Studio Kreator</h3>
+        <p>Masuk dengan email untuk menyimpan draf, publikasi, dan pendapatan kreator di semua perangkat.</p>
+        <div class="rb-actions">
+          <button type="button" class="primary" data-auth-action="open-studio-auth">Masuk dengan Email</button>
+          <button type="button" class="secondary" data-nav="back">‹ Kembali ke Katalog</button>
+        </div>
+      </div>`;
+      return;
+    }
 
     stepperSlot.innerHTML = active ? renderStepper() : "";
     if (view !== "editor" || !active) {
@@ -1054,6 +1108,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   root.addEventListener("click", (event) => {
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
     if (!btn || busy || savingMap) return;
+    if (btn.dataset.authAction) {
+      if (btn.dataset.authAction === "open-account" && authState?.authenticated) {
+        openAuthModal({ mode: "account" });
+      } else {
+        openStudioAuthModal();
+      }
+      return;
+    }
     if (btn.dataset.nav === "back") return onBack();
     if (btn.dataset.nav === "catalog") {
       history.pushState(null, "", "/");
@@ -1907,6 +1969,29 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       }
     });
   }, { signal });
+
+  onAuthChange((next) => {
+    authState = next;
+    if (next.authenticated) {
+      authRequired = false;
+      loading = true;
+      errorMsg = "";
+      render();
+      void refresh();
+    } else if (view !== "review") {
+      handleStudioAuthRequired();
+    } else {
+      render();
+    }
+  }, signal);
+
+  if (!authState) {
+    void fetchAuthMe(signal).then((fresh) => {
+      if (signal.aborted) return;
+      authState = fresh;
+      render();
+    });
+  }
 
   render();
   void refresh();

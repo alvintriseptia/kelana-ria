@@ -1,4 +1,5 @@
 .recap-shell { display: grid; gap: 12px; max-width: 580px; margin-inline: auto; overflow-wrap: anywhere; }
+.recap-topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .recap-back, .recap-edition-link, .recap-public-link {
   display: inline-flex; align-items: center; justify-self: start; min-height: 44px; color: #104a40; font-weight: 750;
 }

@@ -44,9 +44,6 @@
 .cat-owned-mark { font-weight: 900; }
 .cat-hero-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .cat-icon { flex: 0 0 auto; }
-.cat-restore-trigger {
-  display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px;
-}
 .cat-card-copy { flex: 1; display: flex; flex-direction: column; gap: 5px; padding: 8px 9px; }
 .cat-card-copy h3, .cat-detail h2 { font: 700 1.32rem/1.02 "Barlow Condensed", sans-serif; }
 .cat-card-copy p, .cat-byline { font-size: .8rem; color: var(--muted); }
@@ -81,25 +78,6 @@
 .cat-facts dd { margin: 0; font-weight: 750; }
 .cat-description { font-size: .93rem; }
 .cat-actions > .cat-box { flex: 1 1 100%; gap: 8px; }
-.cat-unlocked {
-  border: 2px solid var(--catalog-forest);
-  box-shadow: 0 4px #104a4030;
-  padding: 12px 14px;
-  gap: 10px;
-}
-.cat-unlocked-head { display: flex; align-items: center; }
-.cat-unlocked-note { margin: 0; font-size: .88rem; color: #1b3d35; }
-.cat-restore-code-row {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-  padding: 8px 10px; border: 1.5px dashed var(--catalog-forest); border-radius: 10px; background: #fbfff6;
-}
-.cat-restore-code {
-  flex: 1 1 150px; min-width: 0; font: 800 1.08rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-  letter-spacing: .06em; color: #103a32; word-break: break-all;
-}
-.cat-copy-btn { flex: 0 1 auto; min-height: 44px; border-radius: 9px; padding-inline: 12px; font-weight: 750; }
-.cat-unlocked-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.cat-unlocked-actions > button { flex: 1 1 100%; min-height: 44px; border-radius: 10px; font-weight: 800; }
 .cat-modal-backdrop {
   position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 14px;
   background: rgba(12, 39, 34, 0.56);
@@ -117,13 +95,6 @@
 }
 .cat-modal-close { min-width: 44px; min-height: 44px; padding: 0; border-radius: 9px; font-size: 1.25rem; line-height: 1; }
 .cat-modal-note { margin: 0; font-size: .86rem; color: var(--muted); }
-.cat-restore-form { display: grid; gap: 10px; }
-.cat-restore-field { display: grid; gap: 5px; font-size: .84rem; font-weight: 750; color: #163d34; }
-.cat-restore-field input {
-  width: 100%; min-width: 0; box-sizing: border-box; min-height: 44px; padding: 8px 10px;
-  border: 1.5px solid var(--catalog-forest); border-radius: 9px; background: #fff;
-  font: 700 1rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .05em; text-transform: uppercase;
-}
 .cat-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .cat-modal-actions button { flex: 1 1 110px; min-width: 0; min-height: 44px; border-radius: 9px; }
 .cat-modal-actions .primary { background: var(--catalog-forest); border-color: #13352c; color: #f7fff1; box-shadow: inset 0 -3px #0b3029; }

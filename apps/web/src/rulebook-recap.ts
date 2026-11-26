@@ -1,4 +1,5 @@
 import type {
+  AuthMeReply,
   ClaimMatchRecap,
   PublicClaimMatchRecap,
   PublicMatchRecap,
@@ -9,6 +10,13 @@ import type {
   RulebookRecapSummary,
   SeekMatchRecap,
 } from "@kelana-ria/contracts";
+import {
+  fetchAuthMe,
+  getCachedAuth,
+  onAuthChange,
+  openAuthModal,
+  renderAccountChip,
+} from "./auth-modal";
 import { escapeText } from "./escape-text";
 import { claimDecidingMetric, claimResultReasons } from "./rulebook-claim-result";
 import "./rulebook-recap.css";
@@ -271,12 +279,14 @@ export function mountRulebookRecap(
   const title = matchId ? "Ringkasan pertandingan" : "Riwayat pertandingan";
   document.title = `${title} · Kelana Ria`;
 
+  let authState: AuthMeReply | null = getCachedAuth();
   let currentRecap: RulebookMatchRecap | undefined;
   let currentShare: RecapPublicShareState | null = null;
   let draftAliases: Record<string, string> = {};
   let busy = false;
   let statusMessage = "";
   let statusError = false;
+  let lastContent = "";
 
   function defaultAliasesFor(recap: RulebookMatchRecap) {
     const next: Record<string, string> = {};
@@ -287,8 +297,9 @@ export function mountRulebookRecap(
   }
 
   function renderFrame(content: string) {
+    lastContent = content;
     if (!signal.aborted) {
-      root.innerHTML = `<article class="recap-shell"><a class="recap-back" href="${back}">‹ ${matchId ? "Riwayat" : "Katalog"}</a>
+      root.innerHTML = `<article class="recap-shell"><div class="recap-topbar"><a class="recap-back" href="${back}">‹ ${matchId ? "Riwayat" : "Katalog"}</a>${renderAccountChip(authState)}</div>
         <h1>${title}</h1>${content}</article>`;
     }
   }
@@ -465,7 +476,15 @@ export function mountRulebookRecap(
 
   root.addEventListener("click", event => {
     const target = event.target;
-    if (!(target instanceof Element) || !currentRecap) return;
+    if (!(target instanceof Element)) return;
+    const authBtn = target.closest<HTMLButtonElement>("[data-auth-action]");
+    if (authBtn) {
+      openAuthModal({
+        mode: authBtn.dataset.authAction === "open-account" && authState?.authenticated ? "account" : "signin",
+      });
+      return;
+    }
+    if (!currentRecap) return;
     const button = target.closest<HTMLButtonElement>("[data-recap-action]");
     const action = button?.dataset.recapAction;
     if (!action || button?.disabled) return;
@@ -492,11 +511,26 @@ export function mountRulebookRecap(
     }
   }, { signal });
 
+  onAuthChange((next) => {
+    authState = next;
+    void load();
+  }, signal);
+
+  if (!authState) {
+    void fetchAuthMe(signal).then((fresh) => {
+      if (signal.aborted) return;
+      authState = fresh;
+      if (currentRecap) renderPrivateDetail();
+      else if (lastContent) renderFrame(lastContent);
+    });
+  }
+
   async function load() {
     renderFrame('<p role="status">Memuat riwayat…</p>');
     try {
       const response = await fetch(`/api/rulebooks/recaps${matchId ? `/${encodeURIComponent(matchId)}` : ""}`, { signal });
       if (response.status === 404 && matchId) {
+        currentRecap = undefined;
         renderFrame('<section class="recap-panel"><p role="status">Ringkasan ini bersifat privat dan belum tersedia di sesi perangkatmu.</p></section>');
         return;
       }
@@ -512,6 +546,7 @@ export function mountRulebookRecap(
         draftAliases = currentShare ? { ...currentShare.aliases } : defaultAliasesFor(data.recap);
         renderPrivateDetail();
       } else if (data.recaps?.length) {
+        currentRecap = undefined;
         renderFrame(`<ul class="recap-list recap-history">${data.recaps.map(item => `<li><a href="/?recap=${encodeURIComponent(item.matchId)}">
           <div class="recap-head-row">
             <strong>${escapeText(item.title)}</strong>
@@ -519,6 +554,7 @@ export function mountRulebookRecap(
           </div>
           <small>${recapMeta(item)}</small></a></li>`).join("")}</ul>`);
       } else {
+        currentRecap = undefined;
         renderFrame("<p>Pertandingan yang kamu selesaikan akan muncul di sini.</p>");
       }
     } catch {

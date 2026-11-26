@@ -1,4 +1,4 @@
-export type PlayerErrorSurface = "catalog" | "checkout" | "lobby" | "claim" | "seek" | "recap";
+export type PlayerErrorSurface = "catalog" | "checkout" | "lobby" | "claim" | "seek" | "recap" | "auth";
 export type PlayerErrorPlacement = "toast" | "inline-location" | "inline-field" | "inline-screen";
 export type PlayerErrorTone = "warn" | "error" | "info";
 
@@ -156,12 +156,12 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     recoverable: false,
   },
   "payment-required": {
-    message: "Edisi ini belum dimiliki. Beli paket terlebih dahulu atau pulihkan dengan Kode Pemulihan untuk membuka ruang.",
+    message: "Edisi ini belum dimiliki. Beli paket sekali atau masuk ke akun yang sudah memilikinya untuk bermain.",
     placement: "inline-screen",
     tone: "info",
   },
   "pack-already-owned": {
-    message: "Paket ini sudah dimiliki di perangkat ini. Kamu bisa langsung bermain tanpa bayar lagi.",
+    message: "Paket ini sudah dimiliki di akunmu. Kamu bisa langsung bermain tanpa bayar lagi.",
     placement: "toast",
     tone: "info",
   },
@@ -170,14 +170,44 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     placement: "toast",
     tone: "info",
   },
-  "invalid-restore-code": {
-    message: "Kode Pemulihan tidak cocok. Periksa kembali format KLR-XXXX-XXXX, lalu coba lagi.",
+  "auth-required": {
+    message: "Masuk dengan email terlebih dahulu untuk melanjutkan.",
+    placement: "toast",
+    tone: "info",
+  },
+  "invalid-email": {
+    message: "Format email belum valid. Periksa kembali alamat emailmu.",
+    placement: "inline-field",
+    tone: "warn",
+  },
+  "otp-invalid": {
+    message: "Kode 6 digit tidak cocok. Periksa kembali emailmu, lalu coba lagi.",
     placement: "toast",
     tone: "warn",
   },
-  "restore-rate-limited": {
-    message: "Terlalu banyak percobaan Kode Pemulihan. Tunggu beberapa menit, lalu coba lagi.",
+  "otp-expired": {
+    message: "Kode masuk sudah kedaluwarsa. Minta kode 6 digit baru untuk melanjutkan.",
     placement: "toast",
+    tone: "warn",
+  },
+  "otp-rate-limited": {
+    message: "Terlalu sering meminta kode. Tunggu sebentar sebelum mengirim ulang.",
+    placement: "toast",
+    tone: "warn",
+  },
+  "otp-attempts-exceeded": {
+    message: "Terlalu banyak percobaan salah. Minta kode 6 digit baru untuk masuk.",
+    placement: "toast",
+    tone: "warn",
+  },
+  "email-delivery-failed": {
+    message: "Email kode masuk belum bisa dikirim. Tunggu sebentar, lalu coba lagi.",
+    placement: "toast",
+    tone: "error",
+  },
+  "invalid-display-name": {
+    message: "Nama tampilan harus berisi 1–32 karakter. Periksa kembali namamu.",
+    placement: "inline-field",
     tone: "warn",
   },
   "pack-is-free": {

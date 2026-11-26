@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
-import { buyPublishedDraft, openDraft, openReview, reviewerKey, signInQaContext, startDraft } from "./studio-navigation.mjs";
+import { buyPublishedDraft, openDraft, openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -133,13 +133,36 @@ async function checkValidationSpacing(page, format) {
 
 try {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  await signInQaContext(ctx, baseUrl, "studio-creator@kelana.test", "Kreator Studio");
   const page = await ctx.newPage();
 
+  // Direct Studio URL as guest shows studio-auth-gate inline without blocking navigation
+  await page.goto(`${baseUrl}/?play=rulebook-studio`, { waitUntil: "networkidle" });
+  const gate = page.getByTestId("studio-auth-gate");
+  await gate.waitFor();
+  await assertNoHorizontalOverflow(page, "Direct Studio auth gate");
+  await gate.getByRole("button", { name: "Masuk dengan Email" }).click();
+  const directModal = page.getByTestId("auth-modal");
+  await directModal.waitFor();
+  assert.match(await directModal.innerText(), /menyimpan draf, publikasi, dan pendapatan kreator/i);
+  await assertNoHorizontalOverflow(page, "Studio auth modal");
+  await page.keyboard.press("Escape");
+  await directModal.waitFor({ state: "hidden" });
+
+  // Return to catalog and tap Studio Kreator as guest -> opens 2-step Email OTP modal and signs in
   await page.goto(baseUrl, { waitUntil: "networkidle" });
+  await page.click("#chooser-studio");
+  const studioAuthModal = page.getByTestId("auth-modal");
+  await studioAuthModal.waitFor();
+  await page.fill("#auth-email-input", "studio-creator@kelana.test");
+  await page.getByTestId("auth-send-otp").click();
+  const studioOtpCode = (await page.getByTestId("auth-sandbox-code").innerText()).trim();
+  await page.fill("#auth-otp-input", studioOtpCode);
+  await page.fill("#auth-name-input", "Kreator Studio");
+  await page.getByTestId("auth-verify-otp").click();
+  await studioAuthModal.waitFor({ state: "hidden" });
+  await page.getByTestId("auth-chip-account").waitFor();
 
   // 1. Hide & Seek Studio: multi-draft switcher, intentional validator error -> jump link -> fix -> interactive clue dry-run
-  await page.click("#chooser-studio");
   await page.getByRole("button", { name: "Buat Game", exact: true }).click();
   assert.equal(await page.locator('button[data-format] svg').count(), 2, "Expected SVG art on format hero cards");
   await page.screenshot({ path: path.join(results, "studio-step1-format-cards.png") });
