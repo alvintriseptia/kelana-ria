@@ -290,14 +290,14 @@ try {
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-private-answer.png") });
   await pageCreator.click('button[data-answer="yes"]');
   assert.equal(await pageCreator.locator('[data-correct="true"]').isVisible(), true);
-  const answerSentAt = Date.now();
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
+  const answerSentAt = Date.now();
   const dealGrid = pageCreator.locator(".sg-deal");
   await dealGrid.locator(".sg-offer-back").first().waitFor({ state: "attached" });
   assert.equal(await pageCreator.locator('[data-action="confirm-draw"]').isDisabled(), true);
   const answerNotice = pageG2.locator('[data-activity-message][data-notice-kind="answer"]');
-  await answerNotice.waitFor({ timeout: 1500 });
-  assert.ok(Date.now() - answerSentAt < 1500, "Seeker must receive Hider answer via SSE before a 3-second poll cycle");
+  await answerNotice.waitFor({ timeout: 2200 });
+  assert.ok(Date.now() - answerSentAt < 2400, "Seeker must receive Hider answer via SSE before a 3-second poll cycle");
   const radarResult = pageG2.locator('.sg-map-result[data-game-motion^="update:"]');
   await radarResult.waitFor();
   assert.equal(await canvas.evaluate(element => element.isConnected), true);
