@@ -403,14 +403,17 @@ try {
   assert.equal(new URL(pageVisitor.url()).search, "");
   assert.ok(await pageVisitor.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 
+  await pageVisitor.waitForLoadState("networkidle");
   await pageVisitor.waitForFunction(() => {
     const el = document.querySelector(".cat-card");
-    return Boolean(el && getComputedStyle(el).backgroundColor);
+    return Boolean(el && el.isConnected && getComputedStyle(el).backgroundColor);
   });
-  const catalogCardTheme = await pageVisitor.locator(".cat-card").first().evaluate((el) => {
-    const s = getComputedStyle(el);
-    return { bg: s.backgroundColor, border: s.borderTopColor };
+  const catalogCardTheme = await pageVisitor.evaluate(() => {
+    const el = document.querySelector(".cat-card");
+    const s = el ? getComputedStyle(el) : null;
+    return { bg: s?.backgroundColor ?? "", border: s?.borderTopColor ?? "" };
   });
+  assert.ok(catalogCardTheme.bg, "Catalog card theme background should be resolved");
 
   // Bare /?play normalizes cleanly to the home catalog (/)
   await pageVisitor.goto(`${baseUrl}/?play`, { waitUntil: "networkidle" });

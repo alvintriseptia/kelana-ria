@@ -223,6 +223,7 @@ export type ClaimEngineSeat = {
   isHost: boolean;
   startVerifiedUntil: number | null;
   ready: boolean;
+  leftAt?: number | null;
 };
 
 export type ClaimLandmarkStatus = "unclaimed" | "claimed" | "locked";
@@ -422,6 +423,8 @@ export type ClaimEngineRoomView = {
 };
 
 export type ClaimEngineAction = { actionId: string } & (
+  | { type: "rename-seat"; name: string }
+  | { type: "set-team"; teamId: string; targetSeatId?: string }
   | { type: "check-in-start"; fix: LocationFix }
   | { type: "ready"; ready: boolean }
   | { type: "start" }

@@ -771,6 +771,16 @@ export function applySeekEngineAction(
       return finish({ purgedPhotoIds: purged });
     }
 
+    case "rename-seat": {
+      if (match.phase !== "lobby") return finish({ error: "room-phase-changed" });
+      const cleaned = typeof action.name === "string"
+        ? action.name.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim()
+        : "";
+      if (!cleaned || cleaned.length > 32) return finish({ error: "invalid-seat-name" });
+      seat.name = cleaned;
+      return finish();
+    }
+
     case "set-turn-order": {
       if (match.phase !== "lobby") return finish({ error: "room-phase-changed" });
       if (!seat.isHost) return finish({ error: "host-only" });

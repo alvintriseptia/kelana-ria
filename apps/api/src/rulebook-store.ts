@@ -1470,39 +1470,82 @@ export function rulebookStore(
     });
   }
 
+  function normalizeRoomCode(raw: string): string {
+    return raw.trim().replace(/\s+/g, "").toUpperCase();
+  }
+
+  function nextSeatId(seats: { seatId: string }[]): string {
+    let maxNum = 0;
+    for (const s of seats) {
+      const match = /^seat-(\d+)$/.exec(s.seatId);
+      if (match) {
+        const num = Number(match[1]);
+        if (Number.isSafeInteger(num) && num > maxNum) maxNum = num;
+      }
+    }
+    return `seat-${maxNum + 1}`;
+  }
+
   function joinRoom(
     roomCode: string,
     credential: string,
     name: string,
     now: number,
-  ): { ok: true; seatId: string; room: SeekEngineRoomView | ClaimEngineRoomView } | { ok: false; error: string } {
-    const session = liveRooms.get(roomCode);
+  ):
+    | { ok: true; format: RulebookFormat; roomCode: string; seatId: string; room: SeekEngineRoomView | ClaimEngineRoomView }
+    | { ok: false; error: string } {
+    const normalizedCode = normalizeRoomCode(roomCode);
+    const session = liveRooms.get(normalizedCode);
     if (!session) return { ok: false, error: "room-not-found" };
     const credHash = digest(credential);
     if (session.format === "claim-the-city") {
       const existingSeat = findClaimEngineSeat(session.match, credHash);
       if (existingSeat) {
-        touchLiveRoom(roomCode, session);
-        return { ok: true, seatId: existingSeat, room: viewClaimEngineMatch(session.match, existingSeat, now) };
+        touchLiveRoom(normalizedCode, session);
+        return {
+          ok: true,
+          format: "claim-the-city",
+          roomCode: session.pass.roomCode,
+          seatId: existingSeat,
+          room: viewClaimEngineMatch(session.match, existingSeat, now),
+        };
       }
-      const nextSeatId = `seat-${session.match.seats.length + 1}`;
-      const joined = joinClaimEngineMatch(session.match, { seatId: nextSeatId, name, credentialHash: credHash });
+      const assignedSeatId = nextSeatId(session.match.seats);
+      const joined = joinClaimEngineMatch(session.match, { seatId: assignedSeatId, name, credentialHash: credHash });
       if (!joined.ok) return joined;
       transact(() => persistLiveSession(session, now, true));
-      touchLiveRoom(roomCode, session);
-      return { ok: true, seatId: nextSeatId, room: viewClaimEngineMatch(session.match, nextSeatId, now) };
+      touchLiveRoom(normalizedCode, session);
+      return {
+        ok: true,
+        format: "claim-the-city",
+        roomCode: session.pass.roomCode,
+        seatId: assignedSeatId,
+        room: viewClaimEngineMatch(session.match, assignedSeatId, now),
+      };
     }
     const existingSeat = findSeekEngineSeat(session.match, credHash);
     if (existingSeat) {
-      touchLiveRoom(roomCode, session);
-      return { ok: true, seatId: existingSeat, room: viewSeekEngineMatch(session.match, existingSeat, now) };
+      touchLiveRoom(normalizedCode, session);
+      return {
+        ok: true,
+        format: "hide-and-seek",
+        roomCode: session.pass.roomCode,
+        seatId: existingSeat,
+        room: viewSeekEngineMatch(session.match, existingSeat, now),
+      };
     }
-    const nextSeatId = `seat-${session.match.seats.length + 1}`;
-    const joined = joinSeekEngineMatch(session.match, { seatId: nextSeatId, name, credentialHash: credHash });
+    const assignedSeatId = nextSeatId(session.match.seats);
+    const joined = joinSeekEngineMatch(session.match, { seatId: assignedSeatId, name, credentialHash: credHash });
     if (!joined.ok) return joined;
     transact(() => persistLiveSession(session, now, true));
-    touchLiveRoom(roomCode, session);
-    return { ok: true, seatId: nextSeatId, room: viewSeekEngineMatch(session.match, nextSeatId, now) };
+    touchLiveRoom(normalizedCode, session);
+    return {
+      ok: true,
+      format: "hide-and-seek",
+      roomCode: session.pass.roomCode,
+      seatId: assignedSeatId,
+      room: viewSeekEngineMatch(session.match, assignedSeatId, now),
+    };
   }
 
   function actInRoom(
@@ -1535,6 +1578,14 @@ export function rulebookStore(
         }
         if (pruneClaimPhotos(session, pending)) photoChanged = true;
         const recapChanged = captureCompletedMatch(session);
+        if (!replay && !reply.error && claimAction.type === "leave" && !session.match.outcome) {
+          const hadPos = session.seatPositions.delete(seatId);
+          presenceMetaByRoom.get(roomCode)?.delete(seatId);
+          if (hadPos) {
+            const snapshotPositions = [...session.seatPositions.values()];
+            onCommit(() => emitRoomEvent(roomCode, { type: "presence", positions: snapshotPositions, now }));
+          }
+        }
         if (
           !replay &&
           !reply.error &&
@@ -2060,6 +2111,9 @@ export function rulebookStore(
     if (!seat) {
       return { ok: false, status: 404, error: "room-not-found" };
     }
+    if (seat.leftAt != null) {
+      return { ok: false, status: 400, error: "player-left" };
+    }
     let roomMeta = presenceMetaByRoom.get(roomCode);
     if (!roomMeta) {
       roomMeta = new Map();
@@ -2122,6 +2176,8 @@ export function rulebookStore(
         const seatId = findClaimEngineSeat(session.match, credHash);
         if (!seatId) continue;
         syncClaimReadState(session, ts);
+        const seat = session.match.seats.find((s) => s.seatId === seatId);
+        if (!seat || seat.leftAt != null) continue;
         const room = viewClaimEngineMatch(session.match, seatId, ts);
         if ((room.phase !== "lobby" && room.phase !== "active") || room.outcome) continue;
         active.push({
@@ -2132,7 +2188,7 @@ export function rulebookStore(
           title: room.packMeta.title,
           phase: room.phase,
           role: room.isSolo ? "solo" : "group",
-          playerCount: room.seats.length,
+          playerCount: room.seats.filter((s) => s.leftAt == null).length,
           maxPlayers: session.pass.maxPlayers,
         });
       } else {

@@ -35,6 +35,19 @@ function hashKey(value: string) {
   return createHash("sha256").update(value).digest();
 }
 
+function normalizeRoomCode(raw: unknown): string {
+  return typeof raw === "string" ? raw.trim().replace(/\s+/g, "").toUpperCase() : "";
+}
+
+function resolveSeatName(raw: unknown, user: AuthUser | null, fallback: string): string {
+  if (typeof raw === "string") {
+    const cleaned = raw.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, 32);
+    if (cleaned) return cleaned;
+  }
+  const display = user?.displayName?.replace(/[\u0000-\u001F\u007F]/g, " ").replace(/\s+/g, " ").trim().slice(0, 32);
+  return display || fallback;
+}
+
 export function rulebookHandler(
   store: Store, now: () => number, secureCookie = false, allowHideSeekQa = false, allowSandboxCheckout = false,
   reviewerKey = "",
@@ -73,10 +86,14 @@ export function rulebookHandler(
     return credential(request, cookieName);
   }
 
+  function resolveWriteSession(request: IncomingMessage, response: ServerResponse, ts: number): { cred: string; user: AuthUser | null } {
+    const user = resolveUser?.(request, response, ts) ?? null;
+    if (user) return { cred: `user:${user.userId}`, user };
+    return { cred: ensureGuestCred(request, response), user: null };
+  }
+
   function resolveWriteCred(request: IncomingMessage, response: ServerResponse, ts: number): string {
-    const user = resolveUser?.(request, response, ts);
-    if (user) return `user:${user.userId}`;
-    return ensureGuestCred(request, response);
+    return resolveWriteSession(request, response, ts).cred;
   }
 
   function requireSignedIn(request: IncomingMessage, response: ServerResponse, ts: number): { cred: string; user: AuthUser } | null {
@@ -413,7 +430,7 @@ export function rulebookHandler(
       const res = await store.settleVerifiedOrder(
         payload.order_id,
         undefined,
-        payload.hostName ?? "Host",
+        resolveSeatName(payload.hostName, null, "Host"),
         payload,
         ts,
       );
@@ -429,8 +446,9 @@ export function rulebookHandler(
         return json(response, 400, { error: "invalid-request" });
       }
       if (type === "play") {
-        const cred = resolveWriteCred(request, response, ts);
-        const result = store.createFreeRoomFromRulebook(edition, version, cred, "Host", ts, false, mode, requestId);
+        const { cred, user } = resolveWriteSession(request, response, ts);
+        const hostName = resolveSeatName(body.hostName, user, "Host");
+        const result = store.createFreeRoomFromRulebook(edition, version, cred, hostName, ts, false, mode, requestId);
         const status = result.ok ? 200 : result.error === "entitlement-active-room-exists" ? 409 : 400;
         return json(response, status, result);
       }
@@ -450,7 +468,8 @@ export function rulebookHandler(
       if (type === "simulate-payment" && order.paymentMode !== "recorded-sandbox") {
         return json(response, 400, { error: "simulation-unavailable" });
       }
-      const settlement = await store.settleVerifiedOrder(order.orderId, signedIn.cred, "Host",
+      const hostName = resolveSeatName(body.hostName, signedIn.user, "Host");
+      const settlement = await store.settleVerifiedOrder(order.orderId, signedIn.cred, hostName,
         type === "simulate-payment" ? { transaction_status: "settlement", status_code: "200" } : undefined, ts);
       return json(response, settlement.ok ? 200 : 400, settlement);
     }
@@ -544,10 +563,11 @@ export function rulebookHandler(
         const signedIn = requireSignedIn(request, response, ts);
         if (!signedIn) return;
         if (!allowSandboxCheckout) return json(response, 403, { error: "checkout-unavailable" });
+        const hostName = resolveSeatName(body.hostName, signedIn.user, "Host");
         const res = await store.settleVerifiedOrder(
           String(body.orderId ?? ""),
           signedIn.cred,
-          String(body.hostName ?? "Host"),
+          hostName,
           {
             order_id: String(body.orderId ?? ""),
             status_code: typeof body.statusCode === "string" ? body.statusCode : undefined,
@@ -562,18 +582,19 @@ export function rulebookHandler(
         return;
       }
 
-      const cred = resolveWriteCred(request, response, ts);
+      const { cred, user } = resolveWriteSession(request, response, ts);
       if (type === "create-free-room" || type === "create-owned-room") {
         if (body.qa === true && !allowHideSeekQa) return json(response, 403, { error: "seek-qa-disabled" });
         const requestId = typeof body.requestId === "string" && /^[\w-]{8,100}$/.test(body.requestId)
           ? body.requestId : undefined;
         const mode = body.mode === "solo" || body.mode === "group" ? body.mode : undefined;
+        const hostName = resolveSeatName(body.hostName, user, "Host");
         const res = type === "create-owned-room"
           ? store.createOwnedRoomFromRulebook(
               String(body.packId ?? ""),
               Number(body.version ?? 1),
               cred,
-              String(body.hostName ?? "Host"),
+              hostName,
               ts,
               mode,
               requestId,
@@ -583,7 +604,7 @@ export function rulebookHandler(
               String(body.packId ?? ""),
               Number(body.version ?? 1),
               cred,
-              String(body.hostName ?? "Host"),
+              hostName,
               ts,
               body.qa === true,
               mode,
@@ -593,7 +614,7 @@ export function rulebookHandler(
         json(response, status, res);
         return;
       }
-      const roomCode = String(body.roomCode ?? "");
+      const roomCode = type === "join-room" ? normalizeRoomCode(body.roomCode) : String(body.roomCode ?? "");
       const roomTs = store.roomTime(roomCode, ts);
       if (type === "seek-qa-advance") {
         if (!allowHideSeekQa) return json(response, 403, { error: "seek-qa-disabled" });
@@ -606,7 +627,8 @@ export function rulebookHandler(
         return json(response, res.error === "qa-host-only" ? 403 : res.error ? 400 : 200, res);
       }
       if (type === "join-room") {
-        const res = store.joinRoom(roomCode, cred, String(body.name ?? "Player"), roomTs);
+        const joinName = resolveSeatName(body.name, user, "Player");
+        const res = store.joinRoom(roomCode, cred, joinName, roomTs);
         json(response, res.ok ? 200 : 400, res);
         return;
       }
