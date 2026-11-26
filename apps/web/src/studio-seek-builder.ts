@@ -19,12 +19,29 @@ import {
 
 export type SeekStep3SubTab = "timers" | "book" | "deck";
 
+export type SeekQuestionDraft = {
+  id: string;
+  label: string;
+  radiusMeters?: number;
+  minTravelMeters?: number;
+  attributeKey?: string;
+  poiCategory?: string;
+  prompt?: string;
+};
+
 export type SeekStep3State = {
   subTab: SeekStep3SubTab;
   family: HideSeekQuestionFamily;
   cardPrimitive: HideSeekCardEffect["primitive"];
   curseClearType: CurseClearCondition["type"];
+  editingQuestionIndex: number | null;
+  editingQuestionDraft: SeekQuestionDraft | null;
+  editingCardIndex: number | null;
+  editingCardDraft: HideSeekCardDefinition | null;
 };
+
+export const SEEK_CARD_MIN_COPIES = 1;
+export const SEEK_CARD_MAX_COPIES = 10;
 
 const FAMILY_LIST: { id: HideSeekQuestionFamily; label: string }[] = [
   { id: "radar", label: "Radar" },
@@ -52,6 +69,7 @@ export function renderSeekStep3(
   state: SeekStep3State,
   editable: boolean,
   status: string,
+  saving = false,
 ): string {
   const dis = editable ? "" : "disabled";
   const session = state.subTab === "timers";
@@ -68,13 +86,13 @@ export function renderSeekStep3(
       state.subTab === "timers"
         ? renderSeekTimers(pack, dis)
         : state.subTab === "book"
-          ? renderSeekBook(pack, state.family, dis, editable)
+          ? renderSeekBook(pack, state, dis, editable)
           : renderSeekDeck(pack, state, dis, editable)
     }
 
     ${status ? `<p class="studio-save-feedback" role="status">${escapeText(status)}</p>` : ""}
     <div class="rb-sticky-footer studio-step-actions">
-      ${editable && session ? `<button type="button" class="primary studio-save" data-action="save-draft">Simpan aturan sesi</button>` : ""}
+      ${editable && session ? `<button type="button" class="primary studio-save" data-action="save-draft" ${saving ? "disabled" : ""}>Simpan aturan sesi</button>` : ""}
       <button type="button" class="studio-tool" data-step="2">← Peta</button>
       <button type="button" class="studio-tool" data-step="4">Validasi →</button>
     </div>
@@ -120,13 +138,25 @@ function renderSeekTimers(pack: HideSeekRulebookPack, dis: string): string {
 
 function renderSeekBook(
   pack: HideSeekRulebookPack,
-  family: HideSeekQuestionFamily,
+  state: SeekStep3State,
   dis: string,
   editable: boolean,
 ): string {
+  const family = state.family;
   const cfg = pack.investigationBook.families[family];
   const items = cfg?.items ?? [];
   const familyLabel = FAMILY_LIST.find((f) => f.id === family)?.label ?? family;
+  const editing = state.editingQuestionIndex !== null ? state.editingQuestionDraft : null;
+
+  const labelVal = editing?.label ?? "";
+  const radarNum = editing?.radiusMeters ?? 750;
+  const thermoNum = editing?.minTravelMeters ?? 500;
+  const matchingAttr = editing?.attributeKey ?? "kecamatan";
+  const measuringCat = editing?.poiCategory ?? "taman";
+  const tentaclesNum = editing?.radiusMeters ?? 1500;
+  const tentaclesCat = editing?.poiCategory ?? "taman";
+  const photoPrompt = editing?.prompt ?? "Foto papan nama jalan terdekat.";
+
   return `<section class="studio-rule-panel" data-testid="seek-book-panel" aria-label="Pertanyaan">
     <h4>Pertanyaan</h4>
     <div class="st-visual-grid" role="group" aria-label="Pilih kategori pertanyaan">
@@ -154,7 +184,7 @@ function renderSeekBook(
     </div>
     ${editable ? `<button type="button" class="secondary" data-s3-action="save-family-cfg">Simpan Pengaturan Kategori</button>` : ""}
 
-    <details class="rb-accordion">
+    <details class="rb-accordion" data-studio-accordion="seek-book">
       <summary>Daftar Pertanyaan ${escapeText(familyLabel)} (${items.length})</summary>
       <ul class="rb-list">
         ${
@@ -162,9 +192,16 @@ function renderSeekBook(
             ? "<li>Belum ada pertanyaan di kategori ini.</li>"
             : items
                 .map(
-                  (item, idx) => `<li>
+                  (item, idx) => `<li${state.editingQuestionIndex === idx ? ' class="st-editing-row"' : ""}>
                     <div><strong>${escapeText(item.label)}</strong></div>
-                    ${editable ? `<button type="button" class="secondary" data-s3-action="delete-book-item" data-index="${idx}">Hapus</button>` : ""}
+                    ${
+                      editable
+                        ? `<div class="rb-actions">
+                            <button type="button" class="secondary" data-s3-action="edit-book-item" data-index="${idx}">Sunting</button>
+                            <button type="button" class="secondary" data-s3-action="delete-book-item" data-index="${idx}">Hapus</button>
+                          </div>`
+                        : ""
+                    }
                   </li>`,
                 )
                 .join("")
@@ -174,30 +211,95 @@ function renderSeekBook(
 
     ${
       editable
-        ? `<div class="rb-card">
-            <h4>+ Tambah Pertanyaan ${escapeText(familyLabel)}</h4>
+        ? `<div class="rb-card" data-testid="seek-question-composer">
+            <h4>${editing ? `Sunting Pertanyaan ${escapeText(familyLabel)}` : `+ Tambah Pertanyaan ${escapeText(familyLabel)}`}</h4>
             <div class="rb-grid-2">
-              <label class="rb-field"><span>Nama Pertanyaan</span><input id="ed-item-label" placeholder="Mis. Radar 750 m"></label>
+              <label class="rb-field"><span>Nama Pertanyaan</span><input id="ed-item-label" placeholder="Mis. Radar 750 m" value="${escapeText(labelVal)}"></label>
               ${
                 family === "radar"
-                  ? `<label class="rb-field"><span>Radius (meter)</span><input id="ed-item-num" type="number" value="750" min="100"></label>`
+                  ? `<label class="rb-field"><span>Radius (meter)</span><input id="ed-item-num" type="number" value="${radarNum}" min="100"></label>`
                   : family === "thermometer"
-                    ? `<label class="rb-field"><span>Jarak Tempuh Min (meter)</span><input id="ed-item-num" type="number" value="500" min="100"></label>`
+                    ? `<label class="rb-field"><span>Jarak Tempuh Min (meter)</span><input id="ed-item-num" type="number" value="${thermoNum}" min="100"></label>`
                     : family === "matching"
-                      ? `<label class="rb-field"><span>Atribut Stasiun</span><input id="ed-item-extra" value="kecamatan"></label>`
+                      ? `<label class="rb-field"><span>Atribut Stasiun</span><input id="ed-item-extra" value="${escapeText(matchingAttr)}"></label>`
                       : family === "measuring"
-                        ? `<label class="rb-field"><span>Kategori Lokasi</span><input id="ed-item-extra" value="taman"></label>`
+                        ? `<label class="rb-field"><span>Kategori Lokasi</span><input id="ed-item-extra" value="${escapeText(measuringCat)}"></label>`
                         : family === "tentacles"
-                          ? `<label class="rb-field"><span>Radius (meter)</span><input id="ed-item-num" type="number" value="1500" min="200"></label>
-                             <label class="rb-field"><span>Kategori Lokasi</span><input id="ed-item-extra" value="taman"></label>`
-                          : `<label class="rb-field"><span>Instruksi Foto</span><input id="ed-item-extra" value="Foto papan nama jalan terdekat."></label>`
+                          ? `<label class="rb-field"><span>Radius (meter)</span><input id="ed-item-num" type="number" value="${tentaclesNum}" min="200"></label>
+                             <label class="rb-field"><span>Kategori Lokasi</span><input id="ed-item-extra" value="${escapeText(tentaclesCat)}"></label>`
+                          : `<label class="rb-field"><span>Instruksi Foto</span><input id="ed-item-extra" value="${escapeText(photoPrompt)}"></label>`
               }
             </div>
-            <button type="button" class="primary" data-s3-action="add-book-item">+ Tambah Pertanyaan</button>
+            ${
+              editing
+                ? `<div class="rb-actions">
+                    <button type="button" class="primary" data-s3-action="save-book-item">Simpan Perubahan</button>
+                    <button type="button" class="secondary" data-s3-action="cancel-edit-book-item">Batal</button>
+                  </div>`
+                : `<button type="button" class="primary" data-s3-action="add-book-item">+ Tambah Pertanyaan</button>`
+            }
           </div>`
         : ""
     }
   </section>`;
+}
+
+function seekCardEditorValues(state: SeekStep3State) {
+  const editing = state.editingCardIndex !== null ? state.editingCardDraft : null;
+  const prim = state.cardPrimitive;
+  const sameEffect = editing && editing.effect.primitive === prim ? editing.effect : null;
+
+  let val = prim === "expand_hand" ? 1 : 5;
+  let curseCost: "none" | "discard_cards" | "seeker_min_distance" = "none";
+  let curseBlocker: CurseBlockerType = "block_questions";
+  let curseBuyout = 5;
+  let curseDetail = "Kirim foto ruang publik terdekat.";
+  let curseMins = 3;
+
+  if (sameEffect) {
+    if (sameEffect.primitive === "time_bonus") val = sameEffect.minutes ?? sameEffect.percentOfRawTime ?? 5;
+    else if (sameEffect.primitive === "time_trap") val = sameEffect.bonusMinutes;
+    else if (sameEffect.primitive === "expand_hand") val = sameEffect.extraSlots;
+    else if (sameEffect.primitive === "curse") {
+      const firstCost = sameEffect.curse.castingCosts[0];
+      if (firstCost?.type === "discard_cards") curseCost = "discard_cards";
+      else if (firstCost?.type === "seeker_min_distance") curseCost = "seeker_min_distance";
+      else curseCost = "none";
+
+      curseBlocker = sameEffect.curse.blockerType;
+      const buyoutMod = (sameEffect.curse.effectModifiers ?? []).find((m) => m.type === "skip_penalty_minutes");
+      curseBuyout = buyoutMod && buyoutMod.type === "skip_penalty_minutes" ? buyoutMod.penaltyMinutes : 0;
+
+      const clear = sameEffect.curse.clearCondition;
+      if (clear.type === "timer") {
+        curseMins = Math.max(1, Math.min(10, Math.round(clear.durationMs / 60_000)));
+      } else if (clear.type === "next_n_questions") {
+        curseMins = Math.max(1, Math.min(3, clear.count));
+      } else if (clear.type === "gps_detour") {
+        curseDetail = clear.poiCategory;
+        curseMins = Math.max(1, Math.min(10, Math.round((clear.fallbackTimerMs ?? 600_000) / 60_000)));
+      } else if (clear.type === "honor_task") {
+        curseDetail = clear.instruction;
+        curseMins = Math.max(1, Math.min(10, Math.round((clear.minDurationMs ?? 60_000) / 60_000)));
+      } else if (clear.type === "photo_challenge") {
+        curseDetail = clear.prompt;
+        curseMins = Math.max(1, Math.min(5, Math.round(clear.autoApproveMs / 60_000)));
+      }
+    }
+  }
+
+  return {
+    editing,
+    title: editing?.title ?? "",
+    description: editing?.description ?? "Kartu buatan kreator.",
+    copies: editing?.copies ?? 1,
+    val,
+    curseCost,
+    curseBlocker,
+    curseBuyout,
+    curseDetail,
+    curseMins,
+  };
 }
 
 function renderSeekDeck(
@@ -207,10 +309,15 @@ function renderSeekDeck(
   editable: boolean,
 ): string {
   const prim = state.cardPrimitive;
+  const vals = seekCardEditorValues(state);
+  const editing = vals.editing;
+  const initialPreview =
+    editing && editing.effect.primitive === prim ? editing : previewSeekCardFromState(state, editing);
+
   return `<section class="studio-rule-panel" data-testid="seek-deck-panel" aria-label="Kartu">
     <h4>Kartu</h4>
     <p><small>Total kartu: <strong>${pack.deck.cards.reduce((s, c) => s + c.copies, 0)}</strong> · Batas di tangan: ${pack.deck.baseHandLimit} · Maks. kutukan pemblokir aktif: ${pack.deck.maxActiveBlockingCurses}</small></p>
-    <details class="rb-accordion">
+    <details class="rb-accordion" data-studio-accordion="seek-deck">
       <summary>Daftar Kartu di Dek (${pack.deck.cards.length} jenis)</summary>
       <div class="st-card-stack">
         ${pack.deck.cards
@@ -218,7 +325,13 @@ function renderSeekDeck(
             renderSeekCardTile(
               card,
               editable
-                ? `<button type="button" class="secondary" data-s3-action="dup-seek-card" data-index="${idx}">Duplikat</button>
+                ? `<div class="st-copy-stepper" role="group" aria-label="Jumlah salinan ${escapeText(card.title)}">
+                     <button type="button" class="secondary st-step-btn" data-s3-action="step-seek-card-copies" data-index="${idx}" data-delta="-1" aria-label="Kurangi salinan ${escapeText(card.title)}" ${card.copies <= SEEK_CARD_MIN_COPIES ? "disabled" : ""}>−</button>
+                     <span class="st-step-count" data-testid="seek-card-copies-${idx}">${card.copies}×</span>
+                     <button type="button" class="secondary st-step-btn" data-s3-action="step-seek-card-copies" data-index="${idx}" data-delta="1" aria-label="Tambah salinan ${escapeText(card.title)}" ${card.copies >= SEEK_CARD_MAX_COPIES ? "disabled" : ""}>+</button>
+                   </div>
+                   <button type="button" class="secondary" data-s3-action="edit-seek-card" data-index="${idx}">Sunting</button>
+                   <button type="button" class="secondary" data-s3-action="dup-seek-card" data-index="${idx}">Duplikat</button>
                    <button type="button" class="secondary" data-s3-action="delete-seek-card" data-index="${idx}">Hapus</button>`
                 : undefined,
             ),
@@ -230,8 +343,8 @@ function renderSeekDeck(
     ${
       editable
         ? `<div class="rb-card" data-testid="seek-card-composer">
-            <h4>+ Buat Kartu Baru</h4>
-            <div data-testid="live-card-preview">${renderSeekCardTile(previewSeekCardFromState(state))}</div>
+            <h4>${editing ? "Sunting Kartu" : "+ Buat Kartu Baru"}</h4>
+            <div data-testid="live-card-preview">${renderSeekCardTile(initialPreview)}</div>
             <div class="rb-grid-2">
               <label class="rb-field"><span>Jenis Kartu</span>
                 <select id="ed-card-prim" ${dis}>
@@ -240,32 +353,32 @@ function renderSeekDeck(
                   ).join("")}
                 </select>
               </label>
-              <label class="rb-field"><span>Jumlah Salinan</span><input id="ed-card-copies" type="number" min="1" max="10" value="1"></label>
-              <label class="rb-field"><span>Judul Kartu</span><input id="ed-card-title" placeholder="Mis. Kutukan Kopi Senopati"></label>
-              <label class="rb-field"><span>Deskripsi Singkat</span><input id="ed-card-desc" value="Kartu buatan kreator."></label>
+              <label class="rb-field"><span>Jumlah Salinan</span><input id="ed-card-copies" type="number" min="${SEEK_CARD_MIN_COPIES}" max="${SEEK_CARD_MAX_COPIES}" value="${vals.copies}"></label>
+              <label class="rb-field"><span>Judul Kartu</span><input id="ed-card-title" placeholder="Mis. Kutukan Kopi Senopati" value="${escapeText(vals.title)}"></label>
+              <label class="rb-field"><span>Deskripsi Singkat</span><input id="ed-card-desc" value="${escapeText(vals.description)}"></label>
             </div>
 
             ${
               prim === "time_bonus"
-                ? `<label class="rb-field"><span>Bonus Menit</span><input id="ed-card-val" type="number" min="1" max="30" value="5"></label>`
+                ? `<label class="rb-field"><span>Bonus Menit</span><input id="ed-card-val" type="number" min="1" max="30" value="${vals.val}"></label>`
                 : prim === "time_trap"
-                  ? `<label class="rb-field"><span>Bonus Perangkap (menit)</span><input id="ed-card-val" type="number" min="1" max="15" value="5"></label>`
+                  ? `<label class="rb-field"><span>Bonus Perangkap (menit)</span><input id="ed-card-val" type="number" min="1" max="15" value="${vals.val}"></label>`
                   : prim === "expand_hand"
-                    ? `<label class="rb-field"><span>Slot Tambahan</span><input id="ed-card-val" type="number" min="1" max="2" value="1"></label>`
+                    ? `<label class="rb-field"><span>Slot Tambahan</span><input id="ed-card-val" type="number" min="1" max="2" value="${vals.val}"></label>`
                     : prim === "curse"
                       ? `<div class="rb-grid-2">
                           <label class="rb-field"><span>Syarat Main</span>
                             <select id="ed-curse-cost">
-                              <option value="none">Gratis</option>
-                              <option value="discard_cards">Buang 1 Kartu</option>
-                              <option value="seeker_min_distance">Pencari min. 500 m</option>
+                              <option value="none" ${vals.curseCost === "none" ? "selected" : ""}>Gratis</option>
+                              <option value="discard_cards" ${vals.curseCost === "discard_cards" ? "selected" : ""}>Buang 1 Kartu</option>
+                              <option value="seeker_min_distance" ${vals.curseCost === "seeker_min_distance" ? "selected" : ""}>Pencari min. 500 m</option>
                             </select>
                           </label>
                           <label class="rb-field"><span>Efek Blokir</span>
                             <select id="ed-curse-blocker">
-                              <option value="block_questions">Blokir Pertanyaan</option>
-                              <option value="block_transit">Blokir Transit</option>
-                              <option value="none">Tanpa Blokir</option>
+                              <option value="block_questions" ${vals.curseBlocker === "block_questions" ? "selected" : ""}>Blokir Pertanyaan</option>
+                              <option value="block_transit" ${vals.curseBlocker === "block_transit" ? "selected" : ""}>Blokir Transit</option>
+                              <option value="none" ${vals.curseBlocker === "none" ? "selected" : ""}>Tanpa Blokir</option>
                             </select>
                           </label>
                           <label class="rb-field"><span>Cara Lepas Kutukan</span>
@@ -277,13 +390,20 @@ function renderSeekDeck(
                               <option value="honor_task" ${state.curseClearType === "honor_task" ? "selected" : ""}>Tugas Langsung</option>
                             </select>
                           </label>
-                          <label class="rb-field"><span>Penalti Lewati (menit, 0 = tidak bisa dilewati)</span><input id="ed-curse-buyout" type="number" min="0" max="20" value="5"></label>
-                          <label class="rb-field"><span>Instruksi / Kategori Lokasi</span><input id="ed-curse-detail" value="Kirim foto ruang publik terdekat."></label>
-                          <label class="rb-field"><span>Durasi / Setuju Otomatis (menit, maks. 5)</span><input id="ed-curse-mins" type="number" min="1" max="10" value="3"></label>
+                          <label class="rb-field"><span>Penalti Lewati (menit, 0 = tidak bisa dilewati)</span><input id="ed-curse-buyout" type="number" min="0" max="20" value="${vals.curseBuyout}"></label>
+                          <label class="rb-field"><span>Instruksi / Kategori Lokasi</span><input id="ed-curse-detail" value="${escapeText(vals.curseDetail)}"></label>
+                          <label class="rb-field"><span>Durasi / Setuju Otomatis (menit, maks. 5)</span><input id="ed-curse-mins" type="number" min="1" max="10" value="${vals.curseMins}"></label>
                         </div>`
                       : ""
             }
-            <button type="button" class="primary" data-s3-action="add-seek-card">+ Tambahkan Kartu ke Dek</button>
+            ${
+              editing
+                ? `<div class="rb-actions">
+                    <button type="button" class="primary" data-s3-action="save-seek-card">Simpan Perubahan</button>
+                    <button type="button" class="secondary" data-s3-action="cancel-edit-seek-card">Batal</button>
+                  </div>`
+                : `<button type="button" class="primary" data-s3-action="add-seek-card">+ Tambahkan Kartu ke Dek</button>`
+            }
           </div>`
         : ""
     }
@@ -351,7 +471,7 @@ function renderSeekCardTile(card: HideSeekCardDefinition, actionsHtml?: string):
   });
 }
 
-function previewSeekCardFromState(state: SeekStep3State): HideSeekCardDefinition {
+function previewSeekCardFromState(state: SeekStep3State, editing?: HideSeekCardDefinition | null): HideSeekCardDefinition {
   const meta = CARD_PRIMITIVES.find((p) => p.id === state.cardPrimitive) ?? CARD_PRIMITIVES[0];
   const effect: HideSeekCardEffect =
     state.cardPrimitive === "curse"
@@ -381,35 +501,43 @@ function previewSeekCardFromState(state: SeekStep3State): HideSeekCardDefinition
                 ? { primitive: "move_zone", travelWindowMs: 600_000, revealOldStation: true, discardHand: true }
                 : { primitive: state.cardPrimitive };
   return {
-    id: "preview",
+    id: editing?.id ?? "preview",
     category: meta.cat,
-    copies: 1,
-    title: "Pratinjau Kartu Baru",
-    description: meta.label,
+    copies: editing?.copies ?? 1,
+    title: editing?.title || "Pratinjau Kartu Baru",
+    description: editing?.description || meta.label,
     effect,
   };
 }
 
 export function renderSeekLiveCardPreview(root: HTMLElement, state: SeekStep3State): string {
-  const built = buildSeekCardFromForm(root, state, "Pratinjau Kartu Baru");
-  return renderSeekCardTile(built ?? previewSeekCardFromState(state));
+  const built = buildSeekCardFromForm(root, state, "Pratinjau Kartu Baru", state.editingCardDraft?.id);
+  return renderSeekCardTile(built ?? previewSeekCardFromState(state, state.editingCardDraft));
 }
 
 export function buildSeekCardFromForm(
   root: HTMLElement,
   state: SeekStep3State,
   fallbackTitle?: string,
+  existingId?: string,
 ): HideSeekCardDefinition | null {
   const title = root.querySelector<HTMLInputElement>("#ed-card-title")?.value.trim() || fallbackTitle;
   if (!title) return null;
   const description = root.querySelector<HTMLInputElement>("#ed-card-desc")?.value.trim() || "Kartu buatan kreator.";
-  const copies = Math.max(1, Number(root.querySelector<HTMLInputElement>("#ed-card-copies")?.value ?? 1));
+  const rawCopies = Number(root.querySelector<HTMLInputElement>("#ed-card-copies")?.value ?? 1);
+  const copies = Math.max(SEEK_CARD_MIN_COPIES, Math.min(SEEK_CARD_MAX_COPIES, Number.isFinite(rawCopies) ? Math.round(rawCopies) : 1));
   const prim = state.cardPrimitive;
   const meta = CARD_PRIMITIVES.find((p) => p.id === prim) ?? CARD_PRIMITIVES[0];
   const val = Number(root.querySelector<HTMLInputElement>("#ed-card-val")?.value ?? 5);
 
   let effect: HideSeekCardEffect;
-  if (prim === "time_bonus") effect = { primitive: "time_bonus", minutes: val };
+  if (prim === "time_bonus") {
+    const editingPct =
+      state.editingCardDraft?.effect.primitive === "time_bonus" &&
+      state.editingCardDraft.effect.minutes === undefined &&
+      state.editingCardDraft.effect.percentOfRawTime !== undefined;
+    effect = editingPct ? { primitive: "time_bonus", percentOfRawTime: val } : { primitive: "time_bonus", minutes: val };
+  }
   else if (prim === "veto") effect = { primitive: "veto" };
   else if (prim === "randomize") effect = { primitive: "randomize" };
   else if (prim === "duplicate") effect = { primitive: "duplicate" };
@@ -457,7 +585,7 @@ export function buildSeekCardFromForm(
   }
 
   return {
-    id: `card-${prim}-${Date.now().toString(36)}`,
+    id: existingId || `card-${prim}-${Date.now().toString(36)}`,
     category: meta.cat,
     copies,
     title,

@@ -24,6 +24,8 @@ import { escapeText } from "./solo-view";
 import {
   buildClaimCardFromForm,
   buildClaimChallengeFromForm,
+  CLAIM_CARD_MAX_COPIES,
+  CLAIM_CARD_MIN_COPIES,
   renderClaimLiveCardPreview,
   renderClaimStep3,
   type ClaimStep3State,
@@ -36,6 +38,8 @@ import {
   buildSeekCardFromForm,
   renderSeekLiveCardPreview,
   renderSeekStep3,
+  SEEK_CARD_MAX_COPIES,
+  SEEK_CARD_MIN_COPIES,
   type SeekStep3State,
 } from "./studio-seek-builder";
 import { formatHeroCardSvg, stepIconSvg } from "./studio-assets";
@@ -94,6 +98,38 @@ const SEEK_FAMILY_LABELS: Record<HideSeekQuestionFamily, string> = {
   photo: "Foto",
 };
 
+const AUTO_SAVE_FIELD_IDS = new Set([
+  "ed-meta-title",
+  "ed-meta-byline",
+  "ed-meta-city",
+  "ed-meta-price",
+  "ed-meta-summary",
+  "ed-claim-minp",
+  "ed-claim-maxp",
+  "ed-claim-team",
+  "ed-claim-duration",
+  "ed-claim-solo-locks",
+  "ed-claim-solo-zones",
+  "ed-claim-fail-policy",
+  "ed-claim-cooldown",
+  "ed-claim-hand",
+  "ed-cdeck-enabled",
+  "ed-cdeck-maxc",
+  "ed-seek-minp",
+  "ed-seek-maxp",
+  "ed-zone",
+  "ed-head",
+  "ed-search",
+  "ed-regroup",
+  "ed-regroup-policy",
+  "ed-repeat-mode",
+  "ed-hand",
+  "ed-max-curses",
+  "ed-fam-enabled",
+  "ed-fam-draw",
+  "ed-fam-keep",
+]);
+
 const STEP_META: { step: StudioStep; short: string; label: string }[] = [
   { step: 1, short: "1. Draf", label: "Draf & Info" },
   { step: 2, short: "2. Peta", label: "Peta & Lokasi" },
@@ -135,6 +171,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let authRequired = false;
   let loading = true;
   let busy = false;
+  let formDirty = false;
+  let savingForm = false;
   let validationErrors: RulebookValidationIssue[] = [];
   let dryRunSummary = "";
   let statusMsg = "";
@@ -147,6 +185,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let transitCatalogPromise: Promise<JakartaTransitCatalog | null> | null = null;
   let savingMap = false;
   const mapEdits = new Map<string, Map<string, string>>();
+  const openAccordions = new Set<string>();
   const step2: Step2State = {
     mapMode: "select",
     subTab: "primary",
@@ -176,12 +215,20 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     family: "radar",
     cardPrimitive: "curse",
     curseClearType: "photo_challenge",
+    editingQuestionIndex: null,
+    editingQuestionDraft: null,
+    editingCardIndex: null,
+    editingCardDraft: null,
   };
   const claimStep3: ClaimStep3State = {
     subTab: "session",
     challengeTarget: "backup",
     challengePrimitive: "call_your_shot",
     cardPrimitive: "sabotage_curse",
+    editingChallengeIndex: null,
+    editingChallengeDraft: null,
+    editingCardIndex: null,
+    editingCardDraft: null,
   };
   const initialDryRun: DryRunState = {
     seekAnchorId: "",
@@ -221,6 +268,17 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     dryRun.claimTestResult = "";
   }
 
+  function resetStep3Editors() {
+    seekStep3.editingQuestionIndex = null;
+    seekStep3.editingQuestionDraft = null;
+    seekStep3.editingCardIndex = null;
+    seekStep3.editingCardDraft = null;
+    claimStep3.editingChallengeIndex = null;
+    claimStep3.editingChallengeDraft = null;
+    claimStep3.editingCardIndex = null;
+    claimStep3.editingCardDraft = null;
+  }
+
   function go(next: StudioView, draft?: StudioVersionRecord, message = "", errors: RulebookValidationIssue[] = []) {
     if (signal.aborted) return;
     refreshSeq++;
@@ -230,6 +288,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (draft) versions = [draft, ...versions.filter(record => record.packId !== draft.packId || record.version !== draft.version)];
     selectedKey = draft ? `${draft.packId}@${draft.version}` : "";
     step = 1;
+    formDirty = false;
+    savingForm = false;
+    resetStep3Editors();
+    openAccordions.clear();
     step2.selected = null;
     if (draft && isClaimStudioPack(draft.pack)) {
       claimStep3.challengeTarget = draft.pack.geography.landmarks[0]?.id ?? "backup";
@@ -270,6 +332,41 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (loading) void refresh();
   }
 
+  function editorSaveStatusInfo(): { state: "saving" | "dirty" | "saved"; text: string } {
+    if (savingForm || savingMap) return { state: "saving", text: "Menyimpan…" };
+    if (formDirty || !step2.saved) return { state: "dirty", text: "Belum disimpan" };
+    return { state: "saved", text: "Tersimpan ✓" };
+  }
+
+  function updateEditorSavePill() {
+    if (signal.aborted) return;
+    const pill = root.querySelector<HTMLElement>('[data-testid="studio-save-status"]');
+    const info = editorSaveStatusInfo();
+    if (pill) {
+      pill.textContent = info.text;
+      pill.dataset.saveState = info.state;
+    }
+    for (const saveBtn of root.querySelectorAll<HTMLButtonElement>('button[data-action="save-draft"]')) {
+      saveBtn.disabled = savingForm || busy;
+    }
+  }
+
+  function syncOpenAccordions() {
+    for (const details of root.querySelectorAll<HTMLDetailsElement>("details[data-studio-accordion]")) {
+      const key = details.dataset.studioAccordion;
+      if (!key) continue;
+      if (details.open) openAccordions.add(key);
+      else openAccordions.delete(key);
+    }
+  }
+
+  function restoreOpenAccordions(container: ParentNode) {
+    for (const details of container.querySelectorAll<HTMLDetailsElement>("details[data-studio-accordion]")) {
+      const key = details.dataset.studioAccordion;
+      if (key && openAccordions.has(key)) details.open = true;
+    }
+  }
+
   async function persistDraft(
     updatedPack: StudioPack,
     updatedSnapshot: GeoSnapshot,
@@ -281,6 +378,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (mapSave) {
       savingMap = true;
       updateMapSaveLabel();
+    } else {
+      savingForm = true;
+      updateEditorSavePill();
     }
     try {
       const res = await apiJson<{
@@ -299,10 +399,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         if (saved) versions = versions.map(record => record.packId === saved.packId && record.version === saved.version ? saved : record);
         if (savedMapKey) mapEdits.delete(savedMapKey);
         step2.saved = mapEdits.size === 0;
+        if (!mapSave) formDirty = false;
+        errorMsg = "";
         validationErrors = res.validation?.errors ?? [];
         statusMsg = successMessage ?? (res.validation?.ok
           ? "Draf tersimpan dan lolos validator otomatis."
           : "Draf tersimpan dengan kesalahan validasi.");
+        if (mapSave) savingMap = false;
+        else savingForm = false;
         await refresh();
         return true;
       }
@@ -311,10 +415,24 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       errorMsg = "Perubahan belum tersimpan. Periksa koneksi, lalu coba lagi.";
     } finally {
       if (mapSave) savingMap = false;
+      else savingForm = false;
       updateMapSaveLabel();
+      updateEditorSavePill();
     }
     render();
     return false;
+  }
+
+  async function flushDirtyFormIfNeeded(): Promise<boolean> {
+    if (!formDirty || view !== "editor") return true;
+    if (savingForm) return false;
+    const active = currentDraft();
+    if (!active || !isEditable(active)) {
+      formDirty = false;
+      return true;
+    }
+    const { pack, snapshot } = applyFormEdits(active);
+    return persistDraft(pack, snapshot);
   }
 
   function mapEditKey() {
@@ -332,6 +450,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     )) {
       fields.disabled = savingMap;
     }
+    updateEditorSavePill();
   }
 
   function restoreMapFields() {
@@ -663,7 +782,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         <label class="rb-field"><span>Ringkasan Paket</span><input id="ed-meta-summary" value="${escapeText(active.pack.meta.summary)}" ${disabled}></label>
         <div class="rb-sticky-footer">
           <button type="button" class="secondary" data-action="export-json">Unduh JSON</button>
-          ${editable ? `<button type="button" class="secondary" data-action="save-draft">Simpan</button>` : ""}
+          ${editable ? `<button type="button" class="secondary" data-action="save-draft" ${savingForm || busy ? "disabled" : ""}>Simpan</button>` : ""}
           <button type="button" class="primary" data-step="2">Peta →</button>
         </div>
       </div>`;
@@ -732,9 +851,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     const editable = isEditable(active);
     if (isClaimStudioPack(active.pack)) {
-      return renderClaimStep3(active.pack, claimStep3, editable, statusMsg);
+      return renderClaimStep3(active.pack, claimStep3, editable, statusMsg, savingForm || busy);
     }
-    return renderSeekStep3(active.pack, seekStep3, editable, statusMsg);
+    return renderSeekStep3(active.pack, seekStep3, editable, statusMsg, savingForm || busy);
   }
 
   function renderStep4(active?: StudioVersionRecord): string {
@@ -749,14 +868,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         <span class="rb-badge">ID Peta: ${escapeText(active.snapshot.hash.slice(0, 10))}…</span>
       </div>
       <div class="rb-actions">
-        ${editable ? `<button type="button" class="secondary" data-action="save-draft">Jalankan Validator Otomatis</button>` : ""}
+        ${editable ? `<button type="button" class="secondary" data-action="save-draft" ${savingForm || busy ? "disabled" : ""}>Jalankan Validator Otomatis</button>` : ""}
         <button type="button" class="secondary" data-action="dry-run">Uji Coba Cepat</button>
         ${editable ? `<button type="button" class="primary" data-action="submit-draft">Ajukan untuk Tinjauan</button>` : ""}
       </div>
       ${dryRunSummary ? `<p role="status" class="rb-badge">${escapeText(dryRunSummary)}</p>` : ""}
       <div class="rb-sticky-footer">
         <button type="button" class="secondary" data-step="3">← Aturan</button>
-        ${editable ? `<button type="button" class="secondary" data-action="save-draft">Validasi</button>` : "<span></span>"}
+        ${editable ? `<button type="button" class="secondary" data-action="save-draft" ${savingForm || busy ? "disabled" : ""}>Validasi</button>` : "<span></span>"}
       </div>
     </div>
 
@@ -780,6 +899,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   function render() {
     if (signal.aborted) return;
+    syncOpenAccordions();
     const active = currentDraft();
     if (!root.querySelector("#st-header-slot")) {
       root.innerHTML = `<section class="rb-shell studio-shell" aria-label="Studio Kreator">
@@ -802,6 +922,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       return `<li><div>${escapeText(error.message)}</div>
         <button type="button" class="secondary" data-jump-path="${escapeText(error.path)}" data-jump-zone="${escapeText(zone)}">Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button></li>`;
     }).join("")}</ul>` : "";
+    const saveInfo = editorSaveStatusInfo();
 
     headerSlot.innerHTML = `<div class="rb-card studio-heading">
       <div class="rb-actions">
@@ -811,7 +932,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         ${renderAccountChip(authState)}
       </div>
       <h2 id="studio-page-heading" tabindex="-1">${escapeText(heading)}</h2>
-      ${active ? `<p class="studio-context">${escapeText(formatLabels[active.format])} · ${escapeText(active.packId)} v${active.version} · ${escapeText(statusLabel(active.status))}</p>`
+      ${active ? `<div class="studio-context-row"><p class="studio-context">${escapeText(formatLabels[active.format])} · ${escapeText(active.packId)} v${active.version} · ${escapeText(statusLabel(active.status))}</p>${isEditable(active) ? `<span class="studio-save-pill" data-testid="studio-save-status" data-save-state="${saveInfo.state}" role="status">${saveInfo.text}</span>` : ""}</div>`
         : view === "template" || view === "import" ? `<p class="studio-context">${escapeText(formatLabels[format])}</p>` : ""}
       ${statusMsg && !(view === "editor" && step === 3) ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
       ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
@@ -853,6 +974,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       if (topSlot && mapHost && fallbackEl && bottomSlot && studioMapKey === draftKey) {
         topSlot.innerHTML = renderStep2Top(step2, editable);
         bottomSlot.innerHTML = renderStep2Bottom(active, step2, editable, claimStep3);
+        restoreOpenAccordions(bottomSlot);
         restoreMapFields();
         mapHost.hidden = step2.mapFailed;
         fallbackEl.hidden = !step2.mapFailed;
@@ -876,6 +998,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
       destroyStep2Map();
       bodySlot.innerHTML = renderStep2View(active, step2, editable, claimStep3);
+      restoreOpenAccordions(bodySlot);
       restoreMapFields();
       if (!step2.mapFailed) {
         const freshHost = bodySlot.querySelector<HTMLElement>("#st-map-host");
@@ -893,6 +1016,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           : step === 3
             ? renderStep3(active)
             : renderStep4(active);
+    restoreOpenAccordions(bodySlot);
   }
 
   function applyFormEdits(active: StudioVersionRecord): { pack: StudioPack; snapshot: GeoSnapshot } {
@@ -987,6 +1111,40 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         : renderSeekLiveCardPreview(root, seekStep3);
   }
 
+  function captureEditingChallengeCommonFields() {
+    if (!claimStep3.editingChallengeDraft) return;
+    const title = root.querySelector<HTMLInputElement>("#ed-chal-title")?.value;
+    const notes = root.querySelector<HTMLTextAreaElement>("#ed-chal-notes")?.value;
+    const hint = root.querySelector<HTMLTextAreaElement>("#ed-chal-hint")?.value;
+    const explanation = root.querySelector<HTMLTextAreaElement>("#ed-chal-explanation")?.value;
+    const est = root.querySelector<HTMLInputElement>("#ed-chal-estimate")?.valueAsNumber;
+    const rev = root.querySelector<HTMLInputElement>("#ed-chal-reviewed")?.checked;
+    if (title !== undefined) claimStep3.editingChallengeDraft.title = title;
+    if (notes !== undefined) claimStep3.editingChallengeDraft.verificationNotes = notes;
+    if (hint !== undefined) claimStep3.editingChallengeDraft.hint = hint;
+    if (explanation !== undefined) claimStep3.editingChallengeDraft.learningExplanation = explanation;
+    if (est !== undefined && Number.isFinite(est)) claimStep3.editingChallengeDraft.estimatedSeconds = est;
+    if (rev !== undefined) claimStep3.editingChallengeDraft.reviewed = rev;
+  }
+
+  function captureEditingCardCommonFields() {
+    if (format === "claim-the-city" && claimStep3.editingCardDraft) {
+      const title = root.querySelector<HTMLInputElement>("#ed-ccard-title")?.value;
+      const desc = root.querySelector<HTMLInputElement>("#ed-ccard-desc")?.value;
+      const copies = root.querySelector<HTMLInputElement>("#ed-ccard-copies")?.valueAsNumber;
+      if (title !== undefined) claimStep3.editingCardDraft.title = title;
+      if (desc !== undefined) claimStep3.editingCardDraft.description = desc;
+      if (copies !== undefined && Number.isFinite(copies)) claimStep3.editingCardDraft.copies = copies;
+    } else if (format === "hide-and-seek" && seekStep3.editingCardDraft) {
+      const title = root.querySelector<HTMLInputElement>("#ed-card-title")?.value;
+      const desc = root.querySelector<HTMLInputElement>("#ed-card-desc")?.value;
+      const copies = root.querySelector<HTMLInputElement>("#ed-card-copies")?.valueAsNumber;
+      if (title !== undefined) seekStep3.editingCardDraft.title = title;
+      if (desc !== undefined) seekStep3.editingCardDraft.description = desc;
+      if (copies !== undefined && Number.isFinite(copies)) seekStep3.editingCardDraft.copies = copies;
+    }
+  }
+
   root.addEventListener("input", (event) => {
     const target = event.target as HTMLElement | null;
     if (!target || !target.id) return;
@@ -1012,6 +1170,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       updateMapSaveLabel();
       return;
     }
+    if (view === "editor" && AUTO_SAVE_FIELD_IDS.has(target.id)) {
+      const active = currentDraft();
+      if (active && isEditable(active)) {
+        formDirty = true;
+        updateEditorSavePill();
+      }
+    }
     if (target.id.startsWith("ed-card-") || target.id.startsWith("ed-curse-") || target.id.startsWith("ed-ccard-")) {
       updateLiveCardPreview();
     }
@@ -1019,6 +1184,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   root.addEventListener("change", (event) => {
     const target = event.target as HTMLElement | null;
+    if (target && target.id && view === "editor" && AUTO_SAVE_FIELD_IDS.has(target.id)) {
+      const active = currentDraft();
+      if (active && isEditable(active)) {
+        formDirty = true;
+        updateEditorSavePill();
+      }
+    }
     if (target instanceof HTMLSelectElement && target.id === "st-transit-filter") {
       step2.transitFilter = target.value as Step2State["transitFilter"];
       step2.pointPage = 0;
@@ -1036,17 +1208,21 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       return;
     }
     if (target instanceof HTMLSelectElement && target.id === "ed-card-prim") {
+      captureEditingCardCommonFields();
       seekStep3.cardPrimitive = target.value as HideSeekCardEffect["primitive"];
       render();
       return;
     }
     if (target instanceof HTMLSelectElement && target.id === "ed-curse-clear") {
+      captureEditingCardCommonFields();
       seekStep3.curseClearType = target.value as CurseClearCondition["type"];
       render();
       return;
     }
     if (target instanceof HTMLSelectElement && target.id === "ed-chal-target") {
       claimStep3.challengeTarget = target.value;
+      claimStep3.editingChallengeIndex = null;
+      claimStep3.editingChallengeDraft = null;
       if (target.value !== "backup") {
         step2.selected = { kind: "landmark", id: target.value };
       }
@@ -1054,11 +1230,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       return;
     }
     if (target instanceof HTMLSelectElement && target.id === "ed-chal-prim") {
+      captureEditingChallengeCommonFields();
       claimStep3.challengePrimitive = target.value as ClaimChallengePrimitive["primitive"];
       render();
       return;
     }
     if (target instanceof HTMLSelectElement && target.id === "ed-ccard-prim") {
+      captureEditingCardCommonFields();
       claimStep3.cardPrimitive = target.value as ClaimCardEffect["primitive"];
       render();
       return;
@@ -1107,7 +1285,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   root.addEventListener("click", (event) => {
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
-    if (!btn || busy || savingMap) return;
+    if (!btn || busy || savingMap || savingForm) return;
     if (btn.dataset.authAction) {
       if (btn.dataset.authAction === "open-account" && authState?.authenticated) {
         openAuthModal({ mode: "account" });
@@ -1128,7 +1306,15 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       return;
     }
     if (btn.dataset.studioView) {
-      go(btn.dataset.studioView as StudioView);
+      const nextView = btn.dataset.studioView as StudioView;
+      if (view === "editor" && formDirty) {
+        void (async () => {
+          if (!(await flushDirtyFormIfNeeded())) return;
+          go(nextView);
+        })();
+        return;
+      }
+      go(nextView);
       return;
     }
     if (btn.dataset.draft) {
@@ -1139,55 +1325,69 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (btn.dataset.step) {
       const nextStep = Number(btn.dataset.step) as StudioStep;
       if (nextStep >= 1 && nextStep <= 4) {
-        if (nextStep !== step) statusMsg = "";
-        step = nextStep;
-        render();
-        root.querySelector<HTMLButtonElement>(".rb-step-active")?.focus();
+        void (async () => {
+          if (formDirty) {
+            const ok = await flushDirtyFormIfNeeded();
+            if (!ok) return;
+          }
+          if (nextStep !== step) statusMsg = "";
+          step = nextStep;
+          render();
+          root.querySelector<HTMLButtonElement>(".rb-step-active")?.focus();
+        })();
       }
       return;
     }
     if (btn.dataset.jumpPath) {
-      const target = resolveValidationJump(btn.dataset.jumpPath, format);
-      step = target.step;
-      if (target.step2Tab) {
-        step2.editingChallenges = target.focusSelector === "#ed-chal-target";
-        const active = currentDraft();
-        step2.subTab = target.step2Tab;
-        step2.drawer = null;
-        const index = Number(/\[(\d+)\]/.exec(btn.dataset.jumpPath)?.[1] ?? 0);
-        if (active && target.step2Tab === "primary") {
-          const pack = active.pack;
-          const claim = isClaimStudioPack(pack);
-          if (claim && btn.dataset.jumpPath.toLowerCase().includes("backup")) {
-            const firstLm = pack.geography.landmarks[0];
-            if (firstLm && step2.selected?.kind !== "landmark") {
-              step2.selected = { kind: "landmark", id: firstLm.id };
-            }
-            claimStep3.challengeTarget = "backup";
-          } else {
-            const lmMatch = /landmarkChallenges\.([^.[]+)/.exec(btn.dataset.jumpPath);
-            const matchedLm = claim && lmMatch ? pack.geography.landmarks.find(l => l.id === lmMatch[1]) : undefined;
-            const point = claim ? (matchedLm ?? pack.geography.landmarks[index]) : active.snapshot.stations[index];
-            if (point) {
-              step2.selected = { kind: claim ? "landmark" : "station", id: point.id };
-              if (claim) claimStep3.challengeTarget = point.id;
+      const jumpPath = btn.dataset.jumpPath;
+      const jumpZone = btn.dataset.jumpZone;
+      void (async () => {
+        if (formDirty) {
+          const ok = await flushDirtyFormIfNeeded();
+          if (!ok) return;
+        }
+        const target = resolveValidationJump(jumpPath, format);
+        step = target.step;
+        if (target.step2Tab) {
+          step2.editingChallenges = target.focusSelector === "#ed-chal-target";
+          const active = currentDraft();
+          step2.subTab = target.step2Tab;
+          step2.drawer = null;
+          const index = Number(/\[(\d+)\]/.exec(jumpPath)?.[1] ?? 0);
+          if (active && target.step2Tab === "primary") {
+            const pack = active.pack;
+            const claim = isClaimStudioPack(pack);
+            if (claim && jumpPath.toLowerCase().includes("backup")) {
+              const firstLm = pack.geography.landmarks[0];
+              if (firstLm && step2.selected?.kind !== "landmark") {
+                step2.selected = { kind: "landmark", id: firstLm.id };
+              }
+              claimStep3.challengeTarget = "backup";
+            } else {
+              const lmMatch = /landmarkChallenges\.([^.[]+)/.exec(jumpPath);
+              const matchedLm = claim && lmMatch ? pack.geography.landmarks.find(l => l.id === lmMatch[1]) : undefined;
+              const point = claim ? (matchedLm ?? pack.geography.landmarks[index]) : active.snapshot.stations[index];
+              if (point) {
+                step2.selected = { kind: claim ? "landmark" : "station", id: point.id };
+                if (claim) claimStep3.challengeTarget = point.id;
+              }
             }
           }
+          if (active && target.step2Tab === "secondary") {
+            if (isClaimStudioPack(active.pack)) step2.zoneId = jumpZone || active.pack.geography.zones[index]?.id || null;
+            else if (active.snapshot.pois[index]) step2.selected = { kind: "poi", id: active.snapshot.pois[index].id };
+          }
+          if (active && target.step2Tab === "start") step2.selected = { kind: "start", id: active.snapshot.startPoint.id };
+          if (active && target.step2Tab === "boundary") step2.vertex = active.snapshot.boundaryPolygon[index] ? index : null;
         }
-        if (active && target.step2Tab === "secondary") {
-          if (isClaimStudioPack(active.pack)) step2.zoneId = btn.dataset.jumpZone || active.pack.geography.zones[index]?.id || null;
-          else if (active.snapshot.pois[index]) step2.selected = { kind: "poi", id: active.snapshot.pois[index].id };
+        if (target.seekSubTab) seekStep3.subTab = target.seekSubTab;
+        if (target.claimSubTab) claimStep3.subTab = target.claimSubTab;
+        render();
+        if (target.focusSelector || target.step2Tab) {
+          const el = root.querySelector<HTMLElement>(target.focusSelector ?? "[data-studio-point-heading]");
+          el?.focus();
         }
-        if (active && target.step2Tab === "start") step2.selected = { kind: "start", id: active.snapshot.startPoint.id };
-        if (active && target.step2Tab === "boundary") step2.vertex = active.snapshot.boundaryPolygon[index] ? index : null;
-      }
-      if (target.seekSubTab) seekStep3.subTab = target.seekSubTab;
-      if (target.claimSubTab) claimStep3.subTab = target.claimSubTab;
-      render();
-      if (target.focusSelector || target.step2Tab) {
-        const el = root.querySelector<HTMLElement>(target.focusSelector ?? "[data-studio-point-heading]");
-        el?.focus();
-      }
+      })();
       return;
     }
     if (btn.dataset.dryAction) {
@@ -1306,25 +1506,59 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       return;
     }
     if (btn.dataset.s3Tab) {
-      if (seekStep3.subTab !== btn.dataset.s3Tab) statusMsg = "";
-      seekStep3.subTab = btn.dataset.s3Tab as SeekStep3State["subTab"];
-      render();
-      root.querySelector<HTMLButtonElement>(`[data-s3-tab="${seekStep3.subTab}"]`)?.focus({ preventScroll: true });
+      const nextTab = btn.dataset.s3Tab as SeekStep3State["subTab"];
+      void (async () => {
+        if (formDirty) {
+          const ok = await flushDirtyFormIfNeeded();
+          if (!ok) return;
+        }
+        if (seekStep3.subTab !== nextTab) {
+          statusMsg = "";
+          seekStep3.editingQuestionIndex = null;
+          seekStep3.editingQuestionDraft = null;
+          seekStep3.editingCardIndex = null;
+          seekStep3.editingCardDraft = null;
+        }
+        seekStep3.subTab = nextTab;
+        render();
+        root.querySelector<HTMLButtonElement>(`[data-s3-tab="${seekStep3.subTab}"]`)?.focus({ preventScroll: true });
+      })();
       return;
     }
     if (btn.dataset.s3Family) {
-      seekStep3.family = btn.dataset.s3Family as HideSeekQuestionFamily;
-      render();
+      const nextFamily = btn.dataset.s3Family as HideSeekQuestionFamily;
+      void (async () => {
+        if (formDirty) {
+          const ok = await flushDirtyFormIfNeeded();
+          if (!ok) return;
+        }
+        seekStep3.family = nextFamily;
+        seekStep3.editingQuestionIndex = null;
+        seekStep3.editingQuestionDraft = null;
+        render();
+      })();
       return;
     }
     if (btn.dataset.c3Tab) {
-      if (claimStep3.subTab !== btn.dataset.c3Tab) statusMsg = "";
-      claimStep3.subTab = btn.dataset.c3Tab as ClaimStep3State["subTab"];
-      render();
-      root.querySelector<HTMLButtonElement>(`[data-c3-tab="${claimStep3.subTab}"]`)?.focus({ preventScroll: true });
+      const nextTab = btn.dataset.c3Tab as ClaimStep3State["subTab"];
+      void (async () => {
+        if (formDirty) {
+          const ok = await flushDirtyFormIfNeeded();
+          if (!ok) return;
+        }
+        if (claimStep3.subTab !== nextTab) {
+          statusMsg = "";
+          claimStep3.editingCardIndex = null;
+          claimStep3.editingCardDraft = null;
+        }
+        claimStep3.subTab = nextTab;
+        render();
+        root.querySelector<HTMLButtonElement>(`[data-c3-tab="${claimStep3.subTab}"]`)?.focus({ preventScroll: true });
+      })();
       return;
     }
     if (btn.dataset.c3Prim) {
+      captureEditingChallengeCommonFields();
       claimStep3.challengePrimitive = btn.dataset.c3Prim as ClaimChallengePrimitive["primitive"];
       render();
       return;
@@ -1332,6 +1566,55 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
     const s3Action = btn.dataset.s3Action;
     if (s3Action) {
+      if (s3Action === "edit-book-item") {
+        const active = currentDraft();
+        if (!active || !isEditable(active) || isClaimStudioPack(active.pack)) return;
+        const idx = Number(btn.dataset.index ?? -1);
+        const existing = active.pack.investigationBook.families[seekStep3.family];
+        const item = existing?.items[idx];
+        if (!item) return;
+        seekStep3.editingQuestionIndex = idx;
+        seekStep3.editingQuestionDraft = structuredClone(item) as unknown as SeekStep3State["editingQuestionDraft"];
+        errorMsg = "";
+        render();
+        const input = root.querySelector<HTMLInputElement>("#ed-item-label");
+        input?.focus();
+        input?.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      if (s3Action === "cancel-edit-book-item") {
+        seekStep3.editingQuestionIndex = null;
+        seekStep3.editingQuestionDraft = null;
+        errorMsg = "";
+        render();
+        return;
+      }
+      if (s3Action === "edit-seek-card") {
+        const active = currentDraft();
+        if (!active || !isEditable(active) || isClaimStudioPack(active.pack)) return;
+        const idx = Number(btn.dataset.index ?? -1);
+        const card = active.pack.deck.cards[idx];
+        if (!card) return;
+        seekStep3.editingCardIndex = idx;
+        seekStep3.editingCardDraft = structuredClone(card);
+        seekStep3.cardPrimitive = card.effect.primitive;
+        if (card.effect.primitive === "curse") {
+          seekStep3.curseClearType = card.effect.curse.clearCondition.type;
+        }
+        errorMsg = "";
+        render();
+        const input = root.querySelector<HTMLInputElement>("#ed-card-title");
+        input?.focus();
+        input?.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      if (s3Action === "cancel-edit-seek-card") {
+        seekStep3.editingCardIndex = null;
+        seekStep3.editingCardDraft = null;
+        errorMsg = "";
+        render();
+        return;
+      }
       void (async () => {
         const active = currentDraft();
         if (!active || !isEditable(active) || isClaimStudioPack(active.pack)) return;
@@ -1356,51 +1639,99 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           const existing = pack.investigationBook.families[fam];
           if (existing && idx >= 0) {
             existing.items.splice(idx, 1);
+            seekStep3.editingQuestionIndex = null;
+            seekStep3.editingQuestionDraft = null;
             await persistDraft(pack, snap, `Pertanyaan ${SEEK_FAMILY_LABELS[fam] ?? fam} dihapus.`);
           }
           return;
         }
-        if (s3Action === "add-book-item") {
+        if (s3Action === "add-book-item" || s3Action === "save-book-item") {
           const label = root.querySelector<HTMLInputElement>("#ed-item-label")?.value.trim();
           if (!label) {
             errorMsg = "Nama pertanyaan wajib diisi.";
             render();
             return;
           }
+          const isEditing = s3Action === "save-book-item" && seekStep3.editingQuestionIndex !== null;
+          const editIdx = isEditing ? seekStep3.editingQuestionIndex! : -1;
           const num = Number(root.querySelector<HTMLInputElement>("#ed-item-num")?.value ?? 750);
           const extra = root.querySelector<HTMLInputElement>("#ed-item-extra")?.value.trim() || "taman";
-          const id = `${fam}-${Date.now().toString(36)}`;
+          const existingId = isEditing ? seekStep3.editingQuestionDraft?.id : undefined;
+          const id = existingId || `${fam}-${Date.now().toString(36)}`;
           if (fam === "radar") {
             pack.investigationBook.families.radar ??= { enabled: true, drawCount: 2, keepCount: 1, availableInPhases: ["seeking", "endgame"], items: [] };
-            pack.investigationBook.families.radar.items.push({ id, label, radiusMeters: num });
+            const nextItem = { id, label, radiusMeters: num };
+            if (isEditing && pack.investigationBook.families.radar.items[editIdx]) pack.investigationBook.families.radar.items[editIdx] = nextItem;
+            else pack.investigationBook.families.radar.items.push(nextItem);
           } else if (fam === "thermometer") {
             pack.investigationBook.families.thermometer ??= { enabled: true, drawCount: 2, keepCount: 1, availableInPhases: ["seeking"], items: [] };
-            pack.investigationBook.families.thermometer.items.push({ id, label, minTravelMeters: num });
+            const nextItem = { id, label, minTravelMeters: num };
+            if (isEditing && pack.investigationBook.families.thermometer.items[editIdx]) pack.investigationBook.families.thermometer.items[editIdx] = nextItem;
+            else pack.investigationBook.families.thermometer.items.push(nextItem);
           } else if (fam === "matching") {
             pack.investigationBook.families.matching ??= { enabled: true, drawCount: 3, keepCount: 1, availableInPhases: ["seeking"], items: [] };
-            pack.investigationBook.families.matching.items.push({ id, label, matchType: "station_attribute", attributeKey: extra });
+            const nextItem = { id, label, matchType: "station_attribute" as const, attributeKey: extra };
+            if (isEditing && pack.investigationBook.families.matching.items[editIdx]) pack.investigationBook.families.matching.items[editIdx] = nextItem;
+            else pack.investigationBook.families.matching.items.push(nextItem);
           } else if (fam === "measuring") {
             pack.investigationBook.families.measuring ??= { enabled: true, drawCount: 3, keepCount: 1, availableInPhases: ["seeking"], items: [] };
-            pack.investigationBook.families.measuring.items.push({ id, label, targetType: "poi_category", poiCategory: extra });
+            const nextItem = { id, label, targetType: "poi_category" as const, poiCategory: extra };
+            if (isEditing && pack.investigationBook.families.measuring.items[editIdx]) pack.investigationBook.families.measuring.items[editIdx] = nextItem;
+            else pack.investigationBook.families.measuring.items.push(nextItem);
           } else if (fam === "tentacles") {
             pack.investigationBook.families.tentacles ??= { enabled: true, drawCount: 4, keepCount: 2, availableInPhases: ["seeking"], items: [] };
-            pack.investigationBook.families.tentacles.items.push({ id, label, radiusMeters: num, poiCategory: extra });
+            const nextItem = { id, label, radiusMeters: num, poiCategory: extra };
+            if (isEditing && pack.investigationBook.families.tentacles.items[editIdx]) pack.investigationBook.families.tentacles.items[editIdx] = nextItem;
+            else pack.investigationBook.families.tentacles.items.push(nextItem);
           } else {
             pack.investigationBook.families.photo ??= { enabled: true, drawCount: 1, keepCount: 1, availableInPhases: ["seeking", "endgame"], items: [] };
-            pack.investigationBook.families.photo.items.push({ id, label, prompt: extra, phase: "both" });
+            const nextItem = { id, label, prompt: extra, phase: "both" as const };
+            if (isEditing && pack.investigationBook.families.photo.items[editIdx]) pack.investigationBook.families.photo.items[editIdx] = nextItem;
+            else pack.investigationBook.families.photo.items.push(nextItem);
           }
-          await persistDraft(pack, snap, `Pertanyaan ${label} ditambahkan ke ${SEEK_FAMILY_LABELS[fam] ?? fam}.`);
+          seekStep3.editingQuestionIndex = null;
+          seekStep3.editingQuestionDraft = null;
+          await persistDraft(
+            pack,
+            snap,
+            isEditing
+              ? `Pertanyaan ${label} diperbarui.`
+              : `Pertanyaan ${label} ditambahkan ke ${SEEK_FAMILY_LABELS[fam] ?? fam}.`,
+          );
           return;
         }
-        if (s3Action === "add-seek-card") {
-          const card = buildSeekCardFromForm(root, seekStep3);
+        if (s3Action === "step-seek-card-copies") {
+          const idx = Number(btn.dataset.index ?? -1);
+          const delta = Number(btn.dataset.delta ?? 0);
+          const card = pack.deck.cards[idx];
+          if (!card || !delta) return;
+          const nextCopies = Math.max(SEEK_CARD_MIN_COPIES, Math.min(SEEK_CARD_MAX_COPIES, card.copies + delta));
+          if (nextCopies === card.copies) return;
+          card.copies = nextCopies;
+          if (seekStep3.editingCardIndex === idx && seekStep3.editingCardDraft) {
+            seekStep3.editingCardDraft.copies = nextCopies;
+          }
+          await persistDraft(pack, snap, `Jumlah salinan ${card.title} diatur ke ${nextCopies}×.`);
+          return;
+        }
+        if (s3Action === "add-seek-card" || s3Action === "save-seek-card") {
+          const isEditing = s3Action === "save-seek-card" && seekStep3.editingCardIndex !== null;
+          const editIdx = isEditing ? seekStep3.editingCardIndex! : -1;
+          const existingId = isEditing ? seekStep3.editingCardDraft?.id : undefined;
+          const card = buildSeekCardFromForm(root, seekStep3, undefined, existingId);
           if (!card) {
             errorMsg = "Judul kartu wajib diisi.";
             render();
             return;
           }
-          pack.deck.cards.push(card);
-          await persistDraft(pack, snap, `Kartu ${card.title} ditambahkan ke dek.`);
+          if (isEditing && pack.deck.cards[editIdx]) {
+            pack.deck.cards[editIdx] = card;
+          } else {
+            pack.deck.cards.push(card);
+          }
+          seekStep3.editingCardIndex = null;
+          seekStep3.editingCardDraft = null;
+          await persistDraft(pack, snap, isEditing ? `Kartu ${card.title} diperbarui.` : `Kartu ${card.title} ditambahkan ke dek.`);
           return;
         }
         if (s3Action === "dup-seek-card") {
@@ -1419,6 +1750,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           const idx = Number(btn.dataset.index ?? -1);
           if (idx >= 0) {
             pack.deck.cards.splice(idx, 1);
+            seekStep3.editingCardIndex = null;
+            seekStep3.editingCardDraft = null;
             await persistDraft(pack, snap, "Kartu dihapus dari dek.");
           }
         }
@@ -1445,13 +1778,66 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         preview?.scrollIntoView({ block: "nearest" });
         return;
       }
+      if (c3Action === "edit-challenge") {
+        const active = currentDraft();
+        if (!active || !isEditable(active) || !isClaimStudioPack(active.pack)) return;
+        const idx = Number(btn.dataset.index ?? -1);
+        const list =
+          claimStep3.challengeTarget === "backup"
+            ? active.pack.challenges.backupPool
+            : active.pack.challenges.landmarkChallenges[claimStep3.challengeTarget];
+        const item = list?.[idx];
+        if (!item) return;
+        claimStep3.editingChallengeIndex = idx;
+        claimStep3.editingChallengeDraft = structuredClone(item);
+        claimStep3.challengePrimitive = item.payload.primitive;
+        errorMsg = "";
+        render();
+        const input = root.querySelector<HTMLInputElement>("#ed-chal-title");
+        input?.focus();
+        input?.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      if (c3Action === "cancel-edit-challenge") {
+        claimStep3.editingChallengeIndex = null;
+        claimStep3.editingChallengeDraft = null;
+        errorMsg = "";
+        render();
+        return;
+      }
+      if (c3Action === "edit-claim-card") {
+        const active = currentDraft();
+        if (!active || !isEditable(active) || !isClaimStudioPack(active.pack)) return;
+        const idx = Number(btn.dataset.index ?? -1);
+        const card = active.pack.tacticalDeck.cards[idx];
+        if (!card) return;
+        claimStep3.editingCardIndex = idx;
+        claimStep3.editingCardDraft = structuredClone(card);
+        claimStep3.cardPrimitive = card.effect.primitive;
+        errorMsg = "";
+        render();
+        const input = root.querySelector<HTMLInputElement>("#ed-ccard-title");
+        input?.focus();
+        input?.scrollIntoView({ block: "nearest" });
+        return;
+      }
+      if (c3Action === "cancel-edit-claim-card") {
+        claimStep3.editingCardIndex = null;
+        claimStep3.editingCardDraft = null;
+        errorMsg = "";
+        render();
+        return;
+      }
       void (async () => {
         const active = currentDraft();
         if (!active || !isEditable(active) || !isClaimStudioPack(active.pack)) return;
         const pack = structuredClone(active.pack);
         const snap = structuredClone(active.snapshot);
-        if (c3Action === "add-challenge") {
-          const chal = buildClaimChallengeFromForm(root, claimStep3);
+        if (c3Action === "add-challenge" || c3Action === "save-challenge") {
+          const isEditing = c3Action === "save-challenge" && claimStep3.editingChallengeIndex !== null;
+          const editIdx = isEditing ? claimStep3.editingChallengeIndex! : -1;
+          const existingId = isEditing ? claimStep3.editingChallengeDraft?.id : undefined;
+          const chal = buildClaimChallengeFromForm(root, claimStep3, existingId);
           if (!chal) {
             const error = root.querySelector<HTMLElement>("[data-claim-composer-error]");
             if (error) {
@@ -1461,12 +1847,17 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             return;
           }
           if (claimStep3.challengeTarget === "backup") {
-            pack.challenges.backupPool.push(chal);
+            if (isEditing && pack.challenges.backupPool[editIdx]) pack.challenges.backupPool[editIdx] = chal;
+            else pack.challenges.backupPool.push(chal);
           } else {
             pack.challenges.landmarkChallenges[claimStep3.challengeTarget] ??= [];
-            pack.challenges.landmarkChallenges[claimStep3.challengeTarget].push(chal);
+            const targetList = pack.challenges.landmarkChallenges[claimStep3.challengeTarget];
+            if (isEditing && targetList[editIdx]) targetList[editIdx] = chal;
+            else targetList.push(chal);
           }
-          await persistDraft(pack, snap, `Tantangan ${chal.title} ditambahkan.`);
+          claimStep3.editingChallengeIndex = null;
+          claimStep3.editingChallengeDraft = null;
+          await persistDraft(pack, snap, isEditing ? `Tantangan ${chal.title} diperbarui.` : `Tantangan ${chal.title} ditambahkan.`);
           return;
         }
         if (c3Action === "delete-challenge") {
@@ -1477,6 +1868,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
               : pack.challenges.landmarkChallenges[claimStep3.challengeTarget];
           if (list && idx >= 0) {
             list.splice(idx, 1);
+            claimStep3.editingChallengeIndex = null;
+            claimStep3.editingChallengeDraft = null;
             await persistDraft(pack, snap, "Tantangan dihapus.");
           }
           return;
@@ -1490,21 +1883,46 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           await persistDraft(pack, snap, "Pengaturan Dek Kartu disimpan.");
           return;
         }
-        if (c3Action === "add-claim-card") {
-          const card = buildClaimCardFromForm(root, claimStep3);
+        if (c3Action === "step-claim-card-copies") {
+          const idx = Number(btn.dataset.index ?? -1);
+          const delta = Number(btn.dataset.delta ?? 0);
+          const card = pack.tacticalDeck.cards[idx];
+          if (!card || !delta) return;
+          const nextCopies = Math.max(CLAIM_CARD_MIN_COPIES, Math.min(CLAIM_CARD_MAX_COPIES, card.copies + delta));
+          if (nextCopies === card.copies) return;
+          card.copies = nextCopies;
+          if (claimStep3.editingCardIndex === idx && claimStep3.editingCardDraft) {
+            claimStep3.editingCardDraft.copies = nextCopies;
+          }
+          await persistDraft(pack, snap, `Jumlah salinan ${card.title} diatur ke ${nextCopies}×.`);
+          return;
+        }
+        if (c3Action === "add-claim-card" || c3Action === "save-claim-card") {
+          const isEditing = c3Action === "save-claim-card" && claimStep3.editingCardIndex !== null;
+          const editIdx = isEditing ? claimStep3.editingCardIndex! : -1;
+          const existingCard = isEditing ? (claimStep3.editingCardDraft ?? undefined) : undefined;
+          const card = buildClaimCardFromForm(root, claimStep3, undefined, existingCard);
           if (!card) {
             errorMsg = "Judul kartu wajib diisi.";
             render();
             return;
           }
-          pack.tacticalDeck.cards.push(card);
-          await persistDraft(pack, snap, `Kartu ${card.title} ditambahkan.`);
+          if (isEditing && pack.tacticalDeck.cards[editIdx]) {
+            pack.tacticalDeck.cards[editIdx] = card;
+          } else {
+            pack.tacticalDeck.cards.push(card);
+          }
+          claimStep3.editingCardIndex = null;
+          claimStep3.editingCardDraft = null;
+          await persistDraft(pack, snap, isEditing ? `Kartu ${card.title} diperbarui.` : `Kartu ${card.title} ditambahkan.`);
           return;
         }
         if (c3Action === "delete-claim-card") {
           const idx = Number(btn.dataset.index ?? -1);
           if (idx >= 0) {
             pack.tacticalDeck.cards.splice(idx, 1);
+            claimStep3.editingCardIndex = null;
+            claimStep3.editingCardDraft = null;
             await persistDraft(pack, snap, "Kartu dihapus.");
           }
         }
@@ -1516,6 +1934,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (mapAction) {
       if (mapAction === "edit-challenges" && format === "claim-the-city" && step2.selected?.kind === "landmark") {
         claimStep3.challengeTarget = step2.selected.id;
+        claimStep3.editingChallengeIndex = null;
+        claimStep3.editingChallengeDraft = null;
         step2.editingChallenges = true;
         render();
         root.querySelector<HTMLSelectElement>("#ed-chal-target")?.focus();
@@ -1523,6 +1943,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       }
       if (mapAction === "close-challenges") {
         step2.editingChallenges = false;
+        claimStep3.editingChallengeIndex = null;
+        claimStep3.editingChallengeDraft = null;
         render();
         root.querySelector<HTMLButtonElement>('[data-map-action="edit-challenges"]')?.focus();
         return;
@@ -1783,6 +2205,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         return;
       }
       if (action === "export-json") {
+        if (formDirty && !(await flushDirtyFormIfNeeded())) return;
         const active = currentDraft();
         if (!active) return;
         triggerStudioBundleDownload(active);
@@ -1875,29 +2298,11 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         const active = currentDraft();
         if (!active) return;
         const { pack: updatedPack, snapshot: updatedSnapshot } = applyFormEdits(active);
-        const res = await apiJson<{
-          ok?: boolean;
-          validation?: { ok: boolean; errors: RulebookValidationIssue[] };
-          error?: string;
-        }>("/api/rulebooks", {
-          type: "save-draft",
-          pack: updatedPack,
-          snapshot: updatedSnapshot,
-          rehashSnapshot: true,
-        });
-        if (res.ok) {
-          validationErrors = res.validation?.errors ?? [];
-          statusMsg = res.validation?.ok
-            ? "Draf tersimpan dan lolos validator otomatis."
-            : "Draf tersimpan dengan kesalahan validasi.";
-          await refresh();
-        } else {
-          errorMsg = res.error ?? "Gagal menyimpan draf.";
-          render();
-        }
+        await persistDraft(updatedPack, updatedSnapshot);
         return;
       }
       if (action === "dry-run") {
+        if (formDirty && !(await flushDirtyFormIfNeeded())) return;
         const active = currentDraft();
         if (!active) return;
         if (isClaimStudioPack(active.pack)) {
@@ -1911,6 +2316,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         return;
       }
       if (action === "submit-draft") {
+        if (formDirty && !(await flushDirtyFormIfNeeded())) return;
         const active = currentDraft();
         if (!active) return;
         const res = await apiJson<{ ok?: boolean; validation?: { errors: RulebookValidationIssue[] }; error?: string }>(

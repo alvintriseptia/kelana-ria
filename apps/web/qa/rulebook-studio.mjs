@@ -183,6 +183,17 @@ try {
   await assertNoHorizontalOverflow(page, "Draft editor");
   await assertCleanUiCopy(page, "Studio Step 1 draft editor");
   await page.screenshot({ path: path.join(results, "studio-dedicated-editor.png") });
+  // #146: Editing Step 1 summary sets status pill to Belum disimpan and auto-saves when tapping Peta -> without manual Simpan
+  assert.equal(await page.getByTestId("studio-save-status").getAttribute("data-save-state"), "saved");
+  await page.fill("#ed-meta-summary", "Catatan draf Alpha auto-simpan");
+  assert.equal(await page.getByTestId("studio-save-status").getAttribute("data-save-state"), "dirty");
+  assert.equal(await page.getByTestId("studio-save-status").innerText(), "Belum disimpan");
+  await clickAndWaitStudioSave(page, 'button[data-step="2"]');
+  await page.waitForSelector('[data-testid="studio-map-host"]');
+  assert.equal(await page.getByTestId("studio-save-status").getAttribute("data-save-state"), "saved");
+  await page.reload();
+  await page.locator("#ed-meta-summary").waitFor();
+  assert.equal(await page.inputValue("#ed-meta-summary"), "Catatan draf Alpha auto-simpan");
   await page.fill("#ed-meta-summary", "Catatan draf Alpha tersimpan");
   await clickAndWaitStudioSave(page, 'button[data-action="save-draft"]');
   await page.reload();
@@ -332,8 +343,16 @@ try {
   await assertCleanUiCopy(page, "Hide & Seek Step 3 validator banner");
   await checkCompactForm(page, '[data-testid="seek-timers-panel"]', "Hide & Seek rule validation");
 
-  await page.locator('button[data-s3-tab="book"]').press("Enter");
-  assert.equal(await page.getAttribute('button[data-s3-tab="book"]', "aria-pressed"), "true");
+  // #146: Edit Head Start timer without clicking Simpan -> switching to Pertanyaan sub-tab auto-saves without data loss
+  const nextHeadStart = String(Number(await page.inputValue("#ed-head")) + 2);
+  await page.fill("#ed-head", nextHeadStart);
+  assert.equal(await page.getByTestId("studio-save-status").getAttribute("data-save-state"), "dirty");
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
+    page.waitForResponse((r) => r.url().includes("/api/rulebooks?role=writer") && r.request().method() === "GET"),
+    page.locator('button[data-s3-tab="book"]').press("Enter"),
+  ]);
+  await page.waitForSelector('button[data-s3-tab="book"][aria-pressed="true"]');
   assert.equal(await page.locator('button[data-s3-tab="book"]:focus').count(), 1);
   assert.equal(await page.locator('button[data-s3-family] svg').count(), 6, "Expected 6 Question Family SVG tiles");
   await assertNoHorizontalOverflow(page, "Hide & Seek Step 3 book");
@@ -341,7 +360,49 @@ try {
   await checkCompactForm(page, '[data-testid="seek-book-panel"]', "Hide & Seek questions");
   await page.fill("#ed-item-label", "Radar tambahan untuk uji Studio");
   await clickAndWaitStudioSave(page, '[data-s3-action="add-book-item"]');
+
+  // #146: Sunting existing Radar question in-place (no duplicate created)
+  await page.locator('details[data-studio-accordion="seek-book"] summary').click();
+  const bookCountBefore = await page.locator('details[data-studio-accordion="seek-book"] li').count();
+  const addedRadarRow = page.locator('details[data-studio-accordion="seek-book"] li').filter({ hasText: "Radar tambahan untuk uji Studio" });
+  await addedRadarRow.locator('[data-s3-action="edit-book-item"]').click();
+  assert.equal(await page.inputValue("#ed-item-label"), "Radar tambahan untuk uji Studio");
+  await page.fill("#ed-item-label", "Radar Sunting Studio");
+  await clickAndWaitStudioSave(page, '[data-s3-action="save-book-item"]');
+  assert.equal(await page.locator('details[data-studio-accordion="seek-book"] li').count(), bookCountBefore, "Sunting question must update in-place without duplicating");
+  await page.locator('details[data-studio-accordion="seek-book"] li').filter({ hasText: "Radar Sunting Studio" }).waitFor();
+
   await page.click('button[data-s3-tab="deck"]');
+  // #146: Quick -/+ copy stepper and in-place Sunting on Hide & Seek deck cards
+  await page.locator('details[data-studio-accordion="seek-deck"] summary').click();
+  const seekCardCountBefore = await page.locator('details[data-studio-accordion="seek-deck"] .st-game-card').count();
+  const seekCopiesBefore = Number((await page.getByTestId("seek-card-copies-0").innerText()).replace(/\D/g, ""));
+  const seekMinusBtn = page.locator('[data-s3-action="step-seek-card-copies"][data-index="0"][data-delta="-1"]');
+  const seekPlusBtn = page.locator('[data-s3-action="step-seek-card-copies"][data-index="0"][data-delta="1"]');
+  const seekMinusBox = await seekMinusBtn.boundingBox();
+  const seekPlusBox = await seekPlusBtn.boundingBox();
+  assert.ok(seekMinusBox && seekMinusBox.width >= 44 && seekMinusBox.height >= 44, "Seek - copy stepper must meet 44x44 touch target");
+  assert.ok(seekPlusBox && seekPlusBox.width >= 44 && seekPlusBox.height >= 44, "Seek + copy stepper must meet 44x44 touch target");
+  if (seekCopiesBefore >= 10) {
+    assert.equal(await seekPlusBtn.isDisabled(), true, "Seek + copy stepper must clamp at max copy limit");
+    await clickAndWaitStudioSave(page, '[data-s3-action="step-seek-card-copies"][data-index="0"][data-delta="-1"]');
+    await page.getByTestId("seek-card-copies-0").filter({ hasText: `${seekCopiesBefore - 1}×` }).waitFor();
+    await clickAndWaitStudioSave(page, '[data-s3-action="step-seek-card-copies"][data-index="0"][data-delta="1"]');
+    await page.getByTestId("seek-card-copies-0").filter({ hasText: `${seekCopiesBefore}×` }).waitFor();
+  } else {
+    await clickAndWaitStudioSave(page, '[data-s3-action="step-seek-card-copies"][data-index="0"][data-delta="1"]');
+    await page.getByTestId("seek-card-copies-0").filter({ hasText: `${seekCopiesBefore + 1}×` }).waitFor();
+    await clickAndWaitStudioSave(page, '[data-s3-action="step-seek-card-copies"][data-index="0"][data-delta="-1"]');
+    await page.getByTestId("seek-card-copies-0").filter({ hasText: `${seekCopiesBefore}×` }).waitFor();
+  }
+  await page.locator('[data-s3-action="edit-seek-card"][data-index="0"]').click();
+  const loadedSeekCardTitle = await page.inputValue("#ed-card-title");
+  assert.ok(loadedSeekCardTitle.length > 0, "Sunting Seek card must prefill existing title");
+  await page.fill("#ed-card-title", `${loadedSeekCardTitle} (Sunting)`);
+  await clickAndWaitStudioSave(page, '[data-s3-action="save-seek-card"]');
+  assert.equal(await page.locator('details[data-studio-accordion="seek-deck"] .st-game-card').count(), seekCardCountBefore, "Sunting Seek card must update in-place without duplicating");
+  await page.locator('details[data-studio-accordion="seek-deck"] .st-game-card').filter({ hasText: `${loadedSeekCardTitle} (Sunting)` }).waitFor();
+
   await page.fill("#ed-card-title", "Kutukan Kopi Studio Live");
   assert.match(
     await page.textContent('[data-testid="live-card-preview"]'),
@@ -353,10 +414,11 @@ try {
   await assertCleanUiCopy(page, "Hide & Seek Step 3 deck composer");
   await checkCompactForm(page, '[data-testid="seek-card-composer"]', "Hide & Seek cards");
 
-  // Navigate away to Step 1, then click Validator Jump Link -> returns to Step 3 #ed-zone!
+  // Navigate away to Step 1, then click Validator Jump Link -> returns to Step 3 #ed-zone and confirms auto-saved #ed-head persisted!
   await page.click('button[data-step="1"]');
   await page.click('button[data-jump-path]');
   await page.waitForSelector("#ed-zone");
+  assert.equal(await page.inputValue("#ed-head"), nextHeadStart, "Auto-saved Head Start edit must persist across sub-tab & step navigation");
   await page.fill("#ed-zone", "400");
   await clickAndWaitStudioSave(page, 'button[data-action="save-draft"]');
   await page.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
@@ -441,6 +503,28 @@ try {
   await page.fill("#ed-chal-notes", "Contoh rubrik Studio QA. Foto papan nama dari trotoar.");
   await page.check("#ed-chal-reviewed");
   await clickAndWaitStudioSave(page, 'button[data-c3-action="add-challenge"]');
+
+  // #146: Sunting existing Claim challenge in-place without duplicating
+  await page.locator('details[data-studio-accordion="claim-challenges"] summary').click();
+  const claimChalCountBefore = await page.locator('details[data-studio-accordion="claim-challenges"] li').count();
+  const claimEditBtn = page
+    .locator('details[data-studio-accordion="claim-challenges"] li')
+    .filter({ hasText: "Uji Call Your Shot Kemang" })
+    .locator('[data-c3-action="edit-challenge"]');
+  const claimEditBox = await claimEditBtn.boundingBox();
+  assert.ok(claimEditBox && claimEditBox.width >= 44 && claimEditBox.height >= 44, "Claim challenge Sunting button must meet 44x44 touch target");
+  await claimEditBtn.click();
+  assert.equal(await page.inputValue("#ed-chal-title"), "Uji Call Your Shot Kemang");
+  assert.equal(await page.isChecked("#ed-chal-reviewed"), true);
+  await page.fill("#ed-chal-title", "Uji Call Your Shot Kemang (Sunting)");
+  await clickAndWaitStudioSave(page, 'button[data-c3-action="save-challenge"]');
+  assert.equal(
+    await page.locator('details[data-studio-accordion="claim-challenges"] li').count(),
+    claimChalCountBefore,
+    "Sunting Claim challenge must update in-place without duplicating",
+  );
+  await page.locator('details[data-studio-accordion="claim-challenges"] li').filter({ hasText: "Uji Call Your Shot Kemang (Sunting)" }).waitFor();
+
   await page.click('button[data-map-action="close-challenges"]');
   assert.equal(await page.locator('[data-map-action="edit-challenges"]:focus').count(), 1);
 
@@ -462,14 +546,23 @@ try {
   await assertNoHorizontalOverflow(page, "Claim Step 3 session");
   await assertCleanUiCopy(page, "Claim Step 3 session");
   await checkCompactForm(page, '[data-testid="claim-session-panel"]', "Claim session rules", '.studio-save');
+  const sessionPanelText = await page.textContent('[data-testid="claim-session-panel"]');
+  assert.match(sessionPanelText, /Susunan Awal Tim/, "Expected Susunan Awal Tim label in Claim Step 3");
   const duration = Number(await page.inputValue("#ed-claim-duration")) + 1;
   await page.fill("#ed-claim-duration", String(duration));
   await clickAndWaitStudioSave(page, '.studio-save');
   await page.locator(".studio-save-feedback", { hasText: /Draf tersimpan/ }).waitFor();
+
+  // #146: Raise Claim maxPlayers to 12 without manual Simpan -> switching to Deck sub-tab auto-saves and persists across reload
+  await page.fill("#ed-claim-maxp", "12");
+  assert.equal(await page.getByTestId("studio-save-status").getAttribute("data-save-state"), "dirty");
+  assert.equal(await page.locator('button[data-c3-tab="challenges"]').count(), 0, "Challenges tab should be on Step 2 Peta, not Step 3 Aturan");
+  await clickAndWaitStudioSave(page, 'button[data-c3-tab="deck"]');
   await page.reload();
   await page.click('button[data-step="3"]');
   assert.equal(await page.inputValue("#ed-claim-duration"), String(duration));
-  assert.equal(await page.locator('button[data-c3-tab="challenges"]').count(), 0, "Challenges tab should be on Step 2 Peta, not Step 3 Aturan");
+  assert.equal(await page.inputValue("#ed-claim-maxp"), "12", "Auto-saved maxPlayers=12 must persist across reload");
+
   await page.click('button[data-c3-tab="deck"]');
   await assertNoHorizontalOverflow(page, "Claim Step 3 deck");
   await assertCleanUiCopy(page, "Claim Step 3 deck");
@@ -482,8 +575,42 @@ try {
   );
   await clickAndWaitStudioSave(page, 'button[data-c3-action="add-claim-card"]');
 
+  // #146: Quick -/+ copy stepper and in-place Sunting on Claim deck cards + 320x640 mobile overflow check
+  await page.locator('details[data-studio-accordion="claim-deck"] summary').click();
+  const claimCardCountBefore = await page.locator('details[data-studio-accordion="claim-deck"] .st-game-card').count();
+  const claimCopiesBefore = Number((await page.getByTestId("claim-card-copies-0").innerText()).replace(/\D/g, ""));
+  const claimMinusBtn = page.locator('[data-c3-action="step-claim-card-copies"][data-index="0"][data-delta="-1"]');
+  const claimPlusBtn = page.locator('[data-c3-action="step-claim-card-copies"][data-index="0"][data-delta="1"]');
+  const claimMinusBox = await claimMinusBtn.boundingBox();
+  const claimPlusBox = await claimPlusBtn.boundingBox();
+  assert.ok(claimMinusBox && claimMinusBox.width >= 44 && claimMinusBox.height >= 44, "Claim - copy stepper must meet 44x44 touch target");
+  assert.ok(claimPlusBox && claimPlusBox.width >= 44 && claimPlusBox.height >= 44, "Claim + copy stepper must meet 44x44 touch target");
+  await clickAndWaitStudioSave(page, '[data-c3-action="step-claim-card-copies"][data-index="0"][data-delta="1"]');
+  await page.getByTestId("claim-card-copies-0").filter({ hasText: `${claimCopiesBefore + 1}×` }).waitFor();
+  await clickAndWaitStudioSave(page, '[data-c3-action="step-claim-card-copies"][data-index="0"][data-delta="-1"]');
+  await page.getByTestId("claim-card-copies-0").filter({ hasText: `${claimCopiesBefore}×` }).waitFor();
+  await page.locator('[data-c3-action="edit-claim-card"][data-index="0"]').click();
+  const loadedClaimCardTitle = await page.inputValue("#ed-ccard-title");
+  assert.ok(loadedClaimCardTitle.length > 0, "Sunting Claim card must prefill existing title");
+  await page.fill("#ed-ccard-title", `${loadedClaimCardTitle} (Sunting)`);
+  await clickAndWaitStudioSave(page, '[data-c3-action="save-claim-card"]');
+  assert.equal(
+    await page.locator('details[data-studio-accordion="claim-deck"] .st-game-card').count(),
+    claimCardCountBefore,
+    "Sunting Claim card must update in-place without duplicating",
+  );
+  await page.locator('details[data-studio-accordion="claim-deck"] .st-game-card').filter({ hasText: `${loadedClaimCardTitle} (Sunting)` }).waitFor();
+
+  await page.setViewportSize({ width: 320, height: 640 });
+  await assertNoHorizontalOverflow(page, "Claim Step 3 deck at 320x640");
+  await page.click('button[data-c3-tab="session"]');
+  await assertNoHorizontalOverflow(page, "Claim Step 3 session at 320x640");
+  await page.setViewportSize({ width: 390, height: 844 });
+
   // Step 4: interactive Claim challenge test modal on m-bloc (observation_input answer = "2")
   await page.click('button[data-step="4"]');
+  await clickAndWaitStudioSave(page, 'button[data-action="save-draft"]');
+  await page.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
   await page.selectOption("#dry-claim-landmark", "m-bloc");
   await page.click('button[data-dry-action="open-claim-test"]');
   await page.waitForSelector("#dry-input-val");

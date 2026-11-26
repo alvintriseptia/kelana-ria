@@ -174,3 +174,64 @@
   overflow-wrap: anywhere;
 }
 .studio-rule-note { font-size: .875rem; color: #365649; }
+
+.studio-context-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+}
+.studio-save-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: .76rem;
+  font-weight: 800;
+  white-space: nowrap;
+  border: 1px solid #87aa9b;
+  background: #e6f4ea;
+  color: #12483a;
+}
+.studio-save-pill[data-save-state="dirty"] {
+  border-color: #c2802e;
+  background: #fef3c7;
+  color: #7c3f06;
+}
+.studio-save-pill[data-save-state="saving"] {
+  border-color: #4c86b8;
+  background: #e8f1fb;
+  color: #1d4e89;
+}
+
+.st-copy-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.studio-shell button.st-step-btn {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  font-size: 1.05rem;
+  font-weight: 850;
+  line-height: 1;
+}
+.st-step-count {
+  min-width: 28px;
+  text-align: center;
+  font-size: .85rem;
+  font-weight: 800;
+  color: #153d34;
+}
+.st-editing-row {
+  border-radius: 10px;
+  outline: 2px solid #0f766e;
+  outline-offset: 2px;
+  background: #eef8f2;
+}
+

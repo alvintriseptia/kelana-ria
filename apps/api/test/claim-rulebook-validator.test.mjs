@@ -311,3 +311,35 @@ test("rejects infeasible solo routes, subPoint outside boundary, and invalid dec
   assert.ok(result.errors.some((e) => e.code === "invalid-curse-cap"));
   assert.ok(result.errors.some((e) => e.code === "insufficient-pois-for-category"));
 });
+
+test("accepts Claim session maxPlayers up to 12 and rejects > 12 or minPlayers > maxPlayers (#146)", () => {
+  const snapshot = buildSnapshot();
+  const base = buildClaimPack(snapshot);
+
+  const validTwelve = api.validateClaimRulebook(
+    { ...base, session: { ...base.session, minPlayers: 1, maxPlayers: 12 } },
+    snapshot,
+  );
+  assert.equal(validTwelve.ok, true, `Expected maxPlayers=12 to pass: ${JSON.stringify(validTwelve.errors)}`);
+
+  const validLargeGroup = api.validateClaimRulebook(
+    { ...base, session: { ...base.session, minPlayers: 8, maxPlayers: 12 } },
+    snapshot,
+  );
+  assert.equal(validLargeGroup.ok, true, `Expected 8..12 players to pass: ${JSON.stringify(validLargeGroup.errors)}`);
+
+  const tooMany = api.validateClaimRulebook(
+    { ...base, session: { ...base.session, minPlayers: 2, maxPlayers: 13 } },
+    snapshot,
+  );
+  assert.equal(tooMany.ok, false);
+  assert.ok(tooMany.errors.some((e) => e.code === "invalid-player-range" && e.path === "session.maxPlayers"));
+
+  const inverted = api.validateClaimRulebook(
+    { ...base, session: { ...base.session, minPlayers: 10, maxPlayers: 6 } },
+    snapshot,
+  );
+  assert.equal(inverted.ok, false);
+  assert.ok(inverted.errors.some((e) => e.code === "invalid-player-range" && e.path === "session.minPlayers"));
+});
+
