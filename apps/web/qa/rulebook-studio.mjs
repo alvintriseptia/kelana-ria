@@ -616,15 +616,39 @@ try {
   await page.click('button[data-studio-view="home"]');
   const deleteDraftRow = page.locator('button[data-draft="pack-draf-hapus-qa@1"]');
   await deleteDraftRow.waitFor();
-  await page.locator('button[data-action="confirm-delete-draft"][data-pack="pack-draf-hapus-qa"]').click();
-  const deleteDialog = page.getByTestId("delete-draft-dialog");
+  const deleteTrigger = page.getByRole("button", { name: "Hapus draf Draf Hapus QA" });
+  const deleteDialog = page.getByRole("dialog", { name: "Hapus Draf Permanen?" });
+  const cancelDelete = deleteDialog.getByRole("button", { name: "Batal", exact: true });
+  const confirmDelete = deleteDialog.getByRole("button", { name: "Hapus Permanen", exact: true });
+  const isFocused = locator => locator.evaluate(element => document.activeElement === element);
+
+  await deleteTrigger.press("Enter");
   await deleteDialog.waitFor();
-  assert.equal(await deleteDialog.getAttribute("role"), "dialog");
   assert.equal(await deleteDialog.getAttribute("aria-modal"), "true");
+  assert.equal(await isFocused(cancelDelete), true, "Cancel is the initial focus");
+  await page.keyboard.press("Shift+Tab");
+  assert.equal(await isFocused(confirmDelete), true, "Shift+Tab wraps within the dialog");
+  await page.keyboard.press("Tab");
+  assert.equal(await isFocused(cancelDelete), true, "Tab wraps within the dialog");
+  await deleteDraftRow.evaluate(element => element.focus());
+  assert.equal(await isFocused(cancelDelete), true, "The background is inert");
+  await page.setViewportSize({ width: 320, height: 640 });
+  await assertNoHorizontalOverflow(page, "Delete draft confirmation at 320×640");
+  await assertCleanUiCopy(page, "Delete draft confirmation");
+  await page.screenshot({ path: path.join(results, "studio-delete-confirmation-320.png") });
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.keyboard.press("Escape");
   await deleteDialog.waitFor({ state: "hidden" });
+  assert.equal(await isFocused(deleteTrigger), true, "Escape restores focus to Delete");
   assert.equal(await deleteDraftRow.count(), 1, "Canceling delete dialog with Escape must preserve draft");
-  await page.locator('button[data-action="confirm-delete-draft"][data-pack="pack-draf-hapus-qa"]').click();
+
+  await deleteTrigger.press("Enter");
+  await cancelDelete.press("Enter");
+  await deleteDialog.waitFor({ state: "hidden" });
+  assert.equal(await isFocused(deleteTrigger), true, "Cancel restores focus to Delete");
+  assert.equal(await deleteDraftRow.count(), 1, "Cancel must preserve draft");
+
+  await deleteTrigger.press("Enter");
   await deleteDialog.waitFor();
   await clickAndWaitStudioSave(page, 'button[data-action="execute-delete-draft"]');
   await deleteDialog.waitFor({ state: "hidden" });

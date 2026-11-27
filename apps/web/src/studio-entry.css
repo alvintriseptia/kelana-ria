@@ -463,17 +463,11 @@
   overflow-wrap: anywhere;
 }
 
-.studio-modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: grid;
-  place-items: center;
-  padding: 16px;
-  background: rgba(15, 34, 29, .58);
-}
-.studio-modal {
-  width: min(100%, 380px);
+.studio-modal::backdrop { background: rgba(15, 34, 29, .58); }
+.studio-modal[open] {
+  box-sizing: border-box;
+  width: min(calc(100% - 32px), 380px);
+  max-height: calc(100% - 32px);
   display: grid;
   gap: 10px;
   padding: 16px;
