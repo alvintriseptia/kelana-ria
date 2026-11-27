@@ -1312,6 +1312,7 @@ try {
       await creatorPage.locator("#ed-meta-title").waitFor();
       assert.equal(await creatorPage.locator("#ed-meta-title").inputValue(), "Kopi Senopati QA");
     }
+    await other.screenshot({ path: path.join(results, "studio-duplicate-title-draft.png") });
   } finally {
     await otherCreator.close();
   }
