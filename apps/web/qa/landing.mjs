@@ -184,9 +184,61 @@ export async function exerciseLandingPage({ browser, results = defaultResultsDir
       }
     }
 
-    // 3. Navigation flow: / -> Pilih Permainan -> /catalog (direct reload) -> brand link -> / -> Format anchor -> Studio -> back to /catalog
-    //    Also verify lazy GSAP bootstrap, zero orphaned .pin-spacer nodes on SPA round-trip, and prefers-reduced-motion visibility.
+    // 3. Guided GSAP storytelling scroll checks (390x844, 320x640, 1280x800) + navigation round-trip teardown
     {
+      for (const viewport of [
+        { width: 390, height: 844, expectPin: true, label: "mobile-390" },
+        { width: 320, height: 640, expectPin: false, label: "mobile-320" },
+        { width: 1280, height: 800, expectPin: true, label: "desktop-1280" },
+      ]) {
+        const ctx = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height }, serviceWorkers: "block" });
+        const page = await ctx.newPage();
+        const pageErrors = [];
+        page.on("pageerror", (error) => pageErrors.push(error.message));
+        try {
+          await page.goto(configuredBase, { waitUntil: "networkidle" });
+          await page.locator('[data-testid="landing-page"][data-landing-gsap="active"]').waitFor();
+          const pinCount = await page.locator(".pin-spacer").count();
+          if (viewport.expectPin) {
+            assert.ok(pinCount >= 1, `Expected ScrollTrigger pin spacer on ${viewport.label}`);
+          } else {
+            assert.equal(pinCount, 0, `Tight viewport ${viewport.label} should avoid ScrollTrigger pinning`);
+          }
+
+          // Scroll progressively through all storytelling chapters
+          const totalHeight = await page.evaluate(() => document.documentElement.scrollHeight);
+          for (const ratio of [0, 0.35, 0.65, 1]) {
+            await page.evaluate((y) => window.scrollTo(0, y), Math.round(totalHeight * ratio));
+            await page.waitForTimeout(160);
+            await assertNoOverflow(page, `Landing scroll ${(ratio * 100).toFixed(0)}% on ${viewport.label}`);
+          }
+
+          const finalBeat = await page.getByTestId("landing-story-chapter").getAttribute("data-active-beat");
+          assert.equal(finalBeat, "2", `Expected final story beat 2 after scrolling through ${viewport.label}, got ${finalBeat}`);
+
+          const stuckHidden = await page.evaluate(() => {
+            return Array.from(
+              document.querySelectorAll(".lp-hero, .lp-story-stage, .lp-step-card, .lp-format-card, .lp-studio, .lp-footer"),
+            ).filter((el) => parseFloat(getComputedStyle(el).opacity) < 0.99).length;
+          });
+          assert.equal(stuckHidden, 0, `Zero sections/cards may remain stuck below opacity 1 on ${viewport.label}`);
+          assert.equal(await page.getByTestId("landing-open-studio").isVisible(), true);
+          assert.deepEqual(pageErrors, [], `Zero uncaught errors while scrolling ${viewport.label}`);
+
+          if (viewport.width === 390) {
+            await page.getByTestId("landing-story-chapter").scrollIntoViewIfNeeded();
+            await page.waitForTimeout(150);
+            await page.screenshot({ path: join(results, "landing-story-390.png") });
+          } else if (viewport.width === 1280) {
+            await page.evaluate(() => window.scrollTo(0, 0));
+            await page.waitForTimeout(120);
+            await page.screenshot({ path: join(results, "landing-desktop-1280.png"), fullPage: true });
+          }
+        } finally {
+          await ctx.close();
+        }
+      }
+
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
       const page = await ctx.newPage();
       const pageErrors = [];
@@ -194,7 +246,7 @@ export async function exerciseLandingPage({ browser, results = defaultResultsDir
       try {
         await page.goto(configuredBase, { waitUntil: "networkidle" });
         await page.locator('[data-testid="landing-page"][data-landing-gsap="active"]').waitFor();
-        assert.equal(await page.locator(".pin-spacer").count(), 0, "Baseline GSAP mount should not leave stray pin spacers");
+        assert.ok(await page.locator(".pin-spacer").count() >= 1, "Expected pinned story stage on 390x844");
 
         await page.getByTestId("landing-choose-game").click();
         await page.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
@@ -222,12 +274,12 @@ export async function exerciseLandingPage({ browser, results = defaultResultsDir
         await page.locator('[data-testid="landing-page"][data-landing-gsap="active"]').waitFor();
         assert.equal(new URL(page.url()).pathname, "/");
 
-        // Verify prefers-reduced-motion: reduce keeps all landing sections visible with zero pin spacers
+        // Verify prefers-reduced-motion: reduce removes pin spacers and keeps all landing chapters immediately visible
         await page.emulateMedia({ reducedMotion: "reduce" });
         await page.locator('[data-testid="landing-page"][data-landing-gsap="reduced"]').waitFor();
         assert.equal(await page.locator(".pin-spacer").count(), 0, "Reduced motion must not create pin spacers");
         const hiddenSections = await page.evaluate(() => {
-          return Array.from(document.querySelectorAll(".lp-hero, .lp-section, .lp-studio, .lp-footer"))
+          return Array.from(document.querySelectorAll(".lp-hero, .lp-section, .lp-step-card, .lp-format-card, .lp-studio, .lp-footer"))
             .filter((el) => parseFloat(getComputedStyle(el).opacity) < 0.99).length;
         });
         assert.equal(hiddenSections, 0, "Reduced motion must keep every landing section fully visible");
