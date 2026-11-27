@@ -163,6 +163,24 @@ try {
   await studioAuthModal.waitFor({ state: "hidden" });
   await page.getByTestId("auth-chip-account").waitFor();
 
+  // #150: First-time creator with zero drafts sees visual 4-step Cara Buat Game onboarding & quick-start format buttons
+  const emptyOnboarding = page.getByTestId("studio-empty-onboarding");
+  await emptyOnboarding.waitFor();
+  assert.equal(await page.locator('[data-testid="studio-empty-steps"] li').count(), 4, "Studio empty state must show 4 steps");
+  assert.equal(await page.locator('[data-testid="studio-empty-steps"] svg').count(), 4, "Studio empty state steps must include step icons");
+  await page.getByTestId("studio-quickstart-claim").waitFor();
+  await page.getByTestId("studio-quickstart-seek").waitFor();
+  await assertNoHorizontalOverflow(page, "Studio Home empty onboarding at 390x844");
+  await page.setViewportSize({ width: 320, height: 640 });
+  await assertNoHorizontalOverflow(page, "Studio Home empty onboarding at 320x640");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await assertCleanUiCopy(page, "Studio Home empty onboarding");
+  await page.getByTestId("studio-quickstart-seek").click();
+  await page.waitForSelector('button[data-action="clone"]');
+  await page.click('button[data-studio-view="format"]');
+  await page.click('button[data-studio-view="home"]');
+  await emptyOnboarding.waitFor();
+
   // 1. Hide & Seek Studio: multi-draft switcher, intentional validator error -> jump link -> fix -> interactive clue dry-run
   await page.getByRole("button", { name: "Buat Game", exact: true }).click();
   assert.equal(await page.locator('button[data-format] svg').count(), 2, "Expected SVG art on format hero cards");

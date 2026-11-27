@@ -36,11 +36,34 @@ async function verifySeekPractice(page, results, family, timing, responseTime) {
   await page.keyboard.press('Enter');
   const dialog = page.locator('#edition-practice[open]');
   await dialog.getByRole('heading', { name: 'Waktunya bersembunyi' }).waitFor();
+  assert.match(await dialog.getByTestId('practice-progress').innerText(), /Langkah 1\//);
+  assert.ok(await dialog.locator('.ep-dot.active').count() === 1, 'Expected active step progress dot');
+  assert.equal(await dialog.getByTestId('practice-prev-btn').count(), 0, 'Back button must be hidden on step 0');
   assert.match(await dialog.innerText(), timing);
   const noOverflow = () => dialog.evaluate(el => el.scrollWidth <= el.clientWidth && el.getBoundingClientRect().right <= innerWidth);
   assert.ok(await noOverflow());
   await assertCleanUiCopy(page, `seek practice hide (${family})`);
   await dialog.getByRole('button', { name: 'Mulai pencarian latihan' }).click();
+  assert.match(await dialog.getByTestId('practice-progress').innerText(), /Langkah 2\//);
+  await dialog.getByTestId('practice-prev-btn').click();
+  await dialog.getByRole('heading', { name: 'Waktunya bersembunyi' }).waitFor();
+  await dialog.getByRole('button', { name: 'Mulai pencarian latihan' }).click();
+  // #150: Multi-clue Hide & Seek selector chips allow switching across enabled clue families
+  const switcher = dialog.getByTestId('practice-clue-switcher');
+  if (await switcher.count() > 0) {
+    const thermoChip = switcher.locator('[data-family="thermometer"]');
+    if (await thermoChip.count() > 0) {
+      await thermoChip.click();
+      await dialog.getByRole('button', { name: 'Pratinjau Termometer' }).waitFor();
+    }
+    const photoChip = switcher.locator('[data-family="photo"]');
+    if (await photoChip.count() > 0) {
+      await photoChip.click();
+      await dialog.getByRole('button', { name: 'Pratinjau Foto' }).waitFor();
+    }
+    assert.ok(await noOverflow(), 'Zero overflow on multi-clue switcher');
+    await switcher.locator('button').first().click();
+  }
   const preview = dialog.getByRole('button', { name: 'Pratinjau ' + family });
   await preview.click();
   assert.ok(await dialog.locator('[data-practice-map="preview"]').isVisible());
@@ -87,6 +110,8 @@ async function verifySeekPractice(page, results, family, timing, responseTime) {
     assert.equal(await hand.locator('strong').count(), 1);
     assert.equal(await hand.locator('.ep-card-face').evaluate(el => getComputedStyle(el).animationName), 'none');
   }
+  await dialog.getByTestId('practice-ready-btn').waitFor();
+  assert.equal((await dialog.getByTestId('practice-ready-btn').innerText()).trim(), 'Siap Main');
   await assertCleanUiCopy(page, `seek practice card (${family})`);
   await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'hidden' });
@@ -98,8 +123,14 @@ async function verifyClaimPractice(page, results, mode, hasDeck = true) {
   const practice = page.getByRole('button', { name: 'Coba Panduan', exact: true });
   await practice.click();
   const dialog = page.locator('#edition-practice[open]');
+  assert.match(await dialog.getByTestId('practice-progress').innerText(), /Langkah 1\//);
   assert.match(await dialog.innerText(), mode === 'solo' ? /1 pemain · Solo/ : /2–4 pemain/);
   assert.match(await dialog.innerText(), /90 menit/);
+  await dialog.getByRole('button', { name: 'Pilih landmark latihan' }).click();
+  assert.match(await dialog.getByTestId('practice-progress').innerText(), /Langkah 2\//);
+  // #150: Step back with ← Sebelumnya and advance again
+  await dialog.getByTestId('practice-prev-btn').click();
+  await dialog.getByRole('heading', { name: 'Pilih landmark' }).waitFor();
   await dialog.getByRole('button', { name: 'Pilih landmark latihan' }).click();
   assert.match(await dialog.innerText(), /radius 100 meter/);
   await assertCleanUiCopy(page, `claim practice checkin (${mode})`);
@@ -131,6 +162,7 @@ async function verifyClaimPractice(page, results, mode, hasDeck = true) {
     assert.ok(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth));
     if (mode === 'solo') await page.screenshot({ path: join(results, 'practice-claim-card.png') });
   } else assert.equal(await cardLesson.count(), 0);
+  await dialog.getByTestId('practice-ready-btn').waitFor();
   await dialog.getByRole('button', { name: 'Ulangi latihan' }).click();
   await dialog.getByRole('heading', { name: 'Pilih landmark' }).waitFor();
   await dialog.getByRole('button', { name: 'Lewati latihan' }).click();

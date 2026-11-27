@@ -4,9 +4,33 @@
 }
 .ep-shell { display: grid; gap: 10px; padding: 14px; }
 .ep-top, .ep-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.ep-title { align-items: start; color: #406354; font-size: .79rem; font-weight: 750; }
+.ep-title { align-items: center; flex-wrap: wrap; color: #406354; font-size: .79rem; font-weight: 750; }
 .ep-title p:first-child { min-width: 0; overflow-wrap: anywhere; }
-.ep-title p:last-child { white-space: nowrap; }
+.ep-progress {
+  display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.ep-dots { display: inline-flex; align-items: center; gap: 5px; }
+.ep-dot {
+  width: 8px; height: 8px; border-radius: 999px; background: #c3d8cb; transition: width .16s ease, background .16s ease;
+}
+.ep-dot.done { background: #4f8e77; }
+.ep-dot.active { width: 18px; background: #104a40; }
+.ep-step-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ep-clue-chips {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.ep-clue-chip {
+  min-height: 44px; padding: 6px 11px; border-radius: 999px;
+  border: 1px solid #8eb5a3; background: #ebf6ef; color: #154237;
+  font-size: .8rem; font-weight: 750; cursor: pointer;
+}
+.ep-clue-chip[aria-pressed="true"] {
+  background: #124a40; border-color: #103d35; color: #f6fff1;
+}
+.ep-secondary-row {
+  display: flex; flex-wrap: wrap; gap: 7px;
+}
+.ep-secondary-row > button { flex: 1 1 120px; }
 .ep-back {
   border: 0; min-height: 44px; background: transparent; padding: 0 3px; color: #124a40; font-size: .87rem;
 }

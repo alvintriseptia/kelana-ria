@@ -44,6 +44,14 @@ import {
   renderPostMatchActions,
   teamVisual,
 } from "./lobby-ui";
+import {
+  dismissPhaseCue,
+  openQuickGuideModal,
+  renderOutdoorReadinessStrip,
+  renderPhaseCueStrip,
+  syncOutdoorReadinessInPlace,
+  type PhaseCueKey,
+} from "./quick-guide";
 import { preparePhotoFile, renderPhotoCaptureWidget, type PhotoDraftState } from "./photo-capture";
 import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
 import { escapeText } from "./solo-view";
@@ -398,6 +406,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
   function updateLobbyProximityInPlace() {
     if (!live || live.room.phase !== "lobby") return;
+    syncOutdoorReadinessInPlace(root, { fix: selfFix, status: liveLocationStatus });
     const card = root.querySelector<HTMLElement>('[data-testid="lobby-start-card"]');
     if (!card) return;
     const meter = renderDistanceMeter({
@@ -1601,11 +1610,16 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
             </div>
             <h2>${escapeText(room.packMeta.title)}</h2>
           </div>
-          ${renderMore()}
+          <div class="qg-header-tools">
+            <button type="button" class="qg-trigger-btn" data-action="open-quick-guide" data-testid="lobby-quick-guide-btn">? Panduan</button>
+            ${renderMore()}
+          </div>
         </div>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${slotAlert("lobby")}
+        ${renderPhaseCueStrip("claim-lobby", isGroupLobby ? "Atur tim di bawah sebelum mulai." : undefined)}
         ${renderClaimDraftBar(payload)}
+        ${renderOutdoorReadinessStrip({ fix: selfFix, status: liveLocationStatus })}
         ${startCard.html}
         ${isGroupLobby ? renderLobbyInviteCard({ roomCode: room.code, inviteUrl: invite, copiedCode, copiedLink }) : ""}
         <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
@@ -1688,7 +1702,8 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     const backStudio = live && isDraftPlaytest(live)
       ? `<a class="cg-menu-link" data-testid="menu-back-to-studio" href="${draftStudioUrl(live.pass)}">← Kembali ke Studio</a>`
       : "";
-    return `${backStudio}<button type="button" data-action="panel" data-panel="activity">Aktivitas terbaru</button>
+    return `${backStudio}<button type="button" data-action="open-quick-guide" data-testid="menu-quick-guide-btn">? Panduan</button>
+        <button type="button" data-action="panel" data-panel="activity">Aktivitas terbaru</button>
         ${wakeLockSupported ? `<button type="button" data-action="toggle-wakelock" aria-pressed="${wakeLockWanted}">Layar tetap menyala: ${wakeLockWanted ? "Aktif" : "Nonaktif"}</button>` : ""}
         <button type="button" data-action="refresh">Muat Ulang Ruang</button>
         <button type="button" data-nav="catalog">Kembali ke Katalog</button>
@@ -2132,7 +2147,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       : "";
     sheet.dataset.draftKey = draftKey;
     sheet.hidden = folded;
-    sheet.innerHTML = `${renderClaimDraftBar(live)}${activeScreenAlert}${renderRivalCard(room)}
+    sheet.innerHTML = `${renderClaimDraftBar(live)}${room.phase === "active" && !room.outcome ? renderPhaseCueStrip("claim-active") : ""}${activeScreenAlert}${renderRivalCard(room)}
       ${panel === "activity" ? renderRoomActivity(live.activity, Date.now() + serverOffset) : panel === "cards" ? renderCards(room) : panel === "score" ? renderScore(live) : `
         ${room.ownActiveAttempt
           ? renderActiveAttempt(room.ownActiveAttempt, room) + (room.ownActiveAttempt.landmarkId !== selectedId && selectedId ? renderLandmark(live) : "")
@@ -2484,6 +2499,28 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
     const action = btn.dataset.action;
     if (!action) return;
+    if (action === "open-quick-guide" && live) {
+      btn.closest<HTMLDetailsElement>(".sg-room-menu")?.removeAttribute("open");
+      openQuickGuideModal({
+        format: "claim-the-city",
+        mode: live.room.isSolo || live.pass.mode === "solo" ? "solo" : "group",
+        role: live.room.phase === "lobby" ? "lobby" : "player",
+        packId: live.pass.packId,
+        version: live.pass.version,
+        title: live.room.packMeta.title,
+        inLobby: live.room.phase === "lobby",
+        onResetCues: () => render(),
+      });
+      return;
+    }
+    if (action === "dismiss-phase-cue") {
+      const cueKey = btn.dataset.cueKey as PhaseCueKey | undefined;
+      if (cueKey) {
+        dismissPhaseCue(cueKey);
+        render();
+      }
+      return;
+    }
     if (action === "play-again" && live) {
       void executePlayAgain();
       return;

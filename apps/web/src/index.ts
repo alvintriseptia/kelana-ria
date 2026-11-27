@@ -116,7 +116,14 @@ async function showRoute(focusHeading = false) {
         async openPractice(edition, selectedMode) {
           const { mountEditionPractice } = await import("./edition-practice");
           if (currentNavigation === navigation && !practice.open) {
-            mountEditionPractice(practice, edition, selectedMode);
+            mountEditionPractice(practice, edition, selectedMode, {
+              onReady: () => {
+                const primaryCta = setup.querySelector<HTMLButtonElement>(
+                  '.cat-actions button.primary:not(:disabled)',
+                );
+                primaryCta?.focus({ preventScroll: true });
+              },
+            });
           }
         },
         openStudio,

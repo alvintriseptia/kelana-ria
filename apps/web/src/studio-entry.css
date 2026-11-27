@@ -493,5 +493,116 @@
   color: #fff;
 }
 
+.studio-empty-onboarding {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1.5px dashed #87aa9b;
+  background: linear-gradient(155deg, #f8fcf5 0%, #ecf6ee 100%);
+}
+.studio-empty-head {
+  display: grid;
+  gap: 4px;
+}
+.studio-empty-sub {
+  margin: 0;
+  font-size: .84rem;
+  color: #2f5145;
+  line-height: 1.38;
+}
+.studio-empty-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.studio-empty-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px;
+  border-radius: 11px;
+  border: 1px solid #c0d8cb;
+  background: #ffffff;
+  min-width: 0;
+}
+.studio-empty-step svg {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  color: #124a40;
+  margin-top: 2px;
+}
+.studio-empty-step > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.studio-empty-step strong {
+  font-size: .82rem;
+  color: #10352c;
+  overflow-wrap: anywhere;
+}
+.studio-empty-step small {
+  font-size: .74rem;
+  color: #3a5d51;
+  overflow-wrap: anywhere;
+}
+.studio-empty-quickstarts {
+  display: grid;
+  gap: 8px;
+}
+.studio-shell button.studio-quickstart-btn {
+  width: 100%;
+  min-height: 60px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1.5px solid #80a896;
+  background: #ffffff;
+  color: #10352c;
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+}
+.studio-shell button.studio-quickstart-btn:hover {
+  background: #eef7f0;
+  border-color: #124a40;
+}
+.studio-quickstart-art {
+  width: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  display: block;
+}
+.studio-quickstart-art svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.studio-quickstart-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.studio-quickstart-copy strong {
+  font-size: .9rem;
+  line-height: 1.25;
+}
+.studio-quickstart-copy small {
+  font-size: .76rem;
+  color: #3a5d51;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 340px) {
+  .studio-empty-steps {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 
 

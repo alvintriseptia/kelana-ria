@@ -44,6 +44,14 @@ import {
   renderLobbyInviteCard,
   renderPostMatchActions,
 } from "./lobby-ui";
+import {
+  dismissPhaseCue,
+  openQuickGuideModal,
+  renderOutdoorReadinessStrip,
+  renderPhaseCueStrip,
+  syncOutdoorReadinessInPlace,
+  type PhaseCueKey,
+} from "./quick-guide";
 import { preparePhotoFile, type PhotoDraftState } from "./photo-capture";
 import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
 import { answerText, incomingQuestion, questionDeck, questionNames, questionOptions, rewardCard } from "./seek-game-panels";
@@ -357,6 +365,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
   function updateLobbyOrRegroupProximityInPlace() {
     if (!live) return;
     if (live.room.phase === "lobby") {
+      syncOutdoorReadinessInPlace(root, { fix: selfFix, status: liveLocationStatus });
       const card = root.querySelector<HTMLElement>('[data-testid="lobby-start-card"]');
       if (card) {
         const meter = renderDistanceMeter({
@@ -1316,6 +1325,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       <summary class="sg-quiet" aria-label="Menu permainan" title="Menu permainan"><span aria-hidden="true">⋯</span></summary>
       <div class="sg-room-menu-actions">
         ${backStudio}
+        <button type="button" data-action="open-quick-guide" data-testid="menu-quick-guide-btn">? Panduan</button>
         ${live && isBoardPhase(live.room) ? '<button type="button" data-action="game-panel" data-panel="activity">Aktivitas terbaru</button>' : ""}
         <button type="button" data-action="refresh">Muat ulang</button>
         <button type="button" data-nav="catalog">Kembali ke Katalog</button>
@@ -1351,7 +1361,10 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             ${isDraft ? '<span class="rb-badge sg-qa-badge" data-testid="draft-playtest-badge">Uji Draf</span>' : payload.qa ? '<span class="rb-badge sg-qa-badge" data-testid="seek-qa-badge">Ruang QA</span>' : ""}
             ${isDraft ? "" : pass.paid ? '<span class="rb-badge rb-badge-paid">Pass Berbayar</span>' : '<span class="rb-badge">Resmi Gratis</span>'}
           </div>
-          ${renderRoomMenu()}
+          <div class="qg-header-tools">
+            ${room.phase === "lobby" ? '<button type="button" class="qg-trigger-btn" data-action="open-quick-guide" data-testid="lobby-quick-guide-btn">? Panduan</button>' : ""}
+            ${renderRoomMenu()}
+          </div>
         </div>
         <h2>${escapeText(room.packMeta.title)}</h2>
         ${isDraft ? `<div class="cg-draft-bar-head" data-testid="draft-playtest-bar"><a class="cg-back-studio-link" data-testid="back-to-studio-btn" href="${draftStudioUrl(pass)}">← Kembali ke Studio</a></div>` : ""}
@@ -1379,6 +1392,8 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
                 mapHostId: "sg-start-minimap",
               });
               return `<div class="rb-card">
+              ${renderPhaseCueStrip("seek-lobby")}
+              ${renderOutdoorReadinessStrip({ fix: selfFix, status: liveLocationStatus })}
               ${startCard.html}
               ${renderLobbyInviteCard({ roomCode: room.code, inviteUrl, copiedCode, copiedLink })}
               <div class="lobby-team-head">
@@ -1837,7 +1852,17 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     ${room.phase !== "head_start" ? `<p class="sg-location">${room.seekerPosition ? `${room.seekerPosition.seatId === room.seatId ? "Kamu" : "Pencari"} · ${station ? escapeText(station.name) : "Check-in terverifikasi"} · <span id="sg-position-age"></span>` : "Belum ada check-in pencari"}</p>` : ""}
     <p class="sg-location" data-sg-conn-pill role="status" ${connectionState === "connected" ? "hidden" : ""}>${connectionState === "offline" ? "Luring · menunggu koneksi" : "Menyambungkan ulang…"}</p>
     ${hasMapResult && latest ? `<p class="sg-map-result" role="status">${questionNames[latest.family]} · ${escapeText(answerText(latest.answerLabel ?? ""))}</p>` : ""}`;
-    dock.innerHTML = `${panel || activeScreenAlert || statusMsg ? `<section class="sg-sheet" aria-label="Panel permainan">
+    const activeCueKey: PhaseCueKey | null =
+      room.phase === "head_start"
+        ? isHider
+          ? "seek-head-start-hider"
+          : "seek-head-start-seeker"
+        : room.phase === "seeking" || room.phase === "endgame"
+          ? isHider
+            ? "seek-seeking-hider"
+            : "seek-seeking-seeker"
+          : null;
+    dock.innerHTML = `${activeCueKey ? renderPhaseCueStrip(activeCueKey) : ""}${panel || activeScreenAlert || statusMsg ? `<section class="sg-sheet" aria-label="Panel permainan">
         ${activeScreenAlert}
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${panel ? renderGamePanel(live, deal) : ""}
@@ -2232,6 +2257,29 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
       editingName = false;
       render();
       root.querySelector<HTMLButtonElement>('[data-testid="edit-own-name"]')?.focus({ preventScroll: true });
+      return;
+    }
+    if (action === "open-quick-guide" && live) {
+      btn.closest<HTMLDetailsElement>(".sg-room-menu")?.removeAttribute("open");
+      const role = live.room.role === "hider" ? "hider" : live.room.role === "seeker" ? "seeker" : "lobby";
+      openQuickGuideModal({
+        format: "hide-and-seek",
+        mode: "group",
+        role,
+        packId: live.pass.packId,
+        version: live.pass.version,
+        title: live.room.packMeta.title,
+        inLobby: live.room.phase === "lobby",
+        onResetCues: () => render(),
+      });
+      return;
+    }
+    if (action === "dismiss-phase-cue") {
+      const cueKey = btn.dataset.cueKey as PhaseCueKey | undefined;
+      if (cueKey) {
+        dismissPhaseCue(cueKey);
+        render();
+      }
       return;
     }
     if (action === "refresh") {

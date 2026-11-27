@@ -1069,7 +1069,28 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
               ? `<button type="button" class="secondary studio-draft-delete" data-action="confirm-delete-draft" data-pack="${escapeText(record.packId)}" data-version="${record.version}" data-title="${escapeText(record.pack.meta.title)}" aria-label="Hapus draf ${escapeText(record.pack.meta.title)}">Hapus</button>`
               : ""}
           </li>`).join("")}
-        </ul>` : "<p>Draf yang kamu buat muncul di sini.</p>"}
+        </ul>` : `<section class="studio-empty-onboarding" data-testid="studio-empty-onboarding" aria-label="Cara Buat Game">
+          <div class="studio-empty-head">
+            <span class="studio-preview-eyebrow">Cara Buat Game</span>
+            <p class="studio-empty-sub">Empat tahap singkat untuk mengubah rute kotamu menjadi permainan nyata.</p>
+          </div>
+          <ol class="studio-empty-steps" data-testid="studio-empty-steps">
+            <li class="studio-empty-step">${stepIconSvg(1)}<span><strong>1. Pilih Templat</strong><small>Kloning paket resmi</small></span></li>
+            <li class="studio-empty-step">${stepIconSvg(2)}<span><strong>2. Tandai Peta</strong><small>Pin landmark &amp; stasiun</small></span></li>
+            <li class="studio-empty-step">${stepIconSvg(3)}<span><strong>3. Atur Kartu</strong><small>Timer, tantangan &amp; dek</small></span></li>
+            <li class="studio-empty-step">${stepIconSvg(4)}<span><strong>4. Uji &amp; Terbitkan</strong><small>Uji draf lalu ajukan</small></span></li>
+          </ol>
+          <div class="studio-empty-quickstarts">
+            <button type="button" class="studio-quickstart-btn" data-quickstart-format="claim-the-city" data-testid="studio-quickstart-claim">
+              <span class="studio-quickstart-art">${formatHeroCardSvg("claim-the-city")}</span>
+              <span class="studio-quickstart-copy"><strong>Mulai Claim the City</strong><small>Landmark, tantangan &amp; zona</small></span>
+            </button>
+            <button type="button" class="studio-quickstart-btn" data-quickstart-format="hide-and-seek" data-testid="studio-quickstart-seek">
+              <span class="studio-quickstart-art">${formatHeroCardSvg("hide-and-seek")}</span>
+              <span class="studio-quickstart-copy"><strong>Mulai Hide &amp; Seek</strong><small>Stasiun transit, radar &amp; kartu</small></span>
+            </button>
+          </div>
+        </section>`}
         ${reviewEnabled ? '<button type="button" class="secondary" data-studio-view="review">Peninjau</button>' : ""}
       </div>
       ${renderHomeEarningsCard()}
@@ -1603,8 +1624,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       window.dispatchEvent(new PopStateEvent("popstate"));
       return;
     }
-    if (btn.dataset.format === "hide-and-seek" || btn.dataset.format === "claim-the-city") {
-      format = btn.dataset.format;
+    const chosenFormat = btn.dataset.format ?? btn.dataset.quickstartFormat;
+    if (chosenFormat === "hide-and-seek" || chosenFormat === "claim-the-city") {
+      format = chosenFormat;
       go("template");
       return;
     }
