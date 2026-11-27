@@ -105,6 +105,9 @@ try {
   await host.getByLabel("Lokasi simulasi kamu").selectOption("mrt-blok-m");
   await host.locator('[data-panel="board"]').click();
   await clickAction(host, '[data-action="lock-anchor"]');
+  const anchorBanner = host.getByTestId("game-fx-overlay").locator('[data-fx-kind="banner"]');
+  await anchorBanner.filter({ hasText: "Titik Sembunyi Terkunci!" }).waitFor({ state: "attached" });
+  assert.equal(await guest.getByTestId("game-fx-overlay").getByText("Titik Sembunyi Terkunci!").count(), 0);
   await host.getByRole("button", { name: "Mode QA" }).click();
   const jump = await advance(host, "minute");
   assert.equal((await view(guest, code)).room.now, initialTime + 60_000);
@@ -152,6 +155,7 @@ try {
   const staleDeadline = await post(host, { ...jumpToRelease, actionId: "stale-phase" });
   assert.equal((await staleDeadline.json()).error, "qa-deadline-changed");
   await guest.getByText("Fase Cari", { exact: false }).first().waitFor({ timeout: 1500 });
+  await guest.getByTestId("game-fx-overlay").getByText("Waktu Mencari Dimulai").waitFor({ state: "attached" });
   assert.ok(Date.now() - phaseJumpAt < 1500, "Guest must receive QA phase jump via SSE before a 3-second poll cycle");
   await assertCleanUiCopy(guest, "seek-mode QA room");
   await guest.getByRole("button", { name: "Mode QA" }).click();
@@ -195,6 +199,7 @@ try {
   for (const page of [host, guest]) await clickAction(page, '[data-action="regroup"]');
   const next = (await view(guest, code)).room;
   assert.equal(next.role, "hider");
+  await guest.getByTestId("game-fx-overlay").getByText("Giliranmu Bersembunyi").waitFor({ state: "attached" });
   assert.equal(next.turnStartPoint.id, "mrt-blok-a");
   assert.equal(next.releaseAt - next.now, 25 * 60_000);
   await guest.locator('summary[aria-label="Menu permainan"]').click();

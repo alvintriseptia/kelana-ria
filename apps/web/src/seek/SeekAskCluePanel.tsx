@@ -1,3 +1,5 @@
+import { attachPress } from "../game-motion";
+import { useLayoutEffect, useRef } from "preact/hooks";
 import type { HideSeekQuestionFamily, SeekEngineMenuEntry } from "@kelana-ria/contracts";
 import type { Signal } from "@preact/signals";
 import { haversineMeters } from "../live-location";
@@ -263,21 +265,9 @@ export function SeekAskCluePanel({
               (entry) => entry.availableInCurrentPhase && !entry.lockedSingleUse,
             );
             return (
-              <button
-                key={f}
-                type="button"
-                class="sg-question-card"
-                data-action="question-family"
-                data-family={f}
-                disabled={busy}
-                onClick={() => onSelectFamily(f)}
-              >
-                <SeekQuestionArt family={f} />
-                <span class="sg-question-text">
-                  <strong>{questionNames[f]}</strong>
-                  <small>{available ? rewardLabel(available.drawBatches) : "Lihat pilihan"}</small>
-                </span>
-              </button>
+              <SeekFamilyCard key={f} family={f} busy={busy}
+                reward={available ? rewardLabel(available.drawBatches) : "Lihat pilihan"}
+                onSelect={() => onSelectFamily(f)} />
             );
           })}
         </div>
@@ -390,5 +380,25 @@ export function SeekAskCluePanel({
 
       <SeekSlotAlert error={inlineError} slot="ask-field" />
     </>
+  );
+}
+
+function SeekFamilyCard({ family, busy, reward, onSelect }: {
+  family: HideSeekQuestionFamily;
+  busy: boolean;
+  reward: string;
+  onSelect: () => void;
+}) {
+  const button = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => attachPress(button.current), []);
+  return (
+    <button ref={button} type="button" class="sg-question-card" data-action="question-family"
+      data-family={family} disabled={busy} onClick={onSelect}>
+      <SeekQuestionArt family={family} />
+      <span class="sg-question-text">
+        <strong>{questionNames[family]}</strong>
+        <small>{reward}</small>
+      </span>
+    </button>
   );
 }

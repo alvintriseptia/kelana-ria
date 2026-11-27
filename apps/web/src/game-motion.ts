@@ -166,6 +166,7 @@ export function playGameMotion(
   element: HTMLElement | null,
   kind: GameMotionKind,
   sequence: number,
+  delay = 0,
 ): void {
   if (!element || !motionAllowed()) return;
   const key = `${kind}:${sequence}`;
@@ -177,6 +178,7 @@ export function playGameMotion(
     : gameMotionSpecs[kind];
   const control = animate(element, spec.keyframes, {
     duration: spec.duration,
+    delay,
     ease: motionEaseOut,
   });
   registerControl(element, control);

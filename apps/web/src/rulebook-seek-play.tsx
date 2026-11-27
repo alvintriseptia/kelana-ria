@@ -17,6 +17,7 @@ import { fetchAuthMe, getCachedAuth, onAuthChange, openAuthModal } from "./auth-
 import type { BoardMapHandle, BoardMapOptions, BoardMapUpdateOptions } from "./board-map";
 import { getLocation } from "./device-location";
 import { motionAllowed, playGameMotion } from "./game-motion";
+import { createGameFxController, GameFxOverlay } from "./game-fx-overlay";
 import { resolveDefaultPlayerName, saveRememberedGuestName } from "./guest-name";
 import { createLiveLocationWatcher, type LiveLocationStatus } from "./live-location";
 import {
@@ -39,6 +40,8 @@ import { SeekActivityPanel } from "./seek/SeekActivityPanel";
 import { SeekAskCluePanel } from "./seek/SeekAskCluePanel";
 import { SeekBoardPanel } from "./seek/SeekBoardPanel";
 import { SeekCatalogView } from "./seek/SeekCatalogView";
+import { SeekDockSheet } from "./seek/SeekDockSheet";
+import { animateSeekCardFlights, type SeekCardFlight } from "./seek/seek-motion";
 import { SeekHandPanel } from "./seek/SeekHandPanel";
 import { SeekHistoryPanel } from "./seek/SeekHistoryPanel";
 import { SeekHud } from "./seek/SeekHud";
@@ -128,7 +131,7 @@ class SeekController {
   readonly radiusDraftSig = signal("");
   readonly answerChoiceSig = signal("");
   readonly keepIdsSig = signal<Set<string>>(new Set());
-  readonly dealActiveSig = signal(false);
+  readonly dealActiveSig = signal<number | null>(null);
   readonly previewLoadingSig = signal("");
   readonly previewErrorSig = signal<{ key: string; message: string } | undefined>(undefined);
   readonly draftPreviewSig = signal<DraftPreviewState | undefined>(undefined);
@@ -146,6 +149,7 @@ class SeekController {
 
   readonly lifecycle = new AbortController();
   readonly toast;
+  readonly fx = createGameFxController();
   readonly activityUi;
   readonly roomEvents;
   readonly liveLocation;
@@ -160,6 +164,8 @@ class SeekController {
   actionPending = false;
   pendingAction: PendingSeekAction | null = null;
   pendingEffects: RoomActivityEvent[] = [];
+  pendingCardFlights: SeekCardFlight[] = [];
+  pendingRoleMotion: number | null = null;
   pendingFocusPanelTitle = false;
   pendingLivePayload: SeekRoomPayload | null = null;
   catalogLaunching = false;
@@ -695,9 +701,11 @@ class SeekController {
    */
   commitLivePayload(payload: SeekRoomPayload): void {
     const room = payload.room;
+    const previous = this.liveSig.peek();
     this.activityUi.update(room, payload.activity);
 
     batch(() => {
+      this.updateBoardMotion(previous, payload);
       this.liveSig.value = payload;
       this.clockNowSig.value = this.currentNow();
 
@@ -707,7 +715,7 @@ class SeekController {
 
       if (!isBoardPhase(room)) {
         this.renderedTurn = "";
-        this.dealActiveSig.value = false;
+        this.dealActiveSig.value = null;
         return;
       }
 
@@ -718,10 +726,9 @@ class SeekController {
       const nextPending = room.questions.find((q) => q.status === "pending")?.id ?? "";
       const busy = this.busySig.peek();
       const openDraw = !busy && nextDraw !== "" && nextDraw !== this.drawKey;
-      const deal =
-        openDraw &&
-        this.pendingEffects.some((event) => event.kind === "draw") &&
-        motionAllowed();
+      const deal = openDraw && motionAllowed()
+        ? this.pendingEffects.filter(event => event.kind === "draw").at(-1)?.sequence ?? null
+        : null;
       const incoming = isHider && nextPending !== "" && nextPending !== this.pendingId;
 
       if (this.renderedTurn !== turn) {
@@ -1102,6 +1109,59 @@ class SeekController {
       return false;
     } finally {
       this.flushPendingPayloadAndUnlock();
+    }
+  }
+
+  private updateBoardMotion(previous: SeekRoomPayload | null, next: SeekRoomPayload): void {
+    const room = next.room;
+    const before = previous?.room;
+    if (!before || before.code !== room.code || !isBoardPhase(room)) {
+      this.fx.clear();
+      this.pendingCardFlights = [];
+      this.pendingRoleMotion = null;
+      return;
+    }
+
+    const key = `${room.code}/${room.turnNumber}`;
+    const roleChanged = before.role !== room.role && (room.role === "hider" || room.role === "seeker");
+    const release = before.phase === "head_start" && room.phase === "seeking";
+    const endgame = before.phase !== "endgame" && room.phase === "endgame";
+    if (roleChanged || release || endgame) {
+      const title = roleChanged ? (room.role === "hider" ? "Giliranmu Bersembunyi" : "Giliranmu Mencari")
+        : endgame ? "Pencarian Tahap Akhir" : "Waktu Mencari Dimulai";
+      this.fx.emitBanner(`${key}/${roleChanged ? room.role : room.phase}`, { title });
+      this.pendingRoleMotion = next.stateRev ?? next.activity.sequence;
+    }
+
+    if (room.role !== "hider" || before.role !== "hider" || before.turnNumber !== room.turnNumber) return;
+    if (room.ownAnchorStationId && !before.ownAnchorStationId) {
+      this.fx.emitBanner(`${key}/anchor`, { title: "Titik Sembunyi Terkunci!", tone: "lock" });
+    }
+    const oldDeck = previous!.deck as SeekDeckHiderView;
+    const deck = next.deck as SeekDeckHiderView;
+    const active = oldDeck.activeDraw;
+    const held = new Set(deck.hand.map(card => card.instanceId));
+    if (active && !deck.activeDraw) this.pendingFocusPanelTitle = true;
+    if (active && !deck.activeDraw && motionAllowed()) {
+      const cards = this.root.querySelectorAll<HTMLElement>('.sg-offer button[data-instance]');
+      this.pendingCardFlights = Array.from(cards)
+        .filter(button => active.cards.some(card => card.instanceId === button.dataset.instance))
+        .map(button => ({ start: button.getBoundingClientRect(), kept: held.has(button.dataset.instance ?? "") }));
+    }
+    const oldTraps = new Set(oldDeck.triggeredTraps.map(trap => trap.trapId));
+    for (const trap of deck.triggeredTraps) {
+      if (oldTraps.has(trap.trapId)) continue;
+      this.fx.emitDelta(`${key}/trap/${trap.trapId}`, { label: `+${trap.bonusMinutes} menit`, tone: "time" });
+    }
+    const spent = oldDeck.hand.find(card => !held.has(card.instanceId));
+    if (spent && !active) {
+      const tone = spent.category === "curse" ? "danger" : spent.category === "time_bonus" ? "time" : "claim";
+      this.fx.emitStamp(`${key}/${next.stateRev ?? next.activity.sequence}/spent`, {
+        label: "Kartu Digunakan", tone,
+      });
+      const button = Array.from(this.root.querySelectorAll<HTMLElement>('[data-action="play-card"]'))
+        .find(element => element.dataset.instance === spent.instanceId);
+      if (button && motionAllowed()) this.pendingCardFlights = [{ start: button.getBoundingClientRect(), kept: false }];
     }
   }
 
@@ -2101,6 +2161,7 @@ class SeekController {
   };
 
   handleSelectFamily = (nextFamily: HideSeekQuestionFamily) => {
+    this.pendingFocusPanelTitle = true;
     batch(() => {
       this.familySig.value = nextFamily;
       this.optionSig.value = "";
@@ -2110,6 +2171,7 @@ class SeekController {
   };
 
   handleBackToDeck = () => {
+    this.pendingFocusPanelTitle = true;
     batch(() => {
       this.familySig.value = null;
       this.optionSig.value = "";
@@ -2145,7 +2207,7 @@ class SeekController {
       if (next.size < draw.keepCount) next.add(instanceId);
     }
     batch(() => {
-      this.dealActiveSig.value = false;
+      this.dealActiveSig.value = null;
       this.keepIdsSig.value = next;
     });
   };
@@ -2371,6 +2433,7 @@ class SeekController {
 
   destroy(): void {
     this.lifecycle.abort();
+    this.fx.destroy();
     closeLobbyDialog();
     this.liveLocation.stop();
     this.roomEvents.destroy();
@@ -2418,6 +2481,8 @@ function SeekActiveGame({
 
   const controlsRef = useRef<HTMLDivElement | null>(null);
   const activityHostRef = useRef<HTMLDivElement | null>(null);
+  const flightsHost = useRef<HTMLDivElement>(null);
+  const stopFlights = useRef<(() => void) | undefined>(undefined);
   const mapHostRef = useRef<HTMLElement | null>(null);
 
   const selectedNav: SeekPanel = isHider ? "hand" : "ask";
@@ -2492,6 +2557,16 @@ function SeekActiveGame({
     const effects = ctrl.pendingEffects;
     ctrl.pendingEffects = [];
 
+    const roleSequence = ctrl.pendingRoleMotion;
+    ctrl.pendingRoleMotion = null;
+    const flights = ctrl.pendingCardFlights;
+    ctrl.pendingCardFlights = [];
+    if (flights.length && flightsHost.current) {
+      stopFlights.current?.();
+      const hand = controlsRef.current?.querySelector<HTMLElement>('[data-panel="hand"]') ?? null;
+      stopFlights.current = animateSeekCardFlights(flightsHost.current, hand, flights);
+    }
+    if (!isHider) stopFlights.current?.();
     const roleEffect = effects
       .filter((event) => event.kind === "role" || event.kind === "endgame")
       .at(-1);
@@ -2524,9 +2599,10 @@ function SeekActiveGame({
           ) {
             ctrl.mapHandle?.pulseDeduction(geometry);
             if (geometry === "station_filter" || geometry === "distance_compare") {
-              for (const marker of mapHost.querySelectorAll<HTMLElement>(".board-map-pin-station")) {
-                playGameMotion(marker, "role", deduction.sequence);
-              }
+              const pins = mapHost.querySelectorAll<HTMLElement>(".board-map-pin-station");
+              pins.forEach((marker, index) => {
+                playGameMotion(marker, "update", deduction.sequence, Math.min(index, 15) * 0.038);
+              });
             }
           }
         });
@@ -2535,11 +2611,12 @@ function SeekActiveGame({
       }
     }
 
-    if (roleEffect) {
+    const roleMotion = roleEffect?.sequence ?? roleSequence;
+    if (roleMotion !== null) {
       playGameMotion(
         controlsRef.current?.querySelector<HTMLElement>(".sg-role") ?? null,
         "role",
-        roleEffect.sequence,
+        roleMotion,
       );
     }
     if (cardEffect) {
@@ -2562,6 +2639,7 @@ function SeekActiveGame({
 
   useEffect(() => {
     return () => {
+      stopFlights.current?.();
       ctrl.activityUi.mount(null);
     };
   }, [ctrl]);
@@ -2579,6 +2657,8 @@ function SeekActiveGame({
         clockNowSig={ctrl.clockNowSig}
         getMapHost={getMapHost}
       />
+      <GameFxOverlay controller={ctrl.fx} />
+      <div ref={flightsHost} aria-hidden="true" />
       <div ref={activityHostRef} class="room-activity-host" />
       <div ref={controlsRef} id="sg-controls">
         <SeekHud
@@ -2608,8 +2688,7 @@ function SeekActiveGame({
             />
           )}
 
-          {showSheet && (
-            <section class="sg-sheet" aria-label="Panel permainan">
+          <SeekDockSheet panel={panel} open={showSheet}>
               {activeScreenAlert && (
                 <InlineAlert message={activeScreenAlert.message} tone={activeScreenAlert.tone} />
               )}
@@ -2801,8 +2880,7 @@ function SeekActiveGame({
                   }}
                 />
               )}
-            </section>
-          )}
+          </SeekDockSheet>
 
           <nav class="sg-nav" aria-label="Aksi permainan">
             <button

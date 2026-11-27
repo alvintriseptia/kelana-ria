@@ -364,7 +364,10 @@ try {
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
   const answerSentAt = Date.now();
   const dealGrid = pageCreator.locator(".sg-deal");
-  await dealGrid.locator(".sg-offer-back").first().waitFor({ state: "attached" });
+  await dealGrid.locator('.sg-offer[data-game-motion^="draw:"]').first().waitFor({ state: "attached" });
+  const drawMotion = await dealGrid.locator(".sg-offer").evaluateAll(elements =>
+    elements.map(element => element.getAttribute("data-game-motion")));
+  assert.ok(drawMotion.length > 0 && drawMotion.every(sequence => sequence === drawMotion[0]));
   assert.equal(await pageCreator.locator('[data-action="confirm-draw"]').isDisabled(), true);
   const answerNotice = pageG2.locator('[data-activity-message][data-notice-kind="answer"]');
   await answerNotice.waitFor({ timeout: 2200 });
@@ -415,7 +418,9 @@ try {
   }
   assert.deepEqual(await activeOffer(), offered);
   await clickAndWaitPost(pageCreator, 'button[data-action="confirm-draw"]');
+  await pageCreator.locator('.sg-card-flight[aria-hidden="true"]').first().waitFor({ state: "attached" });
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Kartu di Tangan (1/"));
+  assert.equal(await pageG2.locator(".sg-card-flight").count(), 0);
   await assertCleanUiCopy(pageCreator, "seek hider hand");
 
   const snapshot = () => pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
@@ -449,6 +454,11 @@ try {
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-pending"]');
   await cardChoice.waitFor();
   assert.equal(await dealGrid.count(), 0);
+  assert.equal(await pageCreator.locator(".sg-offer[data-game-motion], .sg-card-flight").count(), 0);
+  await pageCreator.setViewportSize({ width: 320, height: 640 });
+  assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-reduced-motion-320.png") });
+  await pageCreator.setViewportSize({ width: 390, height: 844 });
   await cardChoice.click();
   await clickAndWaitPost(pageCreator, 'button[data-action="confirm-draw"]');
   const afterThermometer = (await snapshot()).room;
@@ -509,6 +519,10 @@ try {
   await pageG2.click('button[data-action="select-station"][data-station="mrt-blok-m"]');
   await clickAndWaitPost(pageG2, 'button[data-action="trigger-endgame"]');
   await pageG2.waitForFunction(() => document.body.textContent.includes("Endgame"));
+  await pageG2.locator('.sg-role[data-game-motion^="role:"]').waitFor();
+  const endgameBanner = pageG2.getByTestId("game-fx-overlay").locator('[data-fx-kind="banner"]');
+  await endgameBanner.filter({ hasText: "Pencarian Tahap Akhir" }).waitFor({ state: "attached" });
+  assert.equal(await endgameBanner.evaluate(element => getComputedStyle(element).pointerEvents), "none");
   await assertCleanUiCopy(pageG2, "seek endgame");
   await refreshSeekRoom(pageCreator);
   const foundCode = (await pageCreator.textContent('[data-testid="hider-found-code"]')).trim();
