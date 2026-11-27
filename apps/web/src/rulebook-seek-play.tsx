@@ -2147,6 +2147,7 @@ class SeekController {
     if (this.busySig.peek() || this.actionPending) return;
     const current = this.panelSig.peek();
     const target = next === current ? null : next;
+    if (target === "found-code") this.pendingFocusPanelTitle = true;
     this.panelSig.value = target;
     if (target === "activity") {
       queueMicrotask(() => {
@@ -2482,6 +2483,7 @@ function SeekActiveGame({
   const mapHostRef = useRef<HTMLElement | null>(null);
 
   const selectedNav: SeekPanel = isHider ? "hand" : "ask";
+  const foundCode = isHider && room.phase === "seeking" ? room.foundCode : undefined;
   const latest = [...room.questions]
     .reverse()
     .find(
@@ -2701,6 +2703,13 @@ function SeekActiveGame({
                   onAdvanceClock={ctrl.handleAdvanceQaClock}
                 />
               )}
+              {panel === "found-code" && foundCode && (
+                <>
+                  <h2 id="sg-panel-title" tabIndex={-1}>Kode temuan</h2>
+                  <div class="sg-found-code" data-testid="hider-found-code">{foundCode}</div>
+                  <p>Berikan kode ini saat pencari menemukanmu.</p>
+                </>
+              )}
               {panel === "board" && (
                 <SeekBoardPanel
                   payload={payload}
@@ -2895,6 +2904,20 @@ function SeekActiveGame({
               </span>
               Titik
             </button>
+            {foundCode && (
+              <button
+                type="button"
+                data-action="game-panel"
+                data-panel="found-code"
+                aria-label="Kode temuan"
+                aria-pressed={panel === "found-code"}
+                disabled={busy}
+                onClick={() => ctrl.handleTogglePanel("found-code")}
+              >
+                <span class="sg-nav-icon" aria-hidden="true">#</span>
+                Kode
+              </button>
+            )}
           </nav>
         </div>
       </div>
