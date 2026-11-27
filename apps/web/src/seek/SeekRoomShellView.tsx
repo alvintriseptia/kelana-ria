@@ -9,6 +9,7 @@ import {
   OutdoorReadinessStrip,
   PostMatchActions,
 } from "../lobby-ui";
+import { DraftStudioLink } from "../ui/DraftStudioLink";
 import { DirectionsLink, DistanceMeter, StartPointCard } from "../ui/LocationWidgets";
 import { PhaseCueStrip } from "../ui/PhaseCueStrip";
 import { SeekActivityPanel } from "./SeekActivityPanel";
@@ -17,7 +18,6 @@ import {
   answerText,
   clockText,
   destructiveExitSpec,
-  draftStudioUrl,
   familyLabels,
   isDraftPlaytest,
   orderedSeekSeats,
@@ -223,13 +223,7 @@ export function SeekRoomShellView({
         <h2>{room.packMeta.title}</h2>
         {isDraft && (
           <div class="cg-draft-bar-head" data-testid="draft-playtest-bar">
-            <a
-              class="cg-back-studio-link"
-              data-testid="back-to-studio-btn"
-              href={draftStudioUrl(pass)}
-            >
-              ← Kembali ke Studio
-            </a>
+            <DraftStudioLink format="hide-and-seek" pass={pass} />
           </div>
         )}
         {statusMsg && <p role="status">{statusMsg}</p>}

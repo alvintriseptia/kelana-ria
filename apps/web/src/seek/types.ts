@@ -268,10 +268,6 @@ export function isDraftPlaytest(payload: SeekRoomPayload | null): boolean {
   return Boolean(payload?.draftPlaytest || payload?.pass?.draftPlaytest);
 }
 
-export function draftStudioUrl(pass: SeekRoomPayload["pass"]): string {
-  return `/?play=rulebook-studio&studio=editor&format=hide-and-seek&draft=${encodeURIComponent(pass.packId)}&version=${pass.version}`;
-}
-
 export function roomPoints({ room, publicBoard }: SeekRoomPayload): SeekBoardPoint[] {
   const points = [room.turnStartPoint, publicBoard.startPoint, ...publicBoard.stations];
   if (room.regroupPoint) points.unshift(room.regroupPoint);

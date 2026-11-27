@@ -1,4 +1,5 @@
 import type {
+  AuthAdminsReply,
   AuthMeReply,
   ClaimCardEffect,
   ClaimChallengePrimitive,
@@ -21,6 +22,14 @@ import {
   renderAccountChip,
 } from "./auth-modal";
 import { escapeText } from "./escape-text";
+import {
+  renderAdminInspection,
+  renderAdminReview,
+  renderAdminReviewDialog,
+  type AdminReviewRecord,
+  type AdminReviewState,
+  type AdminReviewPending,
+} from "./studio-admin-review";
 import {
   buildClaimCardFromForm,
   buildClaimChallengeFromForm,
@@ -167,7 +176,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let templates: StudioTemplate[] = [];
   let earnings: StudioEarningsRecord[] = [];
   let isAdmin = false;
-  let reviewVersions: StudioVersionRecord[] = [];
+  let reviewVersions: AdminReviewRecord[] = [];
+  const review: AdminReviewState = {
+    status: "submitted", format: "all", expanded: new Set(), manageOpen: false, busy: false, adminError: "",
+  };
+  let pendingReview: (AdminReviewPending & { record?: AdminReviewRecord; email?: string }) | undefined;
+  let reviewDialog: HTMLDialogElement | undefined;
+  let reviewTrigger: HTMLButtonElement | undefined;
   let selectedKey = view === "editor" ? `${params.get("draft") ?? ""}@${Number(params.get("version"))}` : "";
   let authState: AuthMeReply | null = getCachedAuth();
   let authRequired = false;
@@ -288,6 +303,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   function go(next: StudioView, draft?: StudioVersionRecord, message = "", errors: RulebookValidationIssue[] = []) {
     if (signal.aborted) return;
     refreshSeq++;
+    if (next !== "review") closeReviewDialog();
     view = next;
     if (next === "home" || next === "review") loading = true;
     format = draft?.format ?? format;
@@ -830,7 +846,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     };
     versions = [];
     earnings = [];
-    reviewVersions = [];
+    clearReview();
     isAdmin = false;
     errorMsg = "";
     loading = false;
@@ -856,17 +872,18 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     const seq = ++refreshSeq;
     try {
       if (view === "review") {
-        const data = await apiJson<{ versions?: StudioVersionRecord[]; error?: string }>("/api/rulebooks?role=reviewer");
+        const data = await apiJson<{ versions?: AdminReviewRecord[]; error?: string }>("/api/rulebooks?role=reviewer");
         if (seq !== refreshSeq || signal.aborted) return;
         if (data.error === "auth-required") {
           handleStudioAuthRequired();
           return;
         }
         if (data.error) {
-          reviewVersions = [];
+          clearReview();
           if (data.error === "admin-only") isAdmin = false;
-          errorMsg = "Antrean tinjauan belum bisa dibuka.";
+          else errorMsg = "Antrean tinjauan belum bisa dibuka.";
         } else {
+          authRequired = false;
           isAdmin = true;
           reviewVersions = data.versions ?? [];
         }
@@ -1099,31 +1116,229 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             </button>
           </div>
         </section>`}
-        ${isAdmin ? '<button type="button" class="secondary" data-studio-view="review">Peninjau</button>' : ""}
+        ${hasReviewAccess() ? '<button type="button" class="secondary st-admin-entry" data-studio-view="review"><span aria-hidden="true">◆</span> Panel Admin</button>' : ""}
       </div>
       ${renderHomeEarningsCard()}
       ${renderDeleteDraftDialog()}
     </div>`;
   }
 
+  function hasReviewAccess() {
+    return isAdmin && authState?.user?.role === "admin";
+  }
+
   function renderReview(): string {
     if (loading) return '<p role="status">Memuat antrean…</p>';
-    if (!isAdmin) return '<div class="rb-card"><p>Masuk dengan akun admin untuk meninjau paket.</p></div>';
-    return `<section class="rb-card" aria-label="Paket untuk tinjauan"><ul class="rb-list">
-      ${reviewVersions.length === 0 ? "<li>Belum ada paket untuk ditinjau.</li>" : reviewVersions.map(record => `<li>
-        <div class="rb-rev-head"><strong>${escapeText(record.pack.meta.title)}</strong>
-          <small>${escapeText(formatLabels[record.format])} · v${record.version} · ${escapeText(statusLabel(record.status))}</small>
-        </div>
-        ${record.status === "submitted" ? `<label class="rb-field"><span>Catatan Revisi (opsional)</span>
-          <input data-review-note value="Perjelas catatan akses lokasi."></label>` : ""}
-        <div class="rb-actions">
-          ${record.status === "submitted"
-            ? `<button type="button" class="primary" data-action="publish" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Terbitkan ke Katalog</button>
-              <button type="button" class="secondary" data-action="request-changes" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Minta Revisi</button>`
-            : record.status === "published" ? `<button type="button" class="secondary" data-action="pause" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Jeda Penjualan</button>` : ""}
-        </div>
-      </li>`).join("")}
-    </ul></section>`;
+    if (hasReviewAccess()) {
+      const error = review.adminError && !review.manageOpen
+        ? `<p role="alert" class="rb-banner-error">${escapeText(review.adminError)}</p>` : "";
+      return error + renderAdminReview(reviewVersions, review);
+    }
+    return `<section class="rb-card st-admin-denied">
+      <h3>Akses khusus admin peninjau</h3>
+      <div class="rb-actions">
+        ${authState?.authenticated ? "" : '<button type="button" class="primary" data-auth-action="open-studio-auth">Masuk dengan Email</button>'}
+        <button type="button" class="secondary" data-studio-view="home">‹ Kembali ke Studio</button>
+      </div></section>`;
+  }
+
+  function closeReviewDialog() {
+    const dialog = reviewDialog;
+    reviewDialog = pendingReview = undefined;
+    if (dialog?.open) dialog.close();
+    dialog?.remove();
+  }
+
+  function clearReview() {
+    closeReviewDialog();
+    reviewVersions = [];
+    review.admins = undefined;
+    review.manageOpen = false;
+    review.expanded.clear();
+    review.adminError = "";
+    review.busy = false;
+  }
+
+  function announceAdminError(error?: string) {
+    if (error === "auth-required") {
+      handleStudioAuthRequired();
+      return;
+    }
+    if (error === "admin-only") {
+      isAdmin = false;
+      clearReview();
+      render();
+      return;
+    }
+    const messages: Record<string, string> = {
+      "invalid-email": "Periksa alamat email.",
+      "invalid-status": "Status paket sudah berubah. Muat ulang Panel Admin.",
+      "validation-failed": "Paket belum lolos validasi. Periksa hasil validasi paket.",
+      "user-not-found": "Email ini belum terdaftar.",
+      "cannot-remove-last-admin": "Panel harus memiliki setidaknya satu admin.",
+      "env-bootstrapped-admin": "Akses admin bawaan server dikelola melalui konfigurasi server.",
+    };
+    review.adminError = messages[error ?? ""] ?? "Permintaan belum bisa diproses. Coba lagi.";
+  }
+
+  async function updateAdminAccounts(action?: "grant" | "revoke", email?: string) {
+    if (!hasReviewAccess() || view !== "review" || review.busy) return;
+    const account = authState?.user?.userId;
+    review.busy = true;
+    review.adminError = "";
+    const grant = root.querySelector<HTMLFormElement>("[data-admin-grant]");
+    const trigger = action === "grant"
+      ? (grant?.querySelector<HTMLButtonElement>('button[type="submit"]') ?? undefined)
+      : action === "revoke" ? reviewTrigger : undefined;
+    if (trigger) trigger.disabled = true;
+    try {
+      const data = await apiJson<AuthAdminsReply>("/api/auth/admins", action ? { action, email } : undefined);
+      if (signal.aborted || account !== authState?.user?.userId) return;
+      if (data.ok) {
+        review.admins = data.admins;
+        if (action) statusMsg = action === "grant" ? "Akses admin diberikan." : "Akses admin dicabut.";
+        if (action === "revoke" && email === authState?.user?.email) {
+          void fetchAuthMe(signal);
+          isAdmin = false;
+          clearReview();
+        }
+      } else announceAdminError(data.error);
+    } catch {
+      if (account === authState?.user?.userId) announceAdminError();
+    } finally {
+      if (trigger) trigger.disabled = false;
+      if (!signal.aborted && account === authState?.user?.userId) {
+        review.busy = false;
+        if (view === "review") {
+          render();
+          const button = root.querySelector<HTMLButtonElement>(
+            action === "grant" ? '[data-admin-grant] button[type="submit"]' : '[data-action="admin-manage"]',
+          );
+          button?.focus();
+          if (action === "grant" && review.adminError) {
+            const input = root.querySelector<HTMLInputElement>('[data-admin-grant] input[name="email"]');
+            if (input) {
+              input.value = email ?? "";
+              input.focus();
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function confirmReview(pending: NonNullable<typeof pendingReview>, trigger: HTMLButtonElement) {
+    if (review.busy || reviewDialog) return;
+    const slot = document.createElement("div");
+    slot.innerHTML = renderAdminReviewDialog(pending);
+    const dialog = slot.querySelector<HTMLDialogElement>("[data-admin-dialog]");
+    if (!dialog) return;
+    pendingReview = pending;
+    reviewDialog = dialog;
+    reviewTrigger = trigger;
+    root.querySelector(".studio-shell")?.append(dialog);
+    dialog.addEventListener("close", () => {
+      if (reviewDialog !== dialog) return;
+      closeReviewDialog();
+      trigger.focus();
+    }, { once: true });
+    dialog.addEventListener("cancel", event => {
+      if (review.busy) event.preventDefault();
+    });
+    dialog.showModal();
+  }
+
+  async function submitModeration(record: AdminReviewRecord, action: "publish" | "request-changes" | "pause" | "resume" | "admin-playtest", note = "") {
+    if (!hasReviewAccess() || view !== "review" || review.busy) return;
+    const account = authState?.user?.userId;
+    const form = reviewDialog?.querySelector<HTMLFormElement>("[data-admin-confirm]");
+    const button = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+    const trigger = reviewTrigger;
+    review.busy = true;
+    review.adminError = "";
+    if (button) button.disabled = true;
+    const actions = {
+      publish: "publish-version", "request-changes": "request-changes", pause: "pause-version", resume: "resume-version",
+      "admin-playtest": "start-admin-playtest",
+    };
+    try {
+      const result = await apiJson<{ ok?: boolean; roomCode?: string; format?: RulebookFormat; error?: string }>(
+        "/api/rulebooks", { type: actions[action], packId: record.packId, version: record.version, note, reason: note },
+      );
+      if (signal.aborted || view !== "review" || account !== authState?.user?.userId) return;
+      if (!result.ok) {
+        announceAdminError(result.error);
+        return;
+      }
+      if (action === "admin-playtest" && result.roomCode) {
+        const route = (result.format ?? record.format) === "claim-the-city" ? "rulebook-claim" : "rulebook-seek";
+        location.assign(`/?play=${route}&room=${encodeURIComponent(result.roomCode)}&adminPlaytest=1`);
+        return;
+      }
+      closeReviewDialog();
+      const messages = {
+        publish: "Paket diterbitkan ke katalog.", "request-changes": "Permintaan revisi dikirim ke kreator.",
+        pause: "Penjualan paket dijeda.", resume: "Paket kembali tersedia di katalog.", "admin-playtest": "",
+      };
+      statusMsg = messages[action];
+      await refresh();
+      const target = root.querySelector<HTMLElement>(`[data-admin-pack="${CSS.escape(record.packId)}"][data-version="${record.version}"] summary`)
+        ?? root.querySelector<HTMLButtonElement>('button[data-admin-status][aria-pressed="true"]');
+      target?.focus();
+    } catch {
+      if (account === authState?.user?.userId) announceAdminError();
+    } finally {
+      if (button) button.disabled = false;
+      if (!signal.aborted && view === "review" && account === authState?.user?.userId) {
+        review.busy = false;
+        if (review.adminError) {
+          if (reviewDialog) {
+            const feedback = reviewDialog.querySelector<HTMLElement>("[data-admin-dialog-error]");
+            if (feedback) {
+              feedback.hidden = false;
+              feedback.textContent = review.adminError;
+            }
+          } else {
+            render();
+            root.querySelector<HTMLButtonElement>(
+              `[data-action="${action}"][data-pack="${CSS.escape(record.packId)}"][data-version="${record.version}"]`,
+            )?.focus();
+          }
+        } else if (trigger?.isConnected) trigger.focus();
+      }
+    }
+  }
+
+  function handleReviewButton(button: HTMLButtonElement) {
+    if (!hasReviewAccess() || view !== "review") return false;
+    const { adminStatus, adminFormat, action, pack, version, email } = button.dataset;
+    if (review.busy) return true;
+    if (adminStatus === "all" || adminStatus === "submitted" || adminStatus === "published" || adminStatus === "paused") {
+      review.status = adminStatus;
+      render();
+      root.querySelector<HTMLButtonElement>(`[data-admin-status="${adminStatus}"]`)?.focus();
+    } else if (adminFormat === "all" || adminFormat === "hide-and-seek" || adminFormat === "claim-the-city") {
+      review.format = adminFormat;
+      render();
+      root.querySelector<HTMLButtonElement>(`[data-admin-format="${adminFormat}"]`)?.focus();
+    } else if (action === "admin-manage") {
+      review.manageOpen = !review.manageOpen;
+      render();
+      root.querySelector<HTMLButtonElement>('[data-action="admin-manage"]')?.focus();
+      if (review.manageOpen) void updateAdminAccounts();
+    } else if (action === "admin-revoke" && email) {
+      const admin = review.admins?.find(item => item.email === email);
+      if (admin) confirmReview({ action: "revoke", email, name: admin.displayName }, button);
+    } else if (action === "admin-cancel") {
+      reviewDialog?.close();
+    } else if (action === "publish" || action === "request-changes" || action === "pause" || action === "resume" || action === "admin-playtest") {
+      const record = reviewVersions.find(item => item.packId === pack && String(item.version) === version);
+      if (record && action === "admin-playtest") {
+        reviewTrigger = button;
+        void submitModeration(record, action);
+      } else if (record && action !== "admin-playtest") confirmReview({ action, record, name: record.pack.meta.title }, button);
+    } else return false;
+    return true;
   }
 
   function renderStep2(active?: StudioVersionRecord): string {
@@ -1187,7 +1402,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     const bodySlot = root.querySelector<HTMLElement>("#st-body-slot")!;
     const heading = {
       home: "Studio Kreator", format: "Pilih format permainan", template: "Pilih templat", import: "Impor game",
-      editor: active?.pack.meta.title ?? "Editor draf", review: "Antrean Tinjauan Editorial",
+      editor: active?.pack.meta.title ?? "Editor draf", review: hasReviewAccess() ? "Panel Admin" : "Tinjauan Editorial",
     }[view];
     const showingMapIssues = headerSlot.querySelector<HTMLDetailsElement>("[data-map-validation]")?.open;
     const issues = validationErrors.length ? `<ul class="rb-errors" aria-label="Kesalahan validasi">${validationErrors.map(error => {
@@ -1222,7 +1437,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         <summary>${validationErrors.length} hal perlu diperiksa</summary>${issues}</details>` : issues}
     </div>`;
 
-    if (authRequired) {
+    if (authRequired && view !== "review") {
       stepperSlot.innerHTML = "";
       destroyStep2Map();
       bodySlot.innerHTML = `<div class="rb-card" data-testid="studio-auth-gate">
@@ -1614,6 +1829,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   root.addEventListener("click", (event) => {
     const btn = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("button");
     if (!btn || busy || savingMap || savingForm) return;
+    if (handleReviewButton(btn)) return;
     if (btn.dataset.authAction) {
       if (btn.dataset.authAction === "open-account" && authState?.authenticated) {
         openAuthModal({ mode: "account" });
@@ -2837,33 +3053,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         }
         return;
       }
-      if (action === "publish" || action === "request-changes" || action === "pause") {
-        if (view !== "review" || !isAdmin) return;
-        const packId = btn.dataset.pack ?? "";
-        const version = Number(btn.dataset.version ?? 1);
-        const type =
-          action === "publish" ? "publish-version" : action === "pause" ? "pause-version" : "request-changes";
-        const noteInput = btn.closest("li")?.querySelector<HTMLInputElement>("[data-review-note]")?.value.trim();
-        const res = await apiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
-          type,
-          packId,
-          version,
-          note: noteInput || "Perjelas catatan akses lokasi.",
-          reason: "Lokasi sedang perawatan.",
-        });
-        if (res.ok) {
-          statusMsg =
-            type === "publish-version"
-              ? "Paket diterbitkan ke katalog."
-              : type === "pause-version"
-                ? "Penjualan paket dijeda."
-                : "Permintaan revisi dikirim ke kreator.";
-          await refresh();
-        } else {
-          errorMsg = res.error ?? "Gagal memproses tinjauan.";
-          render();
-        }
-      }
     })().catch(() => {
       errorMsg = "Perubahan belum bisa dikirim. Periksa koneksi, lalu coba lagi.";
       render();
@@ -2876,10 +3065,54 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     });
   }, { signal });
 
+  root.addEventListener("toggle", event => {
+    const details = event.target;
+    if (!(details instanceof HTMLDetailsElement) || !details.isConnected || !details.dataset.adminInspect) return;
+    const key = details.dataset.adminInspect;
+    const inspection = details.querySelector(":scope > .admin-review-inspection");
+    if (!details.open) {
+      review.expanded.delete(key);
+      inspection?.remove();
+      return;
+    }
+    review.expanded.add(key);
+    if (inspection || !hasReviewAccess()) return;
+    const record = reviewVersions.find(item => `${item.packId}@${item.version}` === key);
+    if (record) details.insertAdjacentHTML("beforeend", renderAdminInspection(record));
+  }, { capture: true, signal });
+
+  root.addEventListener("submit", event => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement) || view !== "review" || !hasReviewAccess()) return;
+    if (form.matches("[data-admin-grant]")) {
+      event.preventDefault();
+      const email = new FormData(form).get("email");
+      if (typeof email === "string" && email.trim()) void updateAdminAccounts("grant", email.trim());
+      return;
+    }
+    if (!form.matches("[data-admin-confirm]") || !pendingReview) return;
+    event.preventDefault();
+    const { action, record, email } = pendingReview;
+    const input = form.querySelector<HTMLTextAreaElement>("[name=note]");
+    const note = input?.value.trim() ?? "";
+    if (input?.required && !note) {
+      input.setCustomValidity("Isi catatan sebelum melanjutkan.");
+      input.reportValidity();
+      input.addEventListener("input", () => input.setCustomValidity(""), { once: true, signal });
+      return;
+    }
+    if (action === "revoke" && email) {
+      closeReviewDialog();
+      void updateAdminAccounts(action, email);
+    } else if (record && action !== "revoke") {
+      void submitModeration(record, action, note);
+    }
+  }, { signal });
+
   onAuthChange((next) => {
     if (next.user?.userId !== authState?.user?.userId || next.user?.role !== "admin") {
       isAdmin = false;
-      reviewVersions = [];
+      clearReview();
     }
     authState = next;
     if (next.authenticated) {
@@ -2905,6 +3138,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   void refresh();
   return () => {
     lifetime.abort();
+    closeReviewDialog();
     window.clearInterval(dryClock);
     destroyStep2Map();
   };

@@ -181,6 +181,7 @@ export function openAuthModal(options: OpenAuthModalOptions = {}) {
             <strong>${escapeText(user.displayName)}</strong>
             <small>${escapeText(user.email)}</small>
           </div>
+          ${user.role === "admin" ? '<span class="auth-role-badge" data-testid="auth-admin-badge">Admin</span>' : ""}
         </div>
         <span class="auth-stat-pill" data-testid="auth-owned-count">✓ ${owned} paket dimiliki</span>
         ${alertHtml}

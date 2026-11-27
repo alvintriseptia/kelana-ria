@@ -1,11 +1,11 @@
 import type { Signal } from "@preact/signals";
 import { useRef } from "preact/hooks";
 import { formatRelativeAge, freshnessBucket } from "../room-activity";
+import { DraftStudioLink } from "../ui/DraftStudioLink";
 import { InlineAlert } from "../ui/InlineAlert";
 import {
   clockLabel,
   destructiveExitSpec,
-  draftStudioUrl,
   isDraftPlaytest,
   isQaRoom,
   type ClaimInlineError,
@@ -124,15 +124,7 @@ export function ClaimDraftBar({
         ) : (
           <span class="rb-badge sg-qa-badge">Mode QA</span>
         )}
-        {isDraft && (
-          <a
-            class="cg-back-studio-link"
-            data-testid="back-to-studio-btn"
-            href={draftStudioUrl(payload.pass)}
-          >
-            ← Kembali ke Studio
-          </a>
-        )}
+        {isDraft && <DraftStudioLink format={payload.format} pass={payload.pass} />}
       </div>
       <label class="cg-qa-loc-field">
         <span>Simulasi GPS</span>
@@ -227,13 +219,7 @@ export function ClaimMoreMenu({
       </summary>
       <div class="sg-room-menu-actions">
         {isDraftPlaytest(payload) && (
-          <a
-            class="cg-menu-link"
-            data-testid="menu-back-to-studio"
-            href={draftStudioUrl(payload.pass)}
-          >
-            ← Kembali ke Studio
-          </a>
+          <DraftStudioLink format={payload.format} pass={payload.pass} menu />
         )}
         <button
           type="button"

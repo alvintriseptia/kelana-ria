@@ -704,6 +704,7 @@ function ClaimPlayApp({
 
   function syncRoomUrl(code: string) {
     const url = new URL(location.href);
+    if (url.searchParams.get("room") !== code) url.searchParams.delete("adminPlaytest");
     url.searchParams.set("play", "rulebook-claim");
     url.searchParams.delete("pack");
     url.searchParams.delete("launch");
@@ -1792,6 +1793,7 @@ function ClaimPlayApp({
           url.searchParams.set("play", "rulebook-studio");
           url.searchParams.set("format", "claim-the-city");
           url.searchParams.delete("room");
+          url.searchParams.delete("adminPlaytest");
           history.pushState({ fromChooser: true }, "", url);
           window.dispatchEvent(new PopStateEvent("popstate"));
         }}
@@ -2457,6 +2459,7 @@ function ClaimPlayApp({
                       url.searchParams.set("room", nextCode);
                       url.searchParams.delete("pack");
                       url.searchParams.delete("launch");
+                      url.searchParams.delete("adminPlaytest");
                       history.pushState({ fromChooser: true }, "", url);
                       window.dispatchEvent(new PopStateEvent("popstate"));
                     }

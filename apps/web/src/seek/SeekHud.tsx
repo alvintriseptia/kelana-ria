@@ -1,10 +1,10 @@
 import type { SeekEngineQuestion } from "@kelana-ria/contracts";
 import type { Signal } from "@preact/signals";
 import type { RoomConnectionState } from "../room-events";
+import { DraftStudioLink } from "../ui/DraftStudioLink";
 import { SeekDeadline, SeekRelativeAge, SeekRoomMenu } from "./SeekShared";
 import {
   answerText,
-  draftStudioUrl,
   isDraftPlaytest,
   phaseLabels,
   questionNames,
@@ -127,13 +127,7 @@ export function SeekHud({
 
       {isDraft && (
         <div class="sg-location sg-draft-hud-bar" data-testid="draft-playtest-bar">
-          <a
-            class="cg-back-studio-link"
-            data-testid="back-to-studio-btn"
-            href={draftStudioUrl(payload.pass)}
-          >
-            ← Kembali ke Studio
-          </a>
+          <DraftStudioLink format="hide-and-seek" pass={payload.pass} />
         </div>
       )}
 
