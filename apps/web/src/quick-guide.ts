@@ -56,6 +56,10 @@ const CUE_META: Record<PhaseCueKey, { icon: string; text: string }> = {
   },
 };
 
+export function getPhaseCueSpec(key: PhaseCueKey): { icon: string; text: string } {
+  return CUE_META[key];
+}
+
 export function isPhaseCueDismissed(key: PhaseCueKey): boolean {
   try {
     return localStorage.getItem(`${CUE_STORAGE_PREFIX}${key}`) === "1";
