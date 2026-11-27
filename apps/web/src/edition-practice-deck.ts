@@ -1,6 +1,5 @@
 import type { HideSeekQuestionFamily, RulebookPlayMode } from "@kelana-ria/contracts";
-import { cardKindNames, type CatalogEdition, type PracticeCardExample } from "./rulebook-catalog";
-import { escapeText } from "./escape-text";
+import type { CatalogEdition } from "./rulebook-catalog";
 
 export function practiceDeck(edition: CatalogEdition, mode: RulebookPlayMode, family?: HideSeekQuestionFamily) {
   const examples = edition.cardExamples;
@@ -31,12 +30,4 @@ export function practiceDeck(edition: CatalogEdition, mode: RulebookPlayMode, fa
     decisionMs: edition.drawDecisionMs ?? 0, earns: true,
     source: "Jawaban terkirim. Penyembunyi mendapat kartu sebagai hadiah.",
   };
-}
-
-export function practiceCardFace(card: PracticeCardExample) {
-  return `<div class="ep-card-face ${card.kind}">
-    <span class="ep-card-mark" aria-hidden="true">${card.kind === "time_bonus" ? "◷" : card.kind === "curse" ? "✦" : "◆"}</span>
-    <small>${cardKindNames[card.kind]}</small>
-    <strong>${escapeText(card.title)}</strong><p>${escapeText(card.description)}</p>
-  </div>`;
 }

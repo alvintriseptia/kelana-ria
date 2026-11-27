@@ -25,7 +25,7 @@ async function writeShellWorker(directory) {
     for (const dependency of chunk.imports ?? []) visit(dependency);
   }
   visit("index.html");
-  visit("src/rulebook-catalog.ts");
+  visit("src/rulebook-catalog.tsx");
 
   const shell = await Promise.all(
     [...paths].filter((path) => !path.endsWith(".map")).sort().map(async (path) => {
