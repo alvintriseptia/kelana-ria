@@ -296,6 +296,28 @@ try {
   }
   await pageG2.click('button[data-action="question-deck"]');
   await radarCard.click();
+  // #184: Custom Radar radius input keeps focus, value, and persistent MapLibre canvas across clock ticks + live SSE updates
+  const customRadiusBtn = pageG2.locator('button[data-action="question-option"]', { hasText: "Radius sendiri" });
+  if ((await customRadiusBtn.count()) > 0) {
+    await customRadiusBtn.click();
+    const radiusInput = pageG2.locator("#sg-radius");
+    await radiusInput.waitFor();
+    await radiusInput.focus();
+    await radiusInput.fill("650");
+    const spCoord = (await pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json())).publicBoard.startPoint;
+    await ctxG3.request.post(`${baseUrl}/api/rulebooks`, {
+      data: {
+        type: "room-action",
+        roomCode,
+        action: { type: "seeker-check-in", actionId: "qa-sse-radius-tick", offTransit: false, fix: { latitude: spCoord.latitude, longitude: spCoord.longitude, accuracy: 10, timestamp: now } },
+      },
+    });
+    await pageG2.waitForTimeout(1150);
+    assert.equal(await pageG2.evaluate(() => document.activeElement?.id), "sg-radius", "#sg-radius must retain focus across SSE updates and clock ticks");
+    assert.equal(await radiusInput.inputValue(), "650", "#sg-radius must retain typed value across SSE updates and clock ticks");
+    assert.equal(await pageG2.locator(".sg-board .maplibregl-canvas").count(), 1, "MapLibre canvas count must stay 1");
+    assert.equal(await canvas.evaluate(element => element.isConnected), true, "MapLibre canvas must remain mounted across SSE updates");
+  }
   const draft = (await choosePreview('button[data-item="rad-1km"]')).preview;
   const drawnPreview = pageG2.locator('[data-question-preview="1000"]');
   await drawnPreview.waitFor();
@@ -373,6 +395,23 @@ try {
   assert.deepEqual(await activeOffer(), offered);
   await cardChoice.press("Enter");
   assert.equal(await cardChoice.getAttribute("aria-pressed"), "true");
+  // #184: Draw keep selection survives live SSE updates + clock ticks without re-dealing, and seeker DOM leaks zero private card IDs
+  const spDraw = (await pageCreator.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json())).publicBoard.startPoint;
+  await ctxG3.request.post(`${baseUrl}/api/rulebooks`, {
+    data: {
+      type: "room-action",
+      roomCode,
+      action: { type: "seeker-check-in", actionId: "qa-sse-draw-tick", offTransit: false, fix: { latitude: spDraw.latitude, longitude: spDraw.longitude, accuracy: 10, timestamp: now } },
+    },
+  });
+  await pageCreator.waitForTimeout(1150);
+  assert.equal(await cardChoice.getAttribute("aria-pressed"), "true", "Active draw selection must survive SSE update and clock tick");
+  assert.equal(await dealGrid.count(), 0, "SSE update must not replay draw deal animation");
+  assert.equal(await pageCreator.locator(".sg-board .maplibregl-canvas").count(), 1);
+  const seekerHtml = await pageG2.content();
+  for (const card of offered.cards) {
+    assert.equal(seekerHtml.includes(card.instanceId), false, `Seeker DOM must never contain private hider card ${card.instanceId}`);
+  }
   assert.deepEqual(await activeOffer(), offered);
   await clickAndWaitPost(pageCreator, 'button[data-action="confirm-draw"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Kartu di Tangan (1/"));

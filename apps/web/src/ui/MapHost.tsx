@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "preact/hooks";
+import { useLayoutEffect, useRef } from "preact/hooks";
 
 export type MapHostProps = {
   id?: string;
@@ -19,7 +19,7 @@ export function MapHost({ id, className, ariaLabel, testId, hidden, onMount }: M
   const onMountRef = useRef(onMount);
   onMountRef.current = onMount;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = containerRef.current;
     if (!el) return;
     const cleanup = onMountRef.current(el);
