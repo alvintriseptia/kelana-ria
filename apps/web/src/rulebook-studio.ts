@@ -175,7 +175,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let step: StudioStep = 1;
   let cloneFields: CloneFields | undefined;
   let packIdManual = false;
-  let deleteConfirm: { packId: string; version: number; title: string } | null = null;
+  let deleteConfirm: { packId: string; version: number; title: string; dialog: HTMLDialogElement } | null = null;
   let jsonBuffer = "";
   let versions: StudioVersionRecord[] = [];
   let templates: StudioTemplate[] = [];
@@ -347,7 +347,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     dryRunSummary = "";
     cloneFields = undefined;
     packIdManual = false;
-    deleteConfirm = null;
+    closeDeleteDraftDialog();
     jsonBuffer = "";
     validationErrors = errors;
     errorMsg = "";
@@ -947,6 +947,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }
 
   function handleStudioAuthRequired() {
+    closeDeleteDraftDialog();
     refreshSeq++;
     authRequired = true;
     authState = {
@@ -1164,18 +1165,52 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     </section>`;
   }
 
-  function renderDeleteDraftDialog(): string {
-    if (!deleteConfirm) return "";
-    return `<div class="studio-modal-backdrop" role="presentation">
-      <div class="studio-modal" role="dialog" aria-modal="true" aria-labelledby="studio-delete-title" data-testid="delete-draft-dialog">
-        <h3 id="studio-delete-title">Hapus Draf Permanen?</h3>
-        <p>Draf <strong>${escapeText(deleteConfirm.title)}</strong> (v${deleteConfirm.version}) dan ruang uji draf aktifnya akan dihapus permanen.</p>
-        <div class="rb-actions">
-          <button type="button" class="secondary" data-action="cancel-delete-draft">Batal</button>
-          <button type="button" class="primary studio-danger-btn" data-action="execute-delete-draft" ${busy ? "disabled" : ""}>Hapus Permanen</button>
-        </div>
-      </div>
-    </div>`;
+  function closeDeleteDraftDialog(restoreFocus = false) {
+    const target = deleteConfirm;
+    if (!target) return;
+    deleteConfirm = null;
+    target.dialog.close();
+    target.dialog.remove();
+    if (restoreFocus) {
+      root.querySelector<HTMLButtonElement>(
+        `[data-action="confirm-delete-draft"][data-pack="${CSS.escape(target.packId)}"][data-version="${target.version}"]`,
+      )?.focus({ preventScroll: true });
+    }
+  }
+
+  function openDeleteDraftDialog(packId: string, version: number, title: string) {
+    const shell = root.querySelector(".studio-shell");
+    if (!shell || deleteConfirm) return;
+    const dialog = document.createElement("dialog");
+    dialog.className = "studio-modal";
+    dialog.dataset.testid = "delete-draft-dialog";
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-labelledby", "studio-delete-title");
+    dialog.setAttribute("aria-describedby", "studio-delete-description");
+    dialog.innerHTML = `
+      <h3 id="studio-delete-title">Hapus Draf Permanen?</h3>
+      <p id="studio-delete-description">Draf <strong>${escapeText(title)}</strong> (v${version}) dan ruang uji draf aktifnya akan dihapus permanen.</p>
+      <div class="rb-actions">
+        <button type="button" class="secondary" data-action="cancel-delete-draft" autofocus>Batal</button>
+        <button type="button" class="primary studio-danger-btn" data-action="execute-delete-draft">Hapus Permanen</button>
+      </div>`;
+    dialog.addEventListener("cancel", event => {
+      event.preventDefault();
+      if (!busy) closeDeleteDraftDialog(true);
+    });
+    dialog.addEventListener("keydown", event => {
+      if (event.key !== "Tab") return;
+      const buttons = dialog.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      const edge = event.shiftKey ? first : last;
+      if (!edge || document.activeElement !== edge) return;
+      event.preventDefault();
+      (event.shiftKey ? last : first).focus();
+    });
+    deleteConfirm = { packId, version, title, dialog };
+    shell.append(dialog);
+    dialog.showModal();
   }
 
   function renderEntry(): string {
@@ -1229,7 +1264,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         ${hasReviewAccess() ? '<button type="button" class="secondary st-admin-entry" data-studio-view="review"><span aria-hidden="true">◆</span> Panel Admin</button>' : ""}
       </div>
       ${renderHomeEarningsCard()}
-      ${renderDeleteDraftDialog()}
     </div>`;
   }
 
@@ -1743,13 +1777,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     setField("price", formatPriceLabel(price));
     if (summary !== undefined) setField("summary", summary || "Ringkasan singkat paket permainanmu.");
   }
-
-  window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && deleteConfirm) {
-      deleteConfirm = null;
-      render();
-    }
-  }, { signal });
 
   function captureEditingChallengeCommonFields() {
     if (!claimStep3.editingChallengeDraft) return;
@@ -2964,14 +2991,11 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       const version = Number(btn.dataset.version ?? 0);
       const title = btn.dataset.title ?? packId;
       if (!packId || version < 1) return;
-      deleteConfirm = { packId, version, title };
-      render();
-      root.querySelector<HTMLButtonElement>('[data-action="cancel-delete-draft"]')?.focus();
+      openDeleteDraftDialog(packId, version, title);
       return;
     }
     if (action === "cancel-delete-draft") {
-      deleteConfirm = null;
-      render();
+      closeDeleteDraftDialog(true);
       return;
     }
 
@@ -2998,17 +3022,19 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           packId: target.packId,
           version: target.version,
         });
-        deleteConfirm = null;
         if (res.ok) {
           versions = versions.filter((v) => !(v.packId === target.packId && v.version === target.version));
           statusMsg = `Draf ${target.title} (v${target.version}) berhasil dihapus.`;
           await refresh();
+          closeDeleteDraftDialog();
+          root.querySelector<HTMLElement>("#studio-page-heading")?.focus({ preventScroll: true });
         } else {
           errorMsg =
             res.error === "invalid-status"
               ? "Hanya draf yang belum diterbitkan yang dapat dihapus."
               : res.error ?? "Gagal menghapus draf.";
           render();
+          closeDeleteDraftDialog(true);
         }
         return;
       }
@@ -3180,6 +3206,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     })().catch(() => {
       errorMsg = "Perubahan belum bisa dikirim. Periksa koneksi, lalu coba lagi.";
       render();
+      if (action === "execute-delete-draft") closeDeleteDraftDialog(true);
     }).finally(() => {
       if (isCreating) {
         busy = false;
@@ -3234,6 +3261,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }, { signal });
 
   onAuthChange((next) => {
+    if (next.user?.userId !== authState?.user?.userId) closeDeleteDraftDialog();
     if (next.user?.userId !== authState?.user?.userId || next.user?.role !== "admin") {
       isAdmin = false;
       clearReview();
@@ -3262,6 +3290,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   void refresh();
   return () => {
     lifetime.abort();
+    closeDeleteDraftDialog();
     closeReviewDialog();
     window.clearInterval(dryClock);
     destroyPoiDrawer();
