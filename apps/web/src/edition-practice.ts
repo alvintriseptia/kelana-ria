@@ -10,6 +10,7 @@ type Scene = {
   text: string;
   action: string;
   label: string;
+  testId?: string;
 };
 
 type Clue = {
@@ -18,6 +19,11 @@ type Clue = {
   choices: [string, string];
   sample: string;
   result: string;
+};
+
+export type PracticeOptions = {
+  fromRoom?: boolean;
+  onReady?: () => void;
 };
 
 const clues: Record<HideSeekQuestionFamily, Clue> = {
@@ -66,10 +72,10 @@ const clues: Record<HideSeekQuestionFamily, Clue> = {
 };
 const cardsPerPage = 4;
 
-function firstClue(edition: CatalogEdition): HideSeekQuestionFamily | undefined {
-  if (edition.format !== "hide-and-seek") return undefined;
+function enabledClueFamilies(edition: CatalogEdition): HideSeekQuestionFamily[] {
+  if (edition.format !== "hide-and-seek") return [];
   const enabled = new Set((edition.questionFamilies ?? []).map(item => item.family));
-  return (Object.keys(clues) as HideSeekQuestionFamily[]).find(family => enabled.has(family));
+  return (Object.keys(clues) as HideSeekQuestionFamily[]).filter(family => enabled.has(family));
 }
 
 function button(id: string, label: string, style = "primary", extra = "") {
@@ -87,19 +93,17 @@ function formatTime(milliseconds: number) {
   return seconds % 60 ? `${minutes} menit ${seconds % 60} detik` : `${minutes} menit`;
 }
 
-export function mountEditionPractice(dialog: HTMLDialogElement, edition: CatalogEdition, mode: RulebookPlayMode) {
+export function mountEditionPractice(
+  dialog: HTMLDialogElement,
+  edition: CatalogEdition,
+  mode: RulebookPlayMode,
+  options?: PracticeOptions,
+) {
   const lifetime = new AbortController();
   const seek = edition.format === "hide-and-seek" ? edition : undefined;
   const claim = edition.format === "claim-the-city" ? edition : undefined;
-  const family = firstClue(edition);
-  const clue = family ? clues[family] : undefined;
-  const clueTitle = family ? clueNames[family] : "";
-  const deck = practiceDeck(edition, mode, family);
-  const handCount = deck ? Math.min(deck.keep, deck.handLimit) : 0;
-  const offersChoice = Boolean(deck && deck.draw > handCount);
-  const boardLastStep = seek ? (clue ? 5 : 1) : 3;
-  const finalStep = boardLastStep + (offersChoice ? 2 : deck ? 1 : 0);
-  const boardAction = { action: deck ? "open-deck" : "finish", label: deck ? "Lihat kartu latihan" : "Kembali ke edisi" };
+  const families = enabledClueFamilies(edition);
+  let family: HideSeekQuestionFamily | undefined = families[0];
   const focusReturn = document.activeElement;
   let step = 0;
   let near = false;
@@ -108,6 +112,7 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
   let cardPage = 0;
   let flipped: number | undefined;
   let dealing = false;
+  let finishedViaReady = false;
   const revealed = new Set<number>();
   const selected = new Set<number>();
 
@@ -125,14 +130,36 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
     ? ` Klaim berbobot ${claim.claimWeight} dan kunci berbobot ${claim.lockWeight}.`
     : "";
   const claimResult = mode === "solo" ? "Landmark ini menambah progresmu." : `Tim dengan bobot landmark tertinggi menguasai zona.${weights}`;
-  const claimScenes: Scene[] = [
-    { title: "Pilih landmark", text: `${goal} Ketuk pin untuk melihat titik latihan.`, action: "pin", label: "Pilih landmark latihan" },
-    { title: "Check-in di dekat titik", text: `Pin menunjukkan nama dan status landmark. Masuk ${range} untuk check-in dan membuka tantangan.`, action: "check", label: "Check-in latihan" },
-    { title: "Baca petunjuk", text: "Papan latihan punya dua panah. Ada berapa arah yang bisa kamu pilih?", action: "answer", label: "Kirim jawaban" },
-    { title: "Landmark terkunci!", text: `Jawaban tepat. Landmark ini jadi milikmu hingga ronde selesai. ${claimResult}`, ...boardAction },
-  ];
 
-  function seekScene(): Scene {
+  function activeLessonState() {
+    const clue = family ? clues[family] : undefined;
+    const clueTitle = family ? clueNames[family] : "";
+    const deck = practiceDeck(edition, mode, family);
+    const handCount = deck ? Math.min(deck.keep, deck.handLimit) : 0;
+    const offersChoice = Boolean(deck && deck.draw > handCount);
+    const boardLastStep = seek ? (clue ? 5 : 1) : 3;
+    const finalStep = boardLastStep + (offersChoice ? 2 : deck ? 1 : 0);
+    const boardAction = deck
+      ? { action: "open-deck", label: "Lihat kartu latihan" }
+      : { action: "ready", label: "Siap Main", testId: "practice-ready-btn" };
+    return { clue, clueTitle, deck, handCount, offersChoice, boardLastStep, finalStep, boardAction };
+  }
+
+  function claimScene(boardAction: { action: string; label: string; testId?: string }): Scene {
+    const claimScenes: Scene[] = [
+      { title: "Pilih landmark", text: `${goal} Ketuk pin untuk melihat titik latihan.`, action: "pin", label: "Pilih landmark latihan" },
+      { title: "Check-in di dekat titik", text: `Pin menunjukkan nama dan status landmark. Masuk ${range} untuk check-in dan membuka tantangan.`, action: "check", label: "Check-in latihan" },
+      { title: "Baca petunjuk", text: "Papan latihan punya dua panah. Ada berapa arah yang bisa kamu pilih?", action: "answer", label: "Kirim jawaban" },
+      { title: "Landmark terkunci!", text: `Jawaban tepat. Landmark ini jadi milikmu hingga ronde selesai. ${claimResult}`, ...boardAction },
+    ];
+    return claimScenes[step] ?? claimScenes[0];
+  }
+
+  function seekScene(
+    clue: Clue | undefined,
+    clueTitle: string,
+    boardAction: { action: string; label: string; testId?: string },
+  ): Scene {
     if (step === 0) {
       const headStart = formatTime(seek!.headStartMs ?? seek!.headStartMinutes * 60_000);
       const searchLimit = formatTime(seek!.searchLimitMs ?? seek!.searchLimitMinutes * 60_000);
@@ -145,7 +172,7 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
     if (!clue) return {
       title: "Pencarian dimulai",
       text: "Pencari menelusuri papan dan menyelidiki titik yang mungkin. Setelah berganti peran, waktu sembunyi dibandingkan.",
-      action: "finish", label: "Kembali ke edisi",
+      action: "ready", label: "Siap Main", testId: "practice-ready-btn",
     };
     if (step === 1) return {
       title: "Pencari · Pilih petunjuk", text: `Saat pencarian aktif, gunakan lokasimu untuk menyiapkan petunjuk. ${clue.prompt}`,
@@ -173,7 +200,7 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
     };
   }
 
-  function renderBoard() {
+  function renderBoard(boardLastStep: number) {
     const finished = step === boardLastStep;
     const preview = seek && family && step >= 2 && family !== "photo";
     const overlay = preview ? `<div aria-hidden="true" class="ep-overlay ${family} ${finished ? "confirmed" : ""}"></div>` : "";
@@ -193,12 +220,24 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
     </div>`;
   }
 
-  function choices(options: [string, string]) {
-    return `<div class="ep-options" role="group" aria-label="Pilihan jawaban">${options.map((label, index) =>
+  function renderClueSwitcher() {
+    if (!seek || families.length <= 1 || step < 1) return "";
+    return `<div class="ep-clue-chips" role="group" aria-label="Pilih jenis petunjuk latihan" data-testid="practice-clue-switcher">
+      ${families
+        .map(
+          (fam) =>
+            `<button type="button" class="ep-clue-chip" data-practice-action="select-family" data-family="${fam}" aria-pressed="${fam === family}">${escapeText(clueNames[fam])}</button>`,
+        )
+        .join("")}
+    </div>`;
+  }
+
+  function choices(optionsList: [string, string]) {
+    return `<div class="ep-options" role="group" aria-label="Pilihan jawaban">${optionsList.map((label, index) =>
       button("choose", label, "secondary", `data-choice="${index}" aria-pressed="${choice === index}"`)).join("")}</div>`;
   }
 
-  function evidence() {
+  function evidence(clue: Clue | undefined) {
     if (claim && step === 2) {
       return `<div class="ep-sign" aria-label="Petunjuk latihan dengan dua panah"><span aria-hidden="true">←</span> Pintu barat <span aria-hidden="true">·</span> Pintu timur <span aria-hidden="true">→</span></div>` +
         choices(["Dua arah", "Tiga arah"]);
@@ -216,31 +255,41 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
     return seek && step === 4 && clue ? choices(clue.choices) : "";
   }
 
-  function deckScene(): Scene {
+  function deckScene(
+    deck: NonNullable<ReturnType<typeof practiceDeck>>,
+    handCount: number,
+    offersChoice: boolean,
+    finalStep: number,
+  ): Scene {
     if (step === finalStep) {
       const text = offersChoice ? "Kartu pilihanmu masuk ke tangan. Buka menu Kartu untuk melihatnya."
-        : `${deck!.source} Buka menu Kartu saat bermain untuk melihat kartu di tanganmu.`;
-      return { title: deck!.earns ? "Kartu di tangan" : "Contoh kartu", text, action: "finish", label: "Kembali ke edisi" };
+        : `${deck.source} Buka menu Kartu saat bermain untuk melihat kartu di tanganmu.`;
+      return { title: deck.earns ? "Kartu di tangan" : "Contoh kartu", text, action: "ready", label: "Siap Main", testId: "practice-ready-btn" };
     }
-    const limit = deck!.keep > handCount ? ` Batas tangan ${deck!.handLimit}. Dalam latihan ini, pilih langsung kartu yang masuk ke tangan.` : "";
-    const deadline = deck!.decisionMs ? ` Saat bermain, kamu punya hingga ${formatTime(deck!.decisionMs)} untuk memilih.` : "";
+    const limit = deck.keep > handCount ? ` Batas tangan ${deck.handLimit}. Dalam latihan ini, pilih langsung kartu yang masuk ke tangan.` : "";
+    const deadline = deck.decisionMs ? ` Saat bermain, kamu punya hingga ${formatTime(deck.decisionMs)} untuk memilih.` : "";
     return {
       title: "Pilih kartu latihan",
-      text: `${deck!.source} Tarik ${deck!.draw} kartu, simpan ${deck!.keep}.${limit}${deadline}`,
+      text: `${deck.source} Tarik ${deck.draw} kartu, simpan ${deck.keep}.${limit}${deadline}`,
       action: "confirm-cards", label: `Simpan ${handCount} kartu`,
     };
   }
 
-  function deckEvidence() {
-    const cards = deck!.examples;
+  function deckEvidence(
+    deck: NonNullable<ReturnType<typeof practiceDeck>>,
+    handCount: number,
+    offersChoice: boolean,
+    finalStep: number,
+  ) {
+    const cards = deck.examples;
     if (step === finalStep) {
       const order = offersChoice ? [...selected].sort((a, b) => a - b) : Array.from({ length: handCount }, (_, index) => index);
-      return `<div class="ep-cards ep-hand" role="region" aria-label="${deck!.earns ? "Kartu latihan" : "Contoh kartu"}">
+      return `<div class="ep-cards ep-hand" role="region" aria-label="${deck.earns ? "Kartu latihan" : "Contoh kartu"}">
         ${order.map(index => practiceCardFace(cards[index % cards.length])).join("")}
       </div>`;
     }
     const start = cardPage * cardsPerPage;
-    const cardCount = Math.min(cardsPerPage, deck!.draw - start);
+    const cardCount = Math.min(cardsPerPage, deck.draw - start);
     const slots = Array.from({ length: cardCount }, (_, offset) => {
       const index = start + offset;
       const card = cards[index % cards.length];
@@ -253,38 +302,60 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
     });
     return `<p class="ep-card-count" role="status">${selected.size}/${handCount} kartu dipilih</p>
       <div class="ep-cards${dealing ? " deal" : ""}" role="group" aria-label="Tawaran kartu">${slots.join("")}</div>
-      ${deck!.draw > cardsPerPage ? `<div class="ep-card-pages" role="group" aria-label="Halaman tawaran kartu">
+      ${deck.draw > cardsPerPage ? `<div class="ep-card-pages" role="group" aria-label="Halaman tawaran kartu">
         ${button("card-page", "‹ Sebelumnya", "secondary", `data-page="${cardPage - 1}" ${start === 0 ? "disabled" : ""}`)}
-        ${button("card-page", "Berikutnya ›", "secondary", `data-page="${cardPage + 1}" ${start + cardsPerPage >= deck!.draw ? "disabled" : ""}`)}
+        ${button("card-page", "Berikutnya ›", "secondary", `data-page="${cardPage + 1}" ${start + cardsPerPage >= deck.draw ? "disabled" : ""}`)}
       </div>` : ""}`;
   }
 
   function render(focus?: string) {
-    const inDeck = step > boardLastStep;
-    const scene = inDeck ? deckScene() : seek ? seekScene() : claimScenes[step];
+    const state = activeLessonState();
+    const { clue, clueTitle, deck, handCount, offersChoice, boardLastStep, finalStep, boardAction } = state;
+    if (step > finalStep) step = finalStep;
+    const inDeck = step > boardLastStep && Boolean(deck);
+    const scene = inDeck && deck
+      ? deckScene(deck, handCount, offersChoice, finalStep)
+      : seek
+        ? seekScene(clue, clueTitle, boardAction)
+        : claimScene(boardAction);
     const role = seek && clue && step >= 1 ? (step === 4 || inDeck ? "Penyembunyi" : "Pencari") : "";
     const retry = claim && step === 1 && message ? button("approach", "Dekati titik latihan", "secondary") : "";
-    const mainAction = scene.action === "pin" ? "" : button(scene.action, scene.label, "primary",
-      (scene.action === "answer" && choice === null) || (scene.action === "confirm-cards" && selected.size !== handCount) ? "disabled" : "");
+    const mainDisabled =
+      (scene.action === "answer" && choice === null) ||
+      (scene.action === "confirm-cards" && selected.size !== handCount);
+    const mainExtra = `${mainDisabled ? "disabled" : ""}${scene.testId ? ` data-testid="${scene.testId}"` : ""}`;
+    const mainAction = scene.action === "pin" ? "" : button(scene.action, scene.label, "primary", mainExtra.trim());
+    const prevBtn = step > 0 ? button("prev", "← Sebelumnya", "secondary", 'data-testid="practice-prev-btn"') : "";
+    const replayBtn = step === finalStep ? button("replay", "Ulangi latihan", "secondary") : "";
+    const secondaryRow = prevBtn || replayBtn ? `<div class="ep-secondary-row">${prevBtn}${replayBtn}</div>` : "";
+    const dotsHtml = Array.from(
+      { length: finalStep + 1 },
+      (_, idx) => `<span class="ep-dot${idx < step ? " done" : idx === step ? " active" : ""}"></span>`,
+    ).join("");
+
     dialog.innerHTML = `<div class="ep-shell">
       <header class="ep-top">
-        ${button("close", "‹ Detail edisi", "ep-back")}
+        ${button("close", options?.fromRoom ? "‹ Kembali ke ruang" : "‹ Detail edisi", "ep-back")}
         ${button("skip", step === finalStep ? "Tutup" : "Lewati latihan", "ep-back")}
       </header>
       <div class="ep-title">
         <p>Latihan · ${escapeText(edition.title)} · v${edition.version}</p>
-        <p aria-label="Langkah ${step + 1} dari ${finalStep + 1}">${step + 1}/${finalStep + 1}${role ? " · " + role : ""}</p>
+        <div class="ep-progress" data-testid="practice-progress" aria-label="Langkah ${step + 1} dari ${finalStep + 1}">
+          <span class="ep-dots" aria-hidden="true">${dotsHtml}</span>
+          <span class="ep-step-count">Langkah ${step + 1}/${finalStep + 1}${role ? " · " + role : ""}</span>
+        </div>
       </div>
-      ${inDeck ? "" : renderBoard()}
+      ${inDeck ? "" : renderClueSwitcher()}
+      ${inDeck ? "" : renderBoard(boardLastStep)}
       <section class="ep-scene" aria-labelledby="edition-practice-title">
         <h2 id="edition-practice-title" tabindex="-1">${scene.title}</h2>
         ${step === 0 ? `<p class="ep-player-count">${players}</p>` : ""}
         <p>${scene.text}</p>
-        ${inDeck ? deckEvidence() : evidence()}
+        ${inDeck && deck ? deckEvidence(deck, handCount, offersChoice, finalStep) : evidence(clue)}
       </section>
       ${message ? `<div class="ep-toast"><span role="alert">${message}</span>
         ${button("dismiss", "×", "ep-back", 'aria-label="Tutup pemberitahuan"')}</div>` : ""}
-      <div class="ep-actions">${retry}${mainAction}${step === finalStep ? button("replay", "Ulangi latihan", "secondary") : ""}</div>
+      <div class="ep-actions">${retry}${mainAction}${secondaryRow}</div>
     </div>`;
     flipped = undefined;
     dealing = false;
@@ -294,6 +365,10 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
   dialog.addEventListener("close", () => {
     lifetime.abort();
     dialog.replaceChildren();
+    if (finishedViaReady && options?.onReady) {
+      options.onReady();
+      return;
+    }
     if (focusReturn instanceof HTMLElement && focusReturn.isConnected) focusReturn.focus();
   }, { once: true, signal: lifetime.signal });
 
@@ -306,7 +381,34 @@ export function mountEditionPractice(dialog: HTMLDialogElement, edition: Catalog
       dialog.close();
       return;
     }
+    if (action === "ready") {
+      finishedViaReady = true;
+      dialog.close();
+      return;
+    }
     let focus = "#edition-practice-title";
+    if (action === "select-family") {
+      const nextFamily = control.dataset.family as HideSeekQuestionFamily | undefined;
+      if (nextFamily && families.includes(nextFamily)) {
+        family = nextFamily;
+        step = 1;
+        choice = null;
+        message = "";
+        cardPage = 0;
+        revealed.clear();
+        selected.clear();
+        focus = `[data-practice-action="select-family"][data-family="${nextFamily}"]`;
+      }
+      render(focus);
+      return;
+    }
+    if (action === "prev") {
+      step = Math.max(0, step - 1);
+      choice = null;
+      message = "";
+      render(focus);
+      return;
+    }
     if (action === "choose") {
       choice = Number(control.dataset.choice);
       dialog.querySelectorAll<HTMLButtonElement>('[data-practice-action="choose"]').forEach(option =>

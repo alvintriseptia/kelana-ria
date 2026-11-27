@@ -88,6 +88,23 @@ try {
   const claimCanvas = await pageSolo.locator("#rb-claim-map-host .maplibregl-canvas").elementHandle();
   assert.equal(await pageSolo.getByRole("list", { name: "Daftar Landmark" }).count(), 0);
   assert.ok(await pageSolo.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  // #150: Claim active first-match phase cue strip + in-game ? Panduan menu without disconnecting
+  const activeCue = pageSolo.locator('[data-testid="phase-cue-strip"][data-cue-key="claim-active"]');
+  await activeCue.waitFor();
+  assert.match(await activeCue.innerText(), /Pilih landmark di peta/);
+  await pageSolo.locator('.cg-hud .sg-room-menu summary').click();
+  await pageSolo.getByTestId("menu-quick-guide-btn").click();
+  const soloGuide = pageSolo.getByTestId("quick-guide-modal");
+  await soloGuide.waitFor();
+  assert.equal(await soloGuide.getAttribute("role"), "dialog");
+  assert.equal(await soloGuide.getAttribute("aria-modal"), "true");
+  assert.match(await soloGuide.innerText(), /Claim Solo/);
+  assert.ok(await pageSolo.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Claim active Quick Guide (390x844)");
+  await pageSolo.keyboard.press("Escape");
+  await soloGuide.waitFor({ state: "hidden" });
+  await activeCue.getByTestId("phase-cue-dismiss").click();
+  assert.equal(await activeCue.count(), 0, "Dismissing active Claim cue must hide it");
+
   await pageSolo.getByRole("button", { name: "Skor", exact: true }).click();
   assert.match(await pageSolo.locator(".cg-score-grid").innerText(), /0\/4.*0\/2/s);
   await pageSolo.getByRole("button", { name: "Kartu", exact: true }).click();
@@ -1006,6 +1023,31 @@ try {
     await lG2.getByTestId("claim-team-switcher").waitFor();
     assert.ok(await lG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Claim Group lobby (320x640)");
 
+    // #150: Claim lobby onboarding on 320x640 guest: cue strip, outdoor readiness, ? Panduan -> Coba Panduan without disconnecting, cue dismissal persistence
+    const claimLobbyCue = lG2.locator('[data-testid="phase-cue-strip"][data-cue-key="claim-lobby"]');
+    await claimLobbyCue.waitFor();
+    assert.match(await claimLobbyCue.innerText(), /Check-in di Titik Awal/);
+    await lG2.getByTestId("lobby-readiness-strip").waitFor();
+    await lG2.getByTestId("lobby-quick-guide-btn").click();
+    const g2Guide = lG2.getByTestId("quick-guide-modal");
+    await g2Guide.waitFor();
+    assert.equal(await g2Guide.getAttribute("role"), "dialog");
+    assert.equal(await g2Guide.getAttribute("aria-modal"), "true");
+    assert.match(await g2Guide.innerText(), /Claim Grup/);
+    assert.ok(await lG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Claim lobby Quick Guide (320x640)");
+    await lG2.getByTestId("quick-guide-practice-btn").click();
+    const g2Practice = lG2.locator("#edition-practice[open]");
+    await g2Practice.waitFor();
+    assert.match(await g2Practice.getByTestId("practice-progress").innerText(), /Langkah 1\//);
+    await lG2.keyboard.press("Escape");
+    await g2Practice.waitFor({ state: "hidden" });
+    await lG2.getByTestId("claim-team-switcher").waitFor();
+    await claimLobbyCue.getByTestId("phase-cue-dismiss").click();
+    assert.equal(await claimLobbyCue.count(), 0);
+    await lG2.reload({ waitUntil: "networkidle" });
+    await lG2.getByTestId("claim-team-switcher").waitFor();
+    assert.equal(await claimLobbyCue.count(), 0, "Dismissed Claim lobby cue must persist across reload");
+
     // Guest 3 joins via Catalog Gabung Ruang modal as Ciko
     await lG3.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });
     await lG3.getByTestId("home-join-room-btn").click();
@@ -1110,11 +1152,14 @@ try {
     assert.ok(!lobbyDirHref.includes("travelmode="), "Google Maps directions link must omit fixed travelmode");
 
     // Permission-friendly startup: shows 1-tap Aktifkan Lokasi chip when permission is "prompt"
+    await navPage.getByTestId("readiness-gps-btn").waitFor();
     await navPage.getByTestId("enable-live-location-btn").click();
     await navPage.getByTestId("lobby-start-map-toggle").click();
     await navPage.locator('#cg-start-minimap [data-map-ready="true"], #cg-start-minimap .maplibregl-canvas').first().waitFor();
     await navPage.evaluate(({ lat, lng }) => window.__pushNavFix(lat + 0.002, lng, 12), { lat: sp.latitude, lng: sp.longitude });
     await navPage.getByTestId("lobby-distance-meter").waitFor();
+    assert.equal(await navPage.getByTestId("readiness-gps-status").getAttribute("data-gps-ready"), "true", "Outdoor readiness GPS chip must show ready once GPS fix arrives");
+    assert.match(await navPage.getByTestId("readiness-gps-status").innerText(), /Siap ✓/);
     assert.equal(await navPage.getByTestId("lobby-distance-meter").getAttribute("data-proximity-state"), "out-of-range");
     assert.match(await navPage.getByTestId("lobby-distance-meter").innerText(), new RegExp(`m lagi · butuh ≤ ${checkRadius} m`));
     await navPage.locator('#cg-start-minimap [data-testid="map-self-dot"]').waitFor();

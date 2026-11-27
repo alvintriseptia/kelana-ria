@@ -164,6 +164,28 @@ try {
   await pageG2.click('button[data-action="join-room"]');
   await pageG2.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
 
+  // #150: Invited guest in Seek lobby sees first-match cue strip, Outdoor Readiness check, and ? Panduan without leaving room
+  const seekLobbyCue = pageG2.locator('[data-testid="phase-cue-strip"][data-cue-key="seek-lobby"]');
+  await seekLobbyCue.waitFor();
+  assert.match(await seekLobbyCue.innerText(), /Check-in di Titik Awal/);
+  await pageG2.getByTestId("lobby-readiness-strip").waitFor();
+  await pageG2.getByTestId("lobby-quick-guide-btn").click();
+  const seekLobbyGuide = pageG2.getByTestId("quick-guide-modal");
+  await seekLobbyGuide.waitFor();
+  assert.equal(await seekLobbyGuide.getAttribute("role"), "dialog");
+  assert.equal(await seekLobbyGuide.getAttribute("aria-modal"), "true");
+  assert.ok(await pageG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek lobby Quick Guide (390x844)");
+  await pageG2.setViewportSize({ width: 320, height: 640 });
+  assert.ok(await pageG2.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek lobby Quick Guide (320x640)");
+  await pageG2.setViewportSize({ width: 390, height: 844 });
+  await pageG2.keyboard.press("Escape");
+  await seekLobbyGuide.waitFor({ state: "hidden" });
+  await seekLobbyCue.getByTestId("phase-cue-dismiss").click();
+  assert.equal(await seekLobbyCue.count(), 0);
+  await pageG2.reload({ waitUntil: "networkidle" });
+  await pageG2.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+  assert.equal(await seekLobbyCue.count(), 0, "Dismissed Seek lobby cue must persist across reload");
+
   const ctxG3 = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageG3 = await ctxG3.newPage();
   pageG3.setDefaultTimeout(20_000);
@@ -208,6 +230,14 @@ try {
   await clickAndWaitPost(pageCreator, 'button[data-action="start-match"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Waktu Sembunyi"));
   await pageCreator.locator("[data-map-ready=true]").waitFor();
+  // #150: Distinct Hider vs Seeker head_start cues
+  const hiderHeadCue = pageCreator.locator('[data-testid="phase-cue-strip"][data-cue-key="seek-head-start-hider"]');
+  await hiderHeadCue.waitFor();
+  assert.match(await hiderHeadCue.innerText(), /Kamu Penyembunyi/);
+  await refreshSeekRoom(pageG2);
+  const seekerHeadCue = pageG2.locator('[data-testid="phase-cue-strip"][data-cue-key="seek-head-start-seeker"]');
+  await seekerHeadCue.waitFor();
+  assert.match(await seekerHeadCue.innerText(), /Kamu Pencari/);
   await assertCleanUiCopy(pageCreator, "seek head start hider");
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-head-start.png") });
 
@@ -221,6 +251,21 @@ try {
   now += 26 * 60_000;
   await refreshSeekRoom(pageG2);
   await pageG2.waitForFunction(() => document.body.textContent.includes("Fase Cari"));
+  // #150: Distinct Seeker vs Hider seeking phase cues + in-game ? Panduan from room menu
+  const seekerSeekCue = pageG2.locator('[data-testid="phase-cue-strip"][data-cue-key="seek-seeking-seeker"]');
+  await seekerSeekCue.waitFor();
+  assert.match(await seekerSeekCue.innerText(), /Ajukan petunjuk dari menu Tanya/);
+  await pageG2.locator(".sg-room-menu summary").click();
+  await pageG2.getByTestId("menu-quick-guide-btn").click();
+  const seekerGuide = pageG2.getByTestId("quick-guide-modal");
+  await seekerGuide.waitFor();
+  assert.match(await seekerGuide.innerText(), /Pencari/);
+  await pageG2.keyboard.press("Escape");
+  await seekerGuide.waitFor({ state: "hidden" });
+  await refreshSeekRoom(pageCreator);
+  const hiderSeekCue = pageCreator.locator('[data-testid="phase-cue-strip"][data-cue-key="seek-seeking-hider"]');
+  await hiderSeekCue.waitFor();
+  assert.match(await hiderSeekCue.innerText(), /Jawab pertanyaan pencari/);
   await assertCleanUiCopy(pageG2, "seek seeking phase seeker");
   const seekerBodyBeforeEndgame = await pageG2.textContent("body");
   assert.equal(seekerBodyBeforeEndgame.includes("hider-found-code"), false);
