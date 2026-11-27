@@ -78,8 +78,12 @@ type RoomPayload = {
   room: SeekEngineRoomView;
   publicBoard: SeekPublicBoard;
   qa?: true;
+  draftPlaytest?: true;
   deck: SeekDeckPublicView | SeekDeckHiderView;
-  pass: { roomCode: string; packId: string; version: number; minPlayers?: number; maxPlayers: number; paid: boolean; mode?: "group" };
+  pass: {
+    roomCode: string; packId: string; version: number; minPlayers?: number; maxPlayers: number;
+    paid: boolean; mode?: "group"; draftPlaytest?: boolean;
+  };
 };
 
 type CapturedLocation = LocationFix & { qaLocationId?: string };
@@ -1294,12 +1298,24 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     return ordered;
   }
 
+  function isDraftPlaytest(payload: RoomPayload | null): boolean {
+    return Boolean(payload?.draftPlaytest || payload?.pass?.draftPlaytest);
+  }
+
+  function draftStudioUrl(pass: RoomPayload["pass"]): string {
+    return `/?play=rulebook-studio&studio=editor&format=hide-and-seek&draft=${encodeURIComponent(pass.packId)}&version=${pass.version}`;
+  }
+
   function renderRoomMenu(): string {
     const open = root.querySelector<HTMLDetailsElement>(".sg-room-menu")?.open;
     const exitSpec = live ? destructiveExitSpec(live) : null;
+    const backStudio = live && isDraftPlaytest(live)
+      ? `<a class="cg-menu-link" data-testid="menu-back-to-studio" href="${draftStudioUrl(live.pass)}">← Kembali ke Studio</a>`
+      : "";
     return `<details class="sg-room-menu" ${open ? "open" : ""}>
       <summary class="sg-quiet" aria-label="Menu permainan" title="Menu permainan"><span aria-hidden="true">⋯</span></summary>
       <div class="sg-room-menu-actions">
+        ${backStudio}
         ${live && isBoardPhase(live.room) ? '<button type="button" data-action="game-panel" data-panel="activity">Aktivitas terbaru</button>' : ""}
         <button type="button" data-action="refresh">Muat ulang</button>
         <button type="button" data-nav="catalog">Kembali ke Katalog</button>
@@ -1322,6 +1338,7 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const seatsOrdered = orderedSeekSeats(room);
     const inviteUrl = `${location.origin}/?play=rulebook-seek&room=${encodeURIComponent(room.code)}`;
     const exitSpec = destructiveExitSpec(payload);
+    const isDraft = isDraftPlaytest(payload);
 
     return `<section class="rb-shell" aria-label="Permainan Hide & Seek">
       <div class="rb-card">
@@ -1331,12 +1348,13 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
             <span class="rb-badge">${escapeText(phaseLabels[room.phase])}</span>
             <span class="rb-badge">Giliran ${room.turnNumber}/${room.totalPlannedTurns}</span>
             <span class="rb-badge">Peran: ${escapeText(isHider ? "Penyembunyi" : room.role === "seeker" ? "Pencari" : "Lobi")}</span>
-            ${payload.qa ? '<span class="rb-badge sg-qa-badge" data-testid="seek-qa-badge">Ruang QA</span>' : ""}
-            ${pass.paid ? '<span class="rb-badge rb-badge-paid">Pass Berbayar</span>' : '<span class="rb-badge">Resmi Gratis</span>'}
+            ${isDraft ? '<span class="rb-badge sg-qa-badge" data-testid="draft-playtest-badge">Uji Draf</span>' : payload.qa ? '<span class="rb-badge sg-qa-badge" data-testid="seek-qa-badge">Ruang QA</span>' : ""}
+            ${isDraft ? "" : pass.paid ? '<span class="rb-badge rb-badge-paid">Pass Berbayar</span>' : '<span class="rb-badge">Resmi Gratis</span>'}
           </div>
           ${renderRoomMenu()}
         </div>
         <h2>${escapeText(room.packMeta.title)}</h2>
+        ${isDraft ? `<div class="cg-draft-bar-head" data-testid="draft-playtest-bar"><a class="cg-back-studio-link" data-testid="back-to-studio-btn" href="${draftStudioUrl(pass)}">← Kembali ke Studio</a></div>` : ""}
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${slotAlert("lobby")}
         ${allowHideSeekQa && !payload.qa && !pass.paid && room.phase === "lobby" && isHost
@@ -1802,17 +1820,20 @@ export function mountRulebookSeekPlay(root: HTMLElement, onBack: () => void): ()
     const activeScreenAlert = inlineError && (inlineError.slot === "lobby" || inlineError.slot === "catalog")
       ? renderInlineAlert(inlineError.message, inlineError.tone)
       : "";
+    const isDraft = isDraftPlaytest(live);
     hudHost.innerHTML = `<header class="sg-hud">
       <div class="sg-role">
         <span class="sg-role-mark" aria-hidden="true">${isHider ? "◆" : "◎"}</span>
         <h1>${isHider ? "Penyembunyi" : "Pencari"}</h1><p>${phaseLabels[room.phase]} · ${room.turnNumber}/${room.totalPlannedTurns}</p>
       </div>
       <div class="sg-hud-actions">
-        ${live.qa ? `<button type="button" class="sg-quiet sg-qa-badge" data-testid="seek-qa-badge" data-action="game-panel" data-panel="qa" aria-label="Mode QA" aria-expanded="${panel === "qa"}">QA</button>` : ""}
+        ${isDraft ? `<button type="button" class="sg-quiet sg-qa-badge" data-testid="draft-playtest-badge" data-action="game-panel" data-panel="qa" aria-label="Kontrol Uji Draf" aria-expanded="${panel === "qa"}">Uji Draf</button>`
+          : live.qa ? `<button type="button" class="sg-quiet sg-qa-badge" data-testid="seek-qa-badge" data-action="game-panel" data-panel="qa" aria-label="Mode QA" aria-expanded="${panel === "qa"}">QA</button>` : ""}
         ${room.phaseEndsAt === null ? "" : `<span class="sg-timer" aria-label="${room.phase === "head_start" ? "Waktu hingga pencarian dimulai" : "Sisa waktu"}" data-deadline="${room.phaseEndsAt}"></span>`}
         ${renderRoomMenu()}
       </div>
     </header>
+    ${isDraft ? `<div class="sg-location sg-draft-hud-bar" data-testid="draft-playtest-bar"><a class="cg-back-studio-link" data-testid="back-to-studio-btn" href="${draftStudioUrl(live.pass)}">← Kembali ke Studio</a></div>` : ""}
     ${room.phase !== "head_start" ? `<p class="sg-location">${room.seekerPosition ? `${room.seekerPosition.seatId === room.seatId ? "Kamu" : "Pencari"} · ${station ? escapeText(station.name) : "Check-in terverifikasi"} · <span id="sg-position-age"></span>` : "Belum ada check-in pencari"}</p>` : ""}
     <p class="sg-location" data-sg-conn-pill role="status" ${connectionState === "connected" ? "hidden" : ""}>${connectionState === "offline" ? "Luring · menunggu koneksi" : "Menyambungkan ulang…"}</p>
     ${hasMapResult && latest ? `<p class="sg-map-result" role="status">${questionNames[latest.family]} · ${escapeText(answerText(latest.answerLabel ?? ""))}</p>` : ""}`;

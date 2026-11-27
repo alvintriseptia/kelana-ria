@@ -120,7 +120,8 @@ async function checkValidationSpacing(page, format) {
           const { top, bottom } = card.getBoundingClientRect();
           return { top, bottom };
         }));
-      assert.equal(bounds.length, 3, `Expected three Validasi cards for ${format}`);
+      assert.equal(bounds.length, 2, `Expected two Validasi cards for ${format}`);
+      assert.equal(await page.getByTestId("studio-home-earnings").count(), 0, `Creator earnings must not appear in Step 4 for ${format}`);
       assert.ok(bounds.slice(1).every((card, index) => card.top - bounds[index].bottom >= 16),
         `Validasi cards should have a 16px gap for ${format} at ${viewport.width}px`);
       await assertNoHorizontalOverflow(page, `Validasi for ${format} at ${viewport.width}px`);
@@ -174,12 +175,43 @@ try {
   await checkCompactForm(page, '[data-testid="clone-template-card"]', "Hide & Seek template");
   await assertCleanUiCopy(page, "Studio template setup");
 
+  // #148: Signed-in creator displayName prefill, auto-slug from Title, manual ID tucked under collapsed <details>
+  assert.equal(await page.inputValue("#st-byline"), "Kreator Studio", "Byline must prefill signed-in displayName");
+  assert.equal(await page.getByTestId("pack-id-advanced").getAttribute("open"), null, "ID Paket (Lanjutan) must be collapsed by default");
+  await page.fill("#st-title", "Kopi Senopati Baru");
+  assert.equal((await page.getByTestId("slug-preview").innerText()).trim(), "pack-kopi-senopati-baru", "Slug must auto-generate from Title");
+  await page.locator('[data-testid="pack-id-advanced"] summary').click();
   await page.fill("#st-pack-id", "pack-seek-alpha");
   await page.fill("#st-title", "Alpha Seek Draft Very Long Title For Mobile Select Wrapping Check");
   await clickAndWaitPost(page, 'button[data-action="clone"]');
   await page.locator("#ed-meta-title").waitFor();
   assert.equal(await page.locator('button[data-step] svg').count(), 4, "Expected SVG icons on all 4 step buttons");
   assert.equal(await page.locator('button[data-format], #st-template, button[data-draft]').count(), 0);
+  // #148: Step 1 live Catalog card preview updates immediately on input, Unduh JSON removed from Step 1 sticky footer & tucked into header overflow menu
+  assert.equal(await page.locator('.rb-sticky-footer button[data-action="export-json"]').count(), 0, "Unduh JSON must not appear in Step 1 sticky footer");
+  const moreMenu = page.getByTestId("studio-more-menu");
+  await moreMenu.locator("summary").click();
+  await moreMenu.locator('button[data-action="export-json"]').waitFor();
+  await moreMenu.locator('button[data-studio-view="import"]').waitFor();
+  await moreMenu.locator("summary").click();
+  const preview = page.getByTestId("step1-catalog-preview");
+  await preview.waitFor();
+  const origAlphaTitle = await page.inputValue("#ed-meta-title");
+  const origAlphaCity = await page.inputValue("#ed-meta-city");
+  const origAlphaPrice = await page.inputValue("#ed-meta-price");
+  await page.fill("#ed-meta-title", "Pratinjau Langsung Alpha");
+  await page.fill("#ed-meta-city", "Jakarta Selatan · Blok M");
+  await page.fill("#ed-meta-price", "45000");
+  await page.fill("#ed-meta-summary", "Ringkasan uji pratinjau langsung");
+  assert.equal((await preview.locator('[data-preview-field="title"]').innerText()).trim(), "Pratinjau Langsung Alpha");
+  assert.equal((await preview.locator('[data-preview-field="city"]').innerText()).trim(), "Jakarta Selatan · Blok M");
+  assert.match(await preview.locator('[data-preview-field="price"]').innerText(), /Rp\s*45\.000/);
+  assert.equal((await preview.locator('[data-preview-field="summary"]').innerText()).trim(), "Ringkasan uji pratinjau langsung");
+  await page.fill("#ed-meta-title", origAlphaTitle);
+  await page.fill("#ed-meta-city", origAlphaCity);
+  await page.fill("#ed-meta-price", origAlphaPrice);
+  await clickAndWaitStudioSave(page, 'button[data-action="save-draft"]');
+
   await assertNoHorizontalOverflow(page, "Draft editor");
   await assertCleanUiCopy(page, "Studio Step 1 draft editor");
   await page.screenshot({ path: path.join(results, "studio-dedicated-editor.png") });
@@ -200,12 +232,41 @@ try {
   await page.locator("#ed-meta-summary").waitFor();
   assert.equal(await page.inputValue("#ed-meta-summary"), "Catatan draf Alpha tersimpan");
 
+  // #148: Studio Home shows Creator Earnings dashboard & supports safe draft deletion with accessible confirmation dialog
   await page.click('button[data-studio-view="home"]');
   await page.locator('button[data-draft="pack-seek-alpha@1"]').waitFor();
+  await page.getByTestId("studio-home-earnings").waitFor();
   await assertNoHorizontalOverflow(page, "My drafts");
+  await page.setViewportSize({ width: 320, height: 640 });
+  await assertNoHorizontalOverflow(page, "Studio Home with earnings and delete button at 320x640");
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: path.join(results, "studio-my-drafts.png") });
+
+  await startDraft(page, "hide-and-seek");
+  await page.fill("#st-title", "Draf Hapus QA");
+  assert.equal((await page.getByTestId("slug-preview").innerText()).trim(), "pack-draf-hapus-qa");
+  await clickAndWaitPost(page, 'button[data-action="clone"]');
+  await page.locator("#ed-meta-title").waitFor();
+  await page.click('button[data-studio-view="home"]');
+  const deleteDraftRow = page.locator('button[data-draft="pack-draf-hapus-qa@1"]');
+  await deleteDraftRow.waitFor();
+  await page.locator('button[data-action="confirm-delete-draft"][data-pack="pack-draf-hapus-qa"]').click();
+  const deleteDialog = page.getByTestId("delete-draft-dialog");
+  await deleteDialog.waitFor();
+  assert.equal(await deleteDialog.getAttribute("role"), "dialog");
+  assert.equal(await deleteDialog.getAttribute("aria-modal"), "true");
+  await page.keyboard.press("Escape");
+  await deleteDialog.waitFor({ state: "hidden" });
+  assert.equal(await deleteDraftRow.count(), 1, "Canceling delete dialog with Escape must preserve draft");
+  await page.locator('button[data-action="confirm-delete-draft"][data-pack="pack-draf-hapus-qa"]').click();
+  await deleteDialog.waitFor();
+  await clickAndWaitStudioSave(page, 'button[data-action="execute-delete-draft"]');
+  await deleteDialog.waitFor({ state: "hidden" });
+  assert.equal(await deleteDraftRow.count(), 0, "Confirmed draft deletion must remove draft from Studio Home");
+
   await startDraft(page, "hide-and-seek");
   await page.selectOption("#st-template", "official-jakarta-wide-seek");
+  await page.locator('[data-testid="pack-id-advanced"] summary').click();
   await page.fill("#st-pack-id", "pack-seek-beta");
   await page.fill("#st-title", "Beta Seek Draft");
   await clickAndWaitPost(page, 'button[data-action="clone"]');
@@ -434,11 +495,25 @@ try {
   const seekDryText = await page.textContent('[data-testid="dry-seek-result"]');
   assert.match(seekDryText, /Hasil Uji Radar.*m\)/);
 
+  // #148: Hide & Seek live private draft playtest room -> Uji Draf badge, simulated GPS, and 1-tap return to Studio
+  await page.getByTestId("studio-playtest-btn").click();
+  await page.getByTestId("draft-playtest-badge").waitFor();
+  assert.match(await page.getByTestId("draft-playtest-badge").innerText(), /Uji Draf/);
+  await page.locator("#sg-qa-location").waitFor();
+  await assertNoHorizontalOverflow(page, "Hide & Seek draft playtest room at 390x844");
+  await page.setViewportSize({ width: 320, height: 640 });
+  await assertNoHorizontalOverflow(page, "Hide & Seek draft playtest room at 320x640");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("back-to-studio-btn").click();
+  await page.locator("#ed-meta-title").waitFor();
+
   // 2. Claim the City Studio: Step 2 zone+landmark -> Step 3 challenge+card -> Step 4 interactive modal test -> Publish -> Midtrans
   await page.click('button[data-studio-view="home"]');
   await startDraft(page, "claim-the-city");
   await page.waitForSelector('button[data-action="clone"]');
   await checkCompactForm(page, '[data-testid="clone-template-card"]', "Claim template");
+  assert.equal(await page.inputValue("#st-byline"), "Kreator Studio", "Claim template byline must prefill signed-in displayName");
+  await page.locator('[data-testid="pack-id-advanced"] summary').click();
   await page.fill("#st-pack-id", "pack-claim-studio-qa");
   await page.fill("#st-title", "Studio QA Claim Pack");
   await page.fill("#st-price", "25000");
@@ -778,6 +853,28 @@ try {
   await assertNoHorizontalOverflow(page, "Claim custom variant preview");
   await page.screenshot({ path: path.join(results, "studio-claim-variant-preview.png") });
 
+  // #148: Claim live private draft playtest room -> Uji Draf badge, simulated GPS, solo start, and 1-tap return to Studio
+  await page.getByTestId("studio-playtest-btn").click();
+  await page.getByTestId("draft-playtest-badge").waitFor();
+  assert.match(await page.getByTestId("draft-playtest-badge").innerText(), /Uji Draf/);
+  await page.getByTestId("claim-qa-location").waitFor();
+  await assertNoHorizontalOverflow(page, "Claim draft playtest lobby at 390x844");
+  await page.setViewportSize({ width: 320, height: 640 });
+  await assertNoHorizontalOverflow(page, "Claim draft playtest lobby at 320x640");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.click('button[data-action="sim-start-checkin"]');
+  await page.click('button[data-action="mark-ready"]');
+  await page.click('button[data-action="start-match"]');
+  await page.locator('button[data-action="claim-qa-advance"][data-step="minute"]').waitFor();
+  await page.getByTestId("draft-playtest-badge").waitFor();
+  await assertNoHorizontalOverflow(page, "Claim draft playtest active board at 390x844");
+  await page.setViewportSize({ width: 320, height: 640 });
+  await assertNoHorizontalOverflow(page, "Claim draft playtest active board at 320x640");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId("back-to-studio-btn").click();
+  await page.locator("#ed-meta-title").waitFor();
+  await page.click('button[data-step="4"]');
+
   // Submit -> Reviewer Publish -> Public Catalog -> Midtrans settlement -> Live Room
   await clickAndWaitPost(page, 'button[data-action="submit-draft"]');
   await page.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
@@ -793,8 +890,15 @@ try {
     () => document.body.textContent.includes("Ruang Tunggu") && document.body.textContent.includes("Pass Berbayar"),
   );
 
+  // #148: Return to Studio Home and verify paid order appears in Creator Earnings dashboard
+  await page.goto(`${baseUrl}/?play=rulebook-studio`, { waitUntil: "networkidle" });
+  const homeEarnings = page.getByTestId("studio-home-earnings");
+  await homeEarnings.waitFor();
+  assert.match(await homeEarnings.innerText(), /Studio QA Claim Pack/);
+  assert.match(await homeEarnings.innerText(), /Rp\s*25\.000/);
+
   await ctx.close();
-  console.log("qa:rulebook-studio passed (Full visual Studio lifecycle + validator jump + interactive dry-run + publish + Midtrans)");
+  console.log("qa:rulebook-studio passed (Full visual Studio lifecycle + validator jump + interactive dry-run + draft playtest + publish + Midtrans)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

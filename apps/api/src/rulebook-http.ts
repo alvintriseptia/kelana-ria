@@ -65,7 +65,9 @@ export function rulebookHandler(
 
   function resolveQaFix(action: Record<string, unknown>, roomCode: string, cred: string, ts: number): boolean {
     if (!isObject(action.fix) || !("qaLocationId" in action.fix)) return true;
-    if (!allowHideSeekQa || typeof action.fix.qaLocationId !== "string") return false;
+    if ((!allowHideSeekQa && !store.isDraftPlaytestRoom(roomCode)) || typeof action.fix.qaLocationId !== "string") {
+      return false;
+    }
     const fix = store.qaLocation(roomCode, cred, action.fix.qaLocationId, ts);
     if (!fix) return false;
     action.fix = fix;
@@ -540,6 +542,29 @@ export function rulebookHandler(
         json(response, res.ok ? 200 : 400, res.ok ? { ...res, record: studioRecord(res.record) } : res);
         return;
       }
+      if (type === "delete-draft") {
+        const signedIn = requireSignedIn(request, response, ts);
+        if (!signedIn) return;
+        const res = store.deleteDraft(signedIn.cred, String(body.packId ?? ""), Number(body.version ?? 0));
+        json(response, res.ok ? 200 : res.status, res);
+        return;
+      }
+      if (type === "start-draft-playtest") {
+        const signedIn = requireSignedIn(request, response, ts);
+        if (!signedIn) return;
+        const mode = body.mode === "solo" || body.mode === "group" ? body.mode : undefined;
+        const hostName = resolveSeatName(body.hostName, signedIn.user, "Kreator");
+        const res = store.startDraftPlaytest(
+          signedIn.cred,
+          String(body.packId ?? ""),
+          Number(body.version ?? 0),
+          hostName,
+          ts,
+          mode,
+        );
+        json(response, res.ok ? 200 : res.status, res);
+        return;
+      }
       if (type === "create-order") {
         const signedIn = requireSignedIn(request, response, ts);
         if (!signedIn) return;
@@ -616,8 +641,10 @@ export function rulebookHandler(
       }
       const roomCode = type === "join-room" ? normalizeRoomCode(body.roomCode) : String(body.roomCode ?? "");
       const roomTs = store.roomTime(roomCode, ts);
-      if (type === "seek-qa-advance") {
-        if (!allowHideSeekQa) return json(response, 403, { error: "seek-qa-disabled" });
+      if (type === "seek-qa-advance" || type === "qa-advance") {
+        if (!allowHideSeekQa && !store.isDraftPlaytestRoom(roomCode)) {
+          return json(response, 403, { error: "seek-qa-disabled" });
+        }
         const { step, actionId, expectedDeadline } = body;
         if ((step !== "minute" && step !== "five-minutes" && step !== "phase-end") ||
             typeof actionId !== "string" || actionId.length < 1 || actionId.length > 100) {

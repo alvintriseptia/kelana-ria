@@ -323,6 +323,7 @@ export type SeekDeckHiderView = SeekDeckPublicView & {
 export type SeekRoomPayloadResponse = {
   format: "hide-and-seek";
   qa?: true;
+  draftPlaytest?: true;
   stateRev: number;
   room: SeekEngineRoomView;
   deck: SeekDeckPublicView | SeekDeckHiderView;

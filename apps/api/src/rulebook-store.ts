@@ -235,6 +235,7 @@ export type RulebookRoomPass = {
   mode?: RulebookPlayMode;
   minPlayers?: number;
   paid: boolean;
+  draftPlaytest?: boolean;
   createdAt: number;
 };
 
@@ -477,6 +478,7 @@ export function rulebookStore(
   const listVersionsStmt = db.prepare("SELECT payload FROM rulebook_versions ORDER BY is_official DESC, pack_id ASC, version DESC");
   const listVersionsByOwnerStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE owner_hash = ? AND is_official = 0");
   const latestVersionStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE pack_id = ? ORDER BY version DESC LIMIT 1");
+  const deleteVersionStmt = db.prepare("DELETE FROM rulebook_versions WHERE pack_id = ? AND version = ?");
   const upsertOrderStmt = db.prepare(`
     INSERT INTO rulebook_orders (order_id, buyer_hash, pack_id, version, payload)
     VALUES (?, ?, ?, ?, ?)
@@ -893,6 +895,60 @@ export function rulebookStore(
     return { ok: true, record: rec };
   }
 
+  function deleteDraft(
+    creatorCredential: string,
+    packId: string,
+    version: number,
+  ):
+    | { ok: true; packId: string; version: number; closedPlaytestRooms: string[] }
+    | { ok: false; status: 400 | 403 | 404; error: string } {
+    if (!packId || !Number.isInteger(version) || version < 1) {
+      return { ok: false, status: 400, error: "invalid-request" };
+    }
+    const ownerHash = digest(creatorCredential);
+    return transact(() => {
+      const rec = getRecord(packId, version);
+      if (!rec || rec.isOfficial) return { ok: false, status: 404, error: "not-found" };
+      if (rec.ownerHash !== ownerHash) return { ok: false, status: 403, error: "forbidden" };
+      if (rec.status !== "draft" && rec.status !== "changes-requested") {
+        return { ok: false, status: 400, error: "invalid-status" };
+      }
+      deleteVersionStmt.run(packId, version);
+      const closedPlaytestRooms: string[] = [];
+      for (const [code, session] of liveRooms.entries()) {
+        if (
+          session.pass.draftPlaytest &&
+          session.pass.packId === packId &&
+          session.pass.version === version
+        ) {
+          closedPlaytestRooms.push(code);
+          deleteAllRoomPhotosStmt.run(code);
+          deleteLiveRoomStmt.run(code);
+        }
+      }
+      if (closedPlaytestRooms.length > 0) {
+        onCommit(() => {
+          for (const code of closedPlaytestRooms) {
+            liveRooms.delete(code);
+            presenceMetaByRoom.delete(code);
+            const subs = roomSubscribers.get(code);
+            if (subs) {
+              for (const sub of [...subs]) {
+                try {
+                  sub.onClose?.();
+                } catch {
+                  // Ignore stream close errors during draft cleanup.
+                }
+              }
+              roomSubscribers.delete(code);
+            }
+          }
+        });
+      }
+      return { ok: true, packId, version, closedPlaytestRooms };
+    });
+  }
+
   function reviewVersion(
     packId: string,
     version: number,
@@ -982,6 +1038,7 @@ export function rulebookStore(
     qa = false,
     mode?: RulebookPlayMode,
     entitlementId: string | null = null,
+    draftPlaytest = false,
   ): LiveSession {
     return transact(() => {
       const prefix = rec.format === "claim-the-city" ? "RC" : "RB";
@@ -1006,7 +1063,8 @@ export function rulebookStore(
         maxPlayers: mode === "solo" ? 1 : rec.pack.session.maxPlayers,
         minPlayers: mode ? (mode === "group" ? Math.max(2, rec.pack.session.minPlayers) : 1) : rec.pack.session.minPlayers,
         ...(mode ? { mode } : {}),
-        paid: orderId !== null || entitlementId !== null,
+        paid: !draftPlaytest && (orderId !== null || entitlementId !== null),
+        ...(draftPlaytest ? { draftPlaytest: true } : {}),
         createdAt: now,
       };
 
@@ -1029,6 +1087,7 @@ export function rulebookStore(
           photos: new Map(),
           seatPositions: new Map(),
           activity: createRoomActivity(),
+          ...(qa ? { qa: { offsetMs: 0, advances: new Set<string>() } } : {}),
           stateRev: 1,
         };
       } else {
@@ -1055,7 +1114,7 @@ export function rulebookStore(
         };
       }
 
-      if (!qa) insertPassStmt.run(pass.passId, pass.orderId, pass.roomCode, JSON.stringify(pass));
+      if (!qa && !draftPlaytest) insertPassStmt.run(pass.passId, pass.orderId, pass.roomCode, JSON.stringify(pass));
       persistLiveSession(session, now, false);
       onCommit(() => liveRooms.set(roomCode, session));
       return session;
@@ -1150,6 +1209,62 @@ export function rulebookStore(
         ? viewClaimEngineMatch(session.match, "seat-1", now)
         : viewSeekEngineMatch(session.match, "seat-1", now);
     return { ok: true, roomCode: session.pass.roomCode, pass: session.pass, room };
+  }
+
+  function startDraftPlaytest(
+    creatorCredential: string,
+    packId: string,
+    version: number,
+    hostName: string,
+    now: number,
+    requestedMode?: RulebookPlayMode,
+  ):
+    | {
+        ok: true;
+        roomCode: string;
+        format: RulebookFormat;
+        qa: true;
+        draftPlaytest: true;
+        pass: RulebookRoomPass;
+        room: SeekEngineRoomView | ClaimEngineRoomView;
+      }
+    | { ok: false; status: 400 | 403 | 404; error: string; validation?: AnyRulebookValidationResult } {
+    if (!packId || !Number.isInteger(version) || version < 1) {
+      return { ok: false, status: 400, error: "invalid-request" };
+    }
+    const rec = getRecord(packId, version);
+    if (!rec || rec.isOfficial) return { ok: false, status: 404, error: "not-found" };
+    const ownerHash = digest(creatorCredential);
+    if (rec.ownerHash !== ownerHash) return { ok: false, status: 403, error: "forbidden" };
+    const validation = validateAnyPack(rec.pack, rec.snapshot);
+    if (!validation.ok) return { ok: false, status: 400, error: "validation-failed", validation };
+    let mode: RulebookPlayMode | undefined = requestedMode;
+    if (rec.format === "claim-the-city") {
+      if (mode && !supportsMode(rec.pack, mode)) {
+        return { ok: false, status: 400, error: "mode-unavailable" };
+      }
+      if (!mode) {
+        mode = rec.pack.session.minPlayers <= 1 ? "solo" : "group";
+      }
+    } else if (mode === "solo") {
+      return { ok: false, status: 400, error: "mode-unavailable" };
+    } else {
+      mode = undefined;
+    }
+    const session = instantiateRoom(rec, ownerHash, hostName, now, null, true, mode, null, true);
+    const room =
+      session.format === "claim-the-city"
+        ? viewClaimEngineMatch(session.match, "seat-1", now)
+        : viewSeekEngineMatch(session.match, "seat-1", now);
+    return {
+      ok: true,
+      roomCode: session.pass.roomCode,
+      format: rec.format,
+      qa: true,
+      draftPlaytest: true,
+      pass: session.pass,
+      room,
+    };
   }
 
   async function createOrder(
@@ -1681,14 +1796,26 @@ export function rulebookStore(
 
   function roomTime(roomCode: string, now: number): number {
     const session = liveRooms.get(roomCode);
-    return now + (session?.format === "hide-and-seek" ? session.qa?.offsetMs ?? 0 : 0);
+    return now + (session?.qa?.offsetMs ?? 0);
+  }
+
+  function isDraftPlaytestRoom(roomCode: string): boolean {
+    return Boolean(liveRooms.get(roomCode)?.pass.draftPlaytest);
   }
 
   function qaLocation(roomCode: string, credential: string, locationId: string, now: number): LocationFix | undefined {
     const session = liveRooms.get(roomCode);
-    if (session?.format !== "hide-and-seek" || !session.qa || !findSeekEngineSeat(session.match, digest(credential))) {
-      return undefined;
+    if (!session?.qa) return undefined;
+    const credHash = digest(credential);
+    if (session.format === "claim-the-city") {
+      if (!findClaimEngineSeat(session.match, credHash)) return undefined;
+      const { match } = session;
+      const point = [match.snapshot.startPoint, ...match.pack.geography.landmarks].find(
+        (checkpoint) => checkpoint.id === locationId,
+      );
+      return point ? { latitude: point.latitude, longitude: point.longitude, accuracy: 10, timestamp: now } : undefined;
     }
+    if (!findSeekEngineSeat(session.match, credHash)) return undefined;
     const { match } = session;
     const point = [match.regroupPoint, match.turnStartPoint, match.snapshot.startPoint, ...match.snapshot.stations]
       .find(checkpoint => checkpoint?.id === locationId);
@@ -1704,8 +1831,40 @@ export function rulebookStore(
     now: number,
   ) {
     const session = liveRooms.get(roomCode);
-    if (session?.format !== "hide-and-seek" || !session.qa) return { error: "qa-room-required" };
-    const { match, qa } = session;
+    if (!session?.qa) return { error: "qa-room-required" };
+    const { qa } = session;
+    if (session.format === "claim-the-city") {
+      const { match } = session;
+      const seatId = findClaimEngineSeat(match, digest(credential));
+      if (!match.seats.some((seat) => seat.isHost && seat.seatId === seatId)) return { error: "qa-host-only" };
+      if (qa.advances.has(actionId)) return { ok: true };
+      return transact(() => {
+        const current = now + qa.offsetMs;
+        const beforeExp = expireClaimEngineMatch(match, current);
+        if (match.deadline === null || match.phase !== "active") {
+          if (beforeExp.changed) persistLiveSession(session, current, true);
+          return { error: "qa-no-active-clock" };
+        }
+        if (step === "phase-end" && expectedDeadline !== match.deadline) {
+          if (beforeExp.changed) persistLiveSession(session, current, true);
+          return { error: "qa-deadline-changed" };
+        }
+        const delta = step === "phase-end" ? match.deadline - current : step === "minute" ? 60_000 : 300_000;
+        qa.offsetMs += delta;
+        qa.advances.add(actionId);
+        const advanced = now + qa.offsetMs;
+        expireClaimEngineMatch(match, advanced);
+        const pending = pendingClaimPhotos(session);
+        for (const id of [...session.photos.keys()]) {
+          if (!pending.has(id)) deleteRoomPhoto(session, id);
+        }
+        session.activity.observeClaim(match, advanced);
+        captureCompletedMatch(session);
+        persistLiveSession(session, advanced, true);
+        return { ok: true };
+      });
+    }
+    const { match } = session;
     const seatId = findSeekEngineSeat(match, digest(credential));
     if (!match.seats.some(seat => seat.isHost && seat.seatId === seatId)) return { error: "qa-host-only" };
     if (qa.advances.has(actionId)) return { ok: true };
@@ -1740,6 +1899,7 @@ export function rulebookStore(
   }
 
   function captureCompletedMatch(session: LiveSession): boolean {
+    if (session.pass.draftPlaytest) return false;
     const { match } = session;
     if (session.recapSaved || !match.outcome || match.startedAt === null) return false;
     const first = match.seats[0];
@@ -1773,7 +1933,8 @@ export function rulebookStore(
     const exp = expireClaimEngineMatch(session.match, now);
     const pending = pendingClaimPhotos(session);
     const stalePhotos = [...session.photos.keys()].filter((id) => !pending.has(id));
-    const needsRecap = !session.recapSaved && Boolean(session.match.outcome) && session.match.startedAt !== null;
+    const needsRecap =
+      !session.pass.draftPlaytest && !session.recapSaved && Boolean(session.match.outcome) && session.match.startedAt !== null;
     const actChanged = session.activity.observeClaim(session.match, now);
     if (!exp.changed && stalePhotos.length === 0 && !needsRecap && !actChanged) return false;
     transact(() => {
@@ -1789,7 +1950,8 @@ export function rulebookStore(
     const deckExp = expireSeekDeckAndCurses(session.deck, session.match, now);
     const actChanged = session.activity.observeSeek(session.match, session.deck, now);
     const shouldPurgeAll = Boolean(session.match.outcome) && session.photos.size > 0;
-    const needsRecap = !session.recapSaved && Boolean(session.match.outcome) && session.match.startedAt !== null;
+    const needsRecap =
+      !session.pass.draftPlaytest && !session.recapSaved && Boolean(session.match.outcome) && session.match.startedAt !== null;
     if (!matchExp.changed && matchExp.purgedPhotoIds.length === 0 && !deckExp.changed && !actChanged && !shouldPurgeAll && !needsRecap) {
       return false;
     }
@@ -2021,6 +2183,8 @@ export function rulebookStore(
       }
       return {
         format: "claim-the-city" as const,
+        ...(session.qa ? { qa: true as const } : {}),
+        ...(session.pass.draftPlaytest ? { draftPlaytest: true as const } : {}),
         stateRev: session.stateRev,
         room,
         activity: session.activity.viewClaim(room),
@@ -2054,6 +2218,7 @@ export function rulebookStore(
     return {
       format: "hide-and-seek" as const,
       ...(session.qa ? { qa: true as const } : {}),
+      ...(session.pass.draftPlaytest ? { draftPlaytest: true as const } : {}),
       stateRev: session.stateRev,
       room,
       deck,
@@ -2175,6 +2340,7 @@ export function rulebookStore(
     const credHash = digest(credential);
     const active: ActiveRulebookRoomSummary[] = [];
     for (const session of [...liveRooms.values()].reverse()) {
+      if (session.pass.draftPlaytest) continue;
       const code = session.pass.roomCode;
       const ts = roomTime(code, currentNow);
       if (session.format === "claim-the-city") {
@@ -2305,9 +2471,12 @@ export function rulebookStore(
     cloneOfficialTemplate,
     saveDraft,
     submitDraft,
+    deleteDraft,
     reviewVersion,
     createFreeRoomFromRulebook,
     createOwnedRoomFromRulebook,
+    startDraftPlaytest,
+    isDraftPlaytestRoom,
     migrateOwner,
     createOrder,
     viewCatalogOrder,
