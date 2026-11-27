@@ -118,7 +118,7 @@ export type PendingSeekAction = {
   drawKey?: string;
 };
 
-export type SeekPanel = "ask" | "hand" | "question" | "history" | "activity" | "board" | "qa";
+export type SeekPanel = "ask" | "hand" | "question" | "history" | "activity" | "board" | "qa" | "found-code";
 
 export const phaseLabels: Record<SeekEngineRoomView["phase"], string> = {
   lobby: "Ruang Tunggu",

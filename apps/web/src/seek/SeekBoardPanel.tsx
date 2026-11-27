@@ -181,15 +181,6 @@ export function SeekBoardPanel({
         </button>
       )}
 
-      {isHider && room.phase === "seeking" && room.foundCode && (
-        <>
-          <p>Berikan kode saat pencari menemukanmu.</p>
-          <div class="rb-found-code" data-testid="hider-found-code">
-            {room.foundCode}
-          </div>
-        </>
-      )}
-
       {!isHider && room.phase === "seeking" && (
         <div class="rb-field">
           <label for="rb-found-input">Kode temuan 4 digit</label>

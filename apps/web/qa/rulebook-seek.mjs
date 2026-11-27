@@ -268,8 +268,24 @@ try {
   await hiderSeekCue.waitFor();
   assert.match(await hiderSeekCue.innerText(), /Jawab pertanyaan pencari/);
   await assertCleanUiCopy(pageG2, "seek seeking phase seeker");
-  const seekerBodyBeforeSearch = await pageG2.textContent("body");
-  assert.equal(seekerBodyBeforeSearch.includes("hider-found-code"), false);
+  const hiderCodeTab = pageCreator.getByRole("button", { name: "Kode temuan", exact: true });
+  const hiderCodeValue = pageCreator.getByTestId("hider-found-code");
+  const hiderHandTab = pageCreator.locator('button[data-panel="hand"]');
+  if (await hiderHandTab.getAttribute("aria-pressed") !== "true") await hiderHandTab.click();
+  await hiderCodeTab.press("Enter");
+  await hiderCodeValue.waitFor();
+  const firstFoundCode = (await hiderCodeValue.textContent()).trim();
+  assert.match(firstFoundCode, /^\d{4}$/);
+  assert.equal(await pageCreator.locator("#sg-panel-title").evaluate(el => el === document.activeElement), true);
+  await pageCreator.setViewportSize({ width: 320, height: 640 });
+  assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-hider-code-320.png") });
+  await pageCreator.setViewportSize({ width: 390, height: 844 });
+  await hiderHandTab.click();
+  assert.equal(await hiderCodeValue.count(), 0);
+  assert.equal(await hiderCodeTab.isVisible(), true);
+  assert.equal(await pageG2.getByRole("button", { name: "Kode temuan", exact: true }).count(), 0);
+  assert.equal(await pageG2.getByTestId("hider-found-code").count(), 0);
 
   // Seeker asks a Radar clue, Hider answers & picks drawn card, Seeker checks in and enters the found code -> Regroup!
   const radarCard = pageG2.locator('button[data-action="question-family"][data-family="radar"]');
@@ -355,6 +371,10 @@ try {
   assert.equal(await pageCreator.locator("[data-activity-announcement]").textContent(), "");
   await refreshSeekRoom(pageCreator);
   await pendingNotice.getByRole("button", { name: "Buka", exact: true }).click();
+  await pageCreator.locator('button[data-answer="no"]').waitFor();
+  await hiderCodeTab.press("Enter");
+  assert.equal((await hiderCodeValue.textContent()).trim(), firstFoundCode);
+  await hiderHandTab.click();
   await pageCreator.click('button[data-answer="no"]');
   assert.equal(await pageCreator.locator('button[data-action="answer-pending"]').isDisabled(), true);
   assert.equal(await pageCreator.locator('[data-correct="false"]').isVisible(), true);
@@ -531,10 +551,9 @@ try {
   assert.equal(afterLeaving.ownAnchorStationId, undefined);
   await assertCleanUiCopy(pageG2, "seek check-in without revealing the hider");
   await refreshSeekRoom(pageCreator);
-  const hiderBoard = pageCreator.locator('[data-panel="board"]');
-  if (await hiderBoard.getAttribute("aria-pressed") !== "true") await hiderBoard.click();
-  const foundCode = (await pageCreator.textContent('[data-testid="hider-found-code"]')).trim();
-  assert.match(foundCode, /^\d{4}$/);
+  if (await hiderCodeTab.getAttribute("aria-pressed") !== "true") await hiderCodeTab.click();
+  const foundCode = (await hiderCodeValue.textContent()).trim();
+  assert.equal(foundCode, firstFoundCode, "The same private code remains available after reload and clue activity");
   assert.equal(await pageG2.getByTestId("hider-found-code").count(), 0);
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-private-code-search.png") });
 

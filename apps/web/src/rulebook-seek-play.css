@@ -560,6 +560,10 @@
   color: #102b22; background: var(--sg-leaf); border-color: var(--sg-ink); box-shadow: inset 0 -2px 0 #183f3440;
 }
 .sg-nav-icon { font-size: 1.15rem; }
+.sg-nav:has([data-panel="found-code"]) { grid-auto-columns: minmax(0, 1fr); }
+@media (max-width: 430px) {
+  .sg-nav:has([data-panel="found-code"]) button { flex-direction: column; gap: 0; padding-inline: 4px; }
+}
 .sg-quiet { background: var(--sg-cloud); font-size: .82rem; }
 .sg-main {
   width: 100%; min-height: 48px;
