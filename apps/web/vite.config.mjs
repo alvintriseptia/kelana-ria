@@ -12,17 +12,20 @@ async function writeShellWorker(directory) {
   const paths = new Set(["/index.html", "/manifest.webmanifest", ...app.icons.map((icon) => icon.src)]);
   const visited = new Set();
 
-  // Follow only static imports. Optional features download when opened.
+  // Precache the app shell and /catalog (manifest start_url) for offline launch.
+  // Keep landing-page, GSAP, maps, and play routes out of the shell precache.
   function visit(key) {
     if (visited.has(key)) return;
-    visited.add(key);
     const chunk = manifest[key];
+    if (!chunk) return;
+    visited.add(key);
     for (const file of [chunk.file, ...(chunk.css ?? []), ...(chunk.assets ?? [])]) {
       paths.add("/" + file);
     }
     for (const dependency of chunk.imports ?? []) visit(dependency);
   }
   visit("index.html");
+  visit("src/rulebook-catalog.ts");
 
   const shell = await Promise.all(
     [...paths].filter((path) => !path.endsWith(".map")).sort().map(async (path) => {

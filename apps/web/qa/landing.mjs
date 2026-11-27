@@ -185,14 +185,21 @@ export async function exerciseLandingPage({ browser, results = defaultResultsDir
     }
 
     // 3. Navigation flow: / -> Pilih Permainan -> /catalog (direct reload) -> brand link -> / -> Format anchor -> Studio -> back to /catalog
+    //    Also verify lazy GSAP bootstrap, zero orphaned .pin-spacer nodes on SPA round-trip, and prefers-reduced-motion visibility.
     {
       const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
       const page = await ctx.newPage();
+      const pageErrors = [];
+      page.on("pageerror", (error) => pageErrors.push(error.message));
       try {
         await page.goto(configuredBase, { waitUntil: "networkidle" });
+        await page.locator('[data-testid="landing-page"][data-landing-gsap="active"]').waitFor();
+        assert.equal(await page.locator(".pin-spacer").count(), 0, "Baseline GSAP mount should not leave stray pin spacers");
+
         await page.getByTestId("landing-choose-game").click();
         await page.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
         assert.equal(new URL(page.url()).pathname, "/catalog");
+        assert.equal(await page.locator(".pin-spacer").count(), 0, "Navigating / -> /catalog must leave zero orphaned pin spacers");
         assert.match(
           await page.getByTestId("catalog-subtitle-claim-the-city").innerText(),
           /Rebut & kunci landmark nyata untuk kuasai zona kota\./,
@@ -212,13 +219,28 @@ export async function exerciseLandingPage({ browser, results = defaultResultsDir
         // Compact top-left Kelana Ria brand link navigates back to /
         await page.locator('header.mast a.brand[href="/"]').click();
         await page.getByRole("heading", { name: "Ubah Jakarta jadi papan permainan nyata", level: 1 }).waitFor();
+        await page.locator('[data-testid="landing-page"][data-landing-gsap="active"]').waitFor();
         assert.equal(new URL(page.url()).pathname, "/");
+
+        // Verify prefers-reduced-motion: reduce keeps all landing sections visible with zero pin spacers
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await page.locator('[data-testid="landing-page"][data-landing-gsap="reduced"]').waitFor();
+        assert.equal(await page.locator(".pin-spacer").count(), 0, "Reduced motion must not create pin spacers");
+        const hiddenSections = await page.evaluate(() => {
+          return Array.from(document.querySelectorAll(".lp-hero, .lp-section, .lp-studio, .lp-footer"))
+            .filter((el) => parseFloat(getComputedStyle(el).opacity) < 0.99).length;
+        });
+        assert.equal(hiddenSections, 0, "Reduced motion must keep every landing section fully visible");
+        await assertNoOverflow(page, "Landing reduced-motion 390x844");
+        await page.emulateMedia({ reducedMotion: "no-preference" });
+        await page.locator('[data-testid="landing-page"][data-landing-gsap="active"]').waitFor();
 
         // Format comparison 1-tap link goes to /catalog#catalog-hide-and-seek
         await page.getByTestId("landing-format-seek").click();
         await page.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
         assert.equal(new URL(page.url()).pathname, "/catalog");
         assert.equal(new URL(page.url()).hash, "#catalog-hide-and-seek");
+        assert.equal(await page.locator(".pin-spacer").count(), 0, "Leaving / via format CTA must leave zero pin spacers");
 
         // Studio teaser CTA from / opens Studio, and returning to catalog lands on /catalog (NOT /)
         await page.goto(configuredBase, { waitUntil: "networkidle" });
@@ -227,6 +249,7 @@ export async function exerciseLandingPage({ browser, results = defaultResultsDir
         await page.getByRole("button", { name: /Kembali ke Katalog/ }).click();
         await page.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
         assert.equal(new URL(page.url()).pathname, "/catalog", "Returning from Studio must land on /catalog");
+        assert.deepEqual(pageErrors, [], "Zero uncaught client errors across landing <-> catalog round-trip");
       } finally {
         await ctx.close();
       }

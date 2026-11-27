@@ -148,6 +148,12 @@ export function mountLandingPage(
   let demoVideoId: string | null = getCachedDemoVideoYoutubeId();
   let demoPlaying = false;
   let online = typeof navigator === "undefined" ? true : navigator.onLine;
+  let gsapHandle: import("./landing-gsap").LandingGsapHandle | null = null;
+  let gsapBootstrapRaf = 0;
+
+  function refreshLandingMotion() {
+    gsapHandle?.refresh();
+  }
 
   const mastSlot = document.getElementById("mast-slot");
   const guideButton = document.getElementById("guide-open");
@@ -166,10 +172,12 @@ export function mountLandingPage(
     if (!activeRoom) {
       slot.hidden = true;
       slot.replaceChildren();
+      refreshLandingMotion();
       return;
     }
     slot.hidden = false;
     slot.innerHTML = renderLandingResumeBanner(activeRoom);
+    refreshLandingMotion();
   }
 
   function renderDemoSlot() {
@@ -178,6 +186,7 @@ export function mountLandingPage(
     if (!demoVideoId) {
       slot.hidden = true;
       slot.replaceChildren();
+      refreshLandingMotion();
       return;
     }
     slot.hidden = false;
@@ -199,6 +208,7 @@ export function mountLandingPage(
           <a class="lp-demo-ext" href="${watchUrl}" target="_blank" rel="noopener noreferrer" data-testid="landing-demo-youtube-link">Buka di YouTube <span aria-hidden="true">↗</span></a>
         </div>
       </section>`;
+      refreshLandingMotion();
       return;
     }
 
@@ -237,7 +247,10 @@ export function mountLandingPage(
       </div>
       ${offlineNotice}
     </section>`;
+    refreshLandingMotion();
   }
+
+  let pwaSlotObserver: MutationObserver | null = null;
 
   function renderPage() {
     root.innerHTML = `<div class="lp-shell" data-testid="landing-page">
@@ -354,7 +367,18 @@ export function mountLandingPage(
     renderDemoSlot();
 
     const pwaSlot = root.querySelector<HTMLElement>("[data-pwa-install-slot]");
-    if (pwaSlot) mountPwaInstallPrompt(pwaSlot, signal);
+    if (pwaSlot) {
+      mountPwaInstallPrompt(pwaSlot, signal);
+      pwaSlotObserver?.disconnect();
+      if (typeof MutationObserver !== "undefined") {
+        pwaSlotObserver = new MutationObserver(() => refreshLandingMotion());
+        pwaSlotObserver.observe(pwaSlot, {
+          attributes: true,
+          attributeFilter: ["hidden"],
+          childList: true,
+        });
+      }
+    }
 
     if (focusHeading) {
       const heading = root.querySelector<HTMLElement>("h1");
@@ -457,6 +481,22 @@ export function mountLandingPage(
 
   renderPage();
 
+  // Dynamically load GSAP after initial hero paint so LCP stays fast and /catalog never downloads GSAP.
+  gsapBootstrapRaf = requestAnimationFrame(() => {
+    gsapBootstrapRaf = 0;
+    if (signal.aborted) return;
+    void import("./landing-gsap")
+      .then(({ mountLandingGsap }) => {
+        if (signal.aborted) return;
+        const shell = root.querySelector<HTMLElement>(".lp-shell");
+        if (!shell) return;
+        gsapHandle = mountLandingGsap(shell);
+      })
+      .catch(() => {
+        // Keep the static landing experience completely functional if GSAP fails to load offline.
+      });
+  });
+
   void resolveDemoVideoYoutubeId(signal).then((resolved) => {
     if (signal.aborted) return;
     if (resolved !== demoVideoId) {
@@ -478,6 +518,14 @@ export function mountLandingPage(
 
   return () => {
     lifetime.abort();
+    if (gsapBootstrapRaf) {
+      cancelAnimationFrame(gsapBootstrapRaf);
+      gsapBootstrapRaf = 0;
+    }
+    pwaSlotObserver?.disconnect();
+    pwaSlotObserver = null;
+    gsapHandle?.revert();
+    gsapHandle = null;
     if (mastSlot) mastSlot.replaceChildren();
     if (guideButton) guideButton.hidden = false;
   };
