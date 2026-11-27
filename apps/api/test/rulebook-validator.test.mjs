@@ -551,3 +551,38 @@ test("rejects timing infeasibility, unreachable anchors, invalid player counts, 
   assert.ok(result.errors.some((e) => e.code === "search-limit-too-short"));
   assert.ok(result.errors.some((e) => e.code === "insufficient-reachable-anchors"));
 });
+
+test("Hide & Seek verifies curated stations and POIs and keeps AI photo drafts gated even when the family is disabled", () => {
+  for (const { pack, snapshot } of api.loadOfficialSeekPacks()) assert.equal(api.validateHideSeekRulebook(pack, snapshot).ok, true);
+  const { pack, snapshot } = structuredClone(api.loadOfficialSeekPacks().find(({ pack }) => pack.investigationBook.families.photo?.items.length));
+  const station = snapshot.stations[0];
+  const poi = snapshot.pois[0];
+  const photos = pack.investigationBook.families.photo;
+  const photo = photos.items[0];
+  for (const point of [poi, station]) Object.assign(point, { source: "osm-curated", fieldVerified: false });
+  Object.assign(photo, {
+    aiProvenance: { source: "template-fallback", mode: "template-fallback", generatedAt: "2026-11-27T01:00:00Z" },
+    fieldVerified: false, verificationNotes: "[PERLU CEK LAPANGAN] Proposed public sign.",
+  });
+  const verify = () => {
+    snapshot.hash = api.computeGeoSnapshotHash(snapshot);
+    pack.geography.geoSnapshotHash = snapshot.hash;
+    return api.validateHideSeekRulebook(pack, snapshot);
+  };
+  const enabled = photos.enabled;
+  photos.enabled = false;
+  const errors = verify().errors;
+  for (const code of ["unverified-osm-station", "unverified-osm-poi", "osm-verification-note-required",
+    "unverified-ai-photo-prompt", "unedited-ai-verification-notes"]) {
+    assert.ok(errors.some(issue => issue.code === code), code);
+  }
+  for (const point of [poi, station]) Object.assign(point, {
+    fieldVerified: true, fieldVerifiedAt: "2026-11-27", fieldVerificationNote: "Checked this point during a site visit.",
+  });
+  Object.assign(photo, {
+    fieldVerified: true, fieldVerifiedAt: "2026-11-27", verificationNotes: "Public sign visible from the sidewalk.",
+  });
+  photos.enabled = enabled;
+  const result = verify();
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});

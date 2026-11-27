@@ -1,6 +1,8 @@
 // Data-driven RulebookPack and GeoSnapshot contracts (schema hide-seek-rulebook-v1).
 // Shared geo and curse primitives are designed to be reused across game formats.
 
+import type { StudioAiProvenance, StudioPointProvenance } from "./studio-cocreator.js";
+
 export type RulebookFormat = "hide-and-seek" | "claim-the-city";
 export type RulebookDifficulty = "starter" | "standard" | "expert";
 export type TransitMode = "walk" | "mrt" | "krl" | "transjakarta" | "lrt" | "other";
@@ -23,7 +25,7 @@ export type GeoStartPoint = GeoCoordinate & {
   accessNotes: string;
 };
 
-export type GeoStation = GeoCoordinate & {
+export type GeoStation = GeoCoordinate & StudioPointProvenance & {
   id: string;
   name: string;
   transitLines: string[];
@@ -34,7 +36,7 @@ export type GeoStation = GeoCoordinate & {
   estimatedTravelFromStartMs?: number;
 };
 
-export type GeoPoi = GeoCoordinate & {
+export type GeoPoi = GeoCoordinate & StudioPointProvenance & {
   id: string;
   name: string;
   category: string;
@@ -163,6 +165,10 @@ export type PhotoQuestionItem = {
   label: string;
   prompt: string;
   phase: HideSeekPlayPhase | "both";
+  verificationNotes?: string;
+  fieldVerified?: boolean;
+  fieldVerifiedAt?: string;
+  aiProvenance?: StudioAiProvenance;
 };
 
 export type HideSeekInvestigationBook = {

@@ -92,3 +92,10 @@ npm start
 ```
 
 Set `HOST=0.0.0.0`, `PORT=8787`, `SOLO_SECURE_COOKIE=1` (behind HTTPS), and optional provider keys (`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN`, `GEOAPIFY_API_KEY`, `MIDTRANS_SERVER_KEY`). Check `GET /api/health` for active provider/map modes and `GET /api/map/usage` for server-side Geoapify tile and routing credit estimates. Ready-to-run human and field protocols live in [`docs/qa/`](docs/qa/).
+
+Studio's POI curator uses OpenStreetMap through Overpass. Set `OVERPASS_API_URL`
+to override the provider endpoint or `OSM_POI_MODE=fixture` for deterministic
+local rehearsals. The signed-in curator endpoint receives a drawn polygon and
+returns attributed suggestions that require field verification before submission.
+The start position, existing draft points and zones are used locally. If live
+curation is unavailable, the response labels its suggestions as synthetic.
