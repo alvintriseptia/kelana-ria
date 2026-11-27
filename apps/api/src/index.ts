@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import type { GameBoard, SoloAction } from "@kelana-ria/contracts";
 import { authHandler } from "./auth-http.js";
 import { authStore } from "./auth-store.js";
 import {
@@ -14,9 +13,7 @@ import {
   type RecordedEmailOtpAdapter,
   type RedactedEmailOtpEvent,
 } from "./email-adapter.js";
-import { duoHandler } from "./duo-http.js";
-import { duoStore } from "./duo-store.js";
-import { credential, hasJsonBody, isFix, isGameBoard, isId, isObject, json, requestBody, setCredential } from "./http.js";
+import { json } from "./http.js";
 import {
   createMidtransAdapterFromEnv,
   createMidtransSandboxAdapter,
@@ -29,13 +26,8 @@ import {
   type RedactedMidtransLifecycleEvent,
 } from "./midtrans-adapter.js";
 import { mapHandler, type MapProxyOptions } from "./map-http.js";
-import { defaultCreatorDraft, defaultCreatorTasks } from "./pack-fixture.js";
-import { packHandler } from "./pack-http.js";
-import { packStore, validatePackVersionForPublication } from "./pack-store.js";
 import { rulebookHandler } from "./rulebook-http.js";
 import { rulebookStore } from "./rulebook-store.js";
-import { seekHandler } from "./seek-http.js";
-import { seekStore } from "./seek-store.js";
 import { staticHandler } from "./static-http.js";
 import {
   filterTransitCatalog,
@@ -44,6 +36,7 @@ import {
   type TransitMode,
 } from "./transit-catalog.js";
 import {
+  buildProviderCatalogFromClaimPack,
   buildPublicEditionPrompt,
   createGeoapifyWalkingRouteProvider,
   createProvidersFromEnv,
@@ -55,21 +48,34 @@ import {
   GEOAPIFY_ROUTING_CREDIT_COST,
   GEOAPIFY_TILE_CREDIT_COST,
   GEOAPIFY_WALKING_ATTRIBUTION,
+  getDefaultProviderAssets,
   parseGeoapifyWalkingResponse,
   parseWorkersAiEditionResponse,
+  prepareProviderEdition,
   redactUrlCredentials,
   uniqueWalkingPairs,
+  validateProviderProposal,
   WORKERS_AI_FREE_DAILY_NEURONS,
+  type EditionGenerator,
+  type EditionGeneratorRequest,
+  type PreparedProviderEdition,
+  type PrepareProviderEditionResult,
+  type ProposedProviderEdition,
+  type ProviderBoardCatalog,
+  type ProviderCatalogPoint,
   type ProviderEvidenceMode,
   type RedactedAiEvidenceEvent,
   type RedactedProviderEvent,
   type RedactedRouteEvidenceEvent,
+  type RouteLeg,
+  type RouteSnapshotProvider,
+  type WalkingRouteSnapshot,
 } from "./provider-adapters.js";
-import { soloStore, type SoloStoreOptions } from "./solo-store.js";
 
 export type { GameBoard, GameConfiguration } from "@kelana-ria/contracts";
 export {
   authStore,
+  buildProviderCatalogFromClaimPack,
   buildPublicEditionPrompt,
   createEmailOtpAdapterFromEnv,
   createGeoapifyWalkingRouteProvider,
@@ -84,25 +90,31 @@ export {
   DEFAULT_CLOUDFLARE_AI_BASE_URL,
   DEFAULT_CLOUDFLARE_AI_MODEL,
   DEFAULT_GEOAPIFY_BASE_URL,
-  defaultCreatorDraft,
-  defaultCreatorTasks,
   GEOAPIFY_FREE_DAILY_CREDITS,
   GEOAPIFY_ROUTING_CREDIT_COST,
   GEOAPIFY_TILE_CREDIT_COST,
   GEOAPIFY_WALKING_ATTRIBUTION,
-  packStore,
+  getDefaultProviderAssets,
   parseGeoapifyWalkingResponse,
   parseWorkersAiEditionResponse,
+  prepareProviderEdition,
   redactUrlCredentials,
   signMidtransNotification,
   uniqueWalkingPairs,
-  validatePackVersionForPublication,
+  validateProviderProposal,
   verifyMidtransSignature,
   WORKERS_AI_FREE_DAILY_NEURONS,
+  type EditionGenerator,
+  type EditionGeneratorRequest,
   type EmailOtpAdapter,
   type EmailOtpProviderMode,
   type MidtransAdapter,
   type MidtransNotificationPayload,
+  type PreparedProviderEdition,
+  type PrepareProviderEditionResult,
+  type ProposedProviderEdition,
+  type ProviderBoardCatalog,
+  type ProviderCatalogPoint,
   type ProviderEvidenceMode,
   type RecordedEmailOtpAdapter,
   type RecordedMidtransAdapter,
@@ -111,50 +123,10 @@ export {
   type RedactedMidtransLifecycleEvent,
   type RedactedProviderEvent,
   type RedactedRouteEvidenceEvent,
-};
-export {
-  COMPACT_BOARD_VERSION,
-  compactAlternate,
-  compactCatalog,
-  compactCheckpoints,
-  compactReviewedTasks,
-  compactRouteAttribution,
-  compactStart,
-  compactTrial,
-  compactWalkingSnapshot,
-  preparedCompactFixtures,
-  type BoardCatalog,
-  type CompactBoardCatalog,
-  type ReviewedTask,
   type RouteLeg,
-  type SoloFixture,
+  type RouteSnapshotProvider,
   type WalkingRouteSnapshot,
-} from "./solo-fixture.js";
-export {
-  compactCheckpointIdSet,
-  JAKARTA_WIDE_BOARD_VERSION,
-  preparedWideFixtures,
-  wideAlternate,
-  wideBranches,
-  wideCatalog,
-  wideCheckpoints,
-  wideOuterCheckpoints,
-  wideOuterReviewedTasks,
-  wideReviewedTasks,
-  wideRouteAttribution,
-  wideTrial,
-  wideWalkingSnapshot,
-} from "./wide-fixture.js";
-export {
-  compactDuoTrial,
-  duoFixtureForBoard,
-  wideDuoTrial,
-} from "./duo-rules.js";
-export {
-  compactSeekTrial,
-  seekFixtureForBoard,
-  wideSeekTrial,
-} from "./seek-rules.js";
+};
 export {
   computeGeoSnapshotHash,
   haversineMeters,
@@ -270,44 +242,8 @@ export {
   type RulebookRoomPass,
   type StoredRulebookRecord,
 } from "./rulebook-store.js";
-export {
-  isFreshSoloEdition,
-  prepareSoloFixture,
-  toSoloCandidate,
-  validateSoloFixture,
-  type EditionGenerator,
-  type EditionGeneratorRequest,
-  type PrepareEditionResult,
-  type ProposedSoloEdition,
-  type RouteSnapshotProvider,
-  type ValidationResult,
-} from "./solo-validation.js";
 
-const cookieName = "kelana_solo";
-const defaultDatabasePath = fileURLToPath(new URL("../.data/solo.sqlite", import.meta.url));
-
-function parseBoardParam(url: URL): GameBoard | "invalid" | undefined {
-  const raw = url.searchParams.get("board");
-  if (raw === null) return undefined;
-  return isGameBoard(raw) ? raw : "invalid";
-}
-
-function parseAction(value: unknown): SoloAction | undefined {
-  if (!isObject(value) || !isId(value.actionId) || !isId(value.sessionId)) return undefined;
-  const { type, actionId, sessionId, checkpointId, choiceId, fix, freshEdition } = value;
-  const identity = { actionId, sessionId };
-  if (type === "start" || type === "abandon") return { type, ...identity };
-  if (type === "replay") {
-    if (freshEdition !== undefined && typeof freshEdition !== "boolean") return undefined;
-    return freshEdition === undefined ? { type, ...identity } : { type, freshEdition, ...identity };
-  }
-  if (!isId(checkpointId)) return undefined;
-  if (type === "check-in" && isFix(fix)) return { type, checkpointId, fix, ...identity };
-  if (type === "answer" && isId(choiceId) && (fix === undefined || isFix(fix))) {
-    return { type, checkpointId, choiceId, fix, ...identity };
-  }
-  return undefined;
-}
+const defaultDatabasePath = fileURLToPath(new URL("../.data/kelana.sqlite", import.meta.url));
 
 const YOUTUBE_ID_PATTERN = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_HOSTS = new Set([
@@ -349,6 +285,23 @@ export function parseYoutubeVideoId(input: unknown): string | null {
   return candidate && YOUTUBE_ID_PATTERN.test(candidate) ? candidate : null;
 }
 
+export type GameServerOptions = {
+  databasePath?: string;
+  now?: () => number;
+  secureCookie?: boolean;
+  midtrans?: MidtransAdapter;
+  emailAdapter?: EmailOtpAdapter;
+  mapProxy?: MapProxyOptions;
+  staticDir?: string;
+  healthMeta?: { aiMode: string; routeMode: string };
+  allowSimulatedLocation?: boolean;
+  allowHideSeekQa?: boolean;
+  allowRulebookSandboxCheckout?: boolean;
+  allowSandboxAuthOtp?: boolean;
+  rulebookReviewerKey?: string;
+  demoVideoYoutubeId?: string | null;
+};
+
 export function createSoloServer({
   databasePath = defaultDatabasePath,
   now = Date.now,
@@ -364,38 +317,10 @@ export function createSoloServer({
   allowSandboxAuthOtp = false,
   rulebookReviewerKey = "",
   demoVideoYoutubeId = null,
-  ...storeOptions
-}: {
-  databasePath?: string;
-  now?: () => number;
-  secureCookie?: boolean;
-  midtrans?: MidtransAdapter;
-  emailAdapter?: EmailOtpAdapter;
-  mapProxy?: MapProxyOptions;
-  staticDir?: string;
-  healthMeta?: { aiMode: string; routeMode: string };
-  allowSimulatedLocation?: boolean;
-  allowHideSeekQa?: boolean;
-  allowRulebookSandboxCheckout?: boolean;
-  allowSandboxAuthOtp?: boolean;
-  rulebookReviewerKey?: string;
-  demoVideoYoutubeId?: string | null;
-} & SoloStoreOptions = {}) {
-  const store = soloStore(databasePath, { now, ...storeOptions });
-  const duo = duoStore(databasePath);
-  const packs = packStore(databasePath, {
-    catalog: storeOptions.catalog,
-    routes: storeOptions.snapshotRoutes,
-    closedCheckpoints: storeOptions.closedCheckpoints,
-    midtrans,
-    unlockPaidRoom: duo.createPaidRoom,
-  });
-  const handleDuo = duoHandler(duo, now, secureCookie);
-  const seek = seekStore(databasePath, now);
-  const handleSeek = seekHandler(seek, now, secureCookie);
-  const handlePacks = packHandler(packs, now, secureCookie);
+}: GameServerOptions = {}) {
   const auth = authStore(databasePath);
-  const resolvedEmailAdapter = emailAdapter ?? createEmailOtpAdapterFromEnv(process.env, { allowSandboxFallback: allowSandboxAuthOtp });
+  const resolvedEmailAdapter =
+    emailAdapter ?? createEmailOtpAdapterFromEnv(process.env, { allowSandboxFallback: allowSandboxAuthOtp });
   const rulebooks = rulebookStore(databasePath, { midtrans, now });
   const handleAuth = authHandler({
     auth,
@@ -477,74 +402,8 @@ export function createSoloServer({
         response.end(payload);
         return;
       }
-      if (url.pathname === "/api/duo" || url.pathname.startsWith("/api/duo/")) {
-        return await handleDuo(request, response, url);
-      }
-      if (url.pathname === "/api/seek" || url.pathname.startsWith("/api/seek/")) {
-        return await handleSeek(request, response, url);
-      }
-      if (url.pathname === "/api/packs" || url.pathname.startsWith("/api/packs/")) {
-        return await handlePacks(request, response, url);
-      }
       if (url.pathname === "/api/rulebooks" || url.pathname.startsWith("/api/rulebooks/")) {
         return await handleRulebooks(request, response, url);
-      }
-      const token = credential(request, cookieName);
-      if (request.method === "GET" && url.pathname === "/api/solo") {
-        const requestedRunId = url.searchParams.get("sessionId");
-        if (requestedRunId !== null) {
-          if (!isId(requestedRunId)) return json(response, 400, { error: "invalid-request" });
-          const archived = store.runById(requestedRunId, now());
-          if (!archived) return json(response, 404, { error: "not-found" });
-          json(response, 200, archived);
-          return;
-        }
-        const board = parseBoardParam(url);
-        if (board === "invalid") return json(response, 400, { error: "invalid-request" });
-        const session = await store.session(token, now(), board ?? "compact");
-        if ("error" in session) {
-          json(response, 409, {
-            error: session.error,
-            closedCheckpointId: session.closedCheckpointId,
-          });
-          return;
-        }
-        if (session.token) {
-          setCredential(request, response, cookieName, session.token, "/api/solo", secureCookie);
-        }
-        json(response, 200, session.reply);
-        return;
-      }
-      if (request.method === "GET" && url.pathname === "/api/solo/challenge") {
-        const checkpointId = url.searchParams.get("checkpointId");
-        const board = parseBoardParam(url);
-        if (!isId(checkpointId) || board === "invalid") return json(response, 400, { error: "invalid-request" });
-        const reply = token && store.challenge(token, checkpointId, now(), board ?? "compact");
-        if (!reply) return json(response, 401, { error: "session-required" });
-        json(response, 200, reply);
-        return;
-      }
-      if (request.method === "POST" && url.pathname === "/api/solo") {
-        if (!token) return json(response, 401, { error: "session-required" });
-        if (!hasJsonBody(request)) {
-          return json(response, 415, { error: "invalid-request" });
-        }
-        const board = parseBoardParam(url);
-        if (board === "invalid") return json(response, 400, { error: "invalid-request" });
-        const body = await requestBody(request);
-        const receivedAt = now();
-        if (body === undefined) return json(response, 413, { error: "invalid-request" });
-        let action: SoloAction | undefined;
-        try {
-          action = parseAction(JSON.parse(body));
-        } catch {
-          return json(response, 400, { error: "invalid-request" });
-        }
-        if (!action) return json(response, 400, { error: "invalid-request" });
-        const reply = await store.act(token, action, receivedAt, board);
-        if (!reply) return json(response, 401, { error: "session-required" });
-        json(response, 200, reply);
-        return;
       }
       if (handleStatic && (await handleStatic(request, response, url))) {
         return;
@@ -566,13 +425,11 @@ export function createSoloServer({
     handleRulebooks.closeStreams();
     rulebooks.close();
     auth.close();
-    seek.close();
-    packs.close();
-    duo.close();
-    store.close();
   });
   return server;
 }
+
+export const createGameServer = createSoloServer;
 
 if (import.meta.main) {
   const host = process.env.HOST ?? "127.0.0.1";
@@ -585,10 +442,8 @@ if (import.meta.main) {
   const allowSandboxAuthOtp =
     process.env.ALLOW_SANDBOX_AUTH_OTP === "1" || process.env.NODE_ENV === "development";
   const server = createSoloServer({
-    databasePath: process.env.SOLO_DATABASE_PATH,
+    databasePath: process.env.KELANA_DATABASE_PATH ?? process.env.SOLO_DATABASE_PATH,
     secureCookie: process.env.SOLO_SECURE_COOKIE === "1",
-    aiProvider: providers.aiProvider,
-    routeProvider: providers.routeProvider,
     staticDir,
     allowSimulatedLocation,
     allowHideSeekQa: process.env.ALLOW_HIDE_SEEK_QA === "1",

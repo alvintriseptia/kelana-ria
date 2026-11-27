@@ -54,7 +54,7 @@ import {
 } from "./quick-guide";
 import { preparePhotoFile, renderPhotoCaptureWidget, type PhotoDraftState } from "./photo-capture";
 import { createRoomEventBridge, type RoomConnectionState } from "./room-events";
-import { escapeText } from "./solo-view";
+import { escapeText } from "./escape-text";
 import "./rulebook-seek-play.css";
 import "./rulebook-claim-play.css";
 

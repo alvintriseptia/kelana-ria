@@ -63,38 +63,11 @@ async function showRoute(focusHeading = false) {
     }
     return;
   }
-  const requestedSeek = params.get("play") === "hide-and-seek";
-  const rawBoard = params.get("board");
-  const validBoard = rawBoard === null || rawBoard === "compact" || rawBoard === "jakarta-wide";
-  const unsupportedSeek = requestedSeek && (
-    (params.has("players") && params.get("players") !== "2") ||
-    !validBoard ||
-    (params.has("format") && params.get("format") !== "hide-and-seek")
-  );
-  if (unsupportedSeek) {
-    params.delete("play");
-    params.delete("room");
-    url.pathname = "/catalog";
-    history.replaceState(null, "", url);
-  } else if (requestedSeek) {
-    params.set("players", "2");
-    params.set("format", "hide-and-seek");
-    params.set("board", rawBoard === "jakarta-wide" ? "jakarta-wide" : "compact");
-    history.replaceState(history.state, "", url);
-  }
   const mode = params.get("play");
-  const seeking = mode === "hide-and-seek";
   const rulebookSeek = mode === "rulebook-seek";
   const rulebookClaim = mode === "rulebook-claim";
   const rulebookStudio = mode === "rulebook-studio";
-  const playing =
-    mode === "solo-claim" ||
-    mode === "duo-claim" ||
-    seeking ||
-    mode === "creator-packs" ||
-    rulebookSeek ||
-    rulebookClaim ||
-    rulebookStudio;
+  const playing = rulebookSeek || rulebookClaim || rulebookStudio;
   if (!playing && params.has("play")) {
     params.delete("play");
     params.delete("room");
@@ -139,34 +112,19 @@ async function showRoute(focusHeading = false) {
     return;
   }
   setup.replaceChildren();
-  const format = seeking || rulebookSeek ? "Hide & Seek" : "Claim the City";
-  const boardLabel = params.get("board") === "jakarta-wide" ? "Jakarta (Wide)" : "Jakarta (Compact)";
-  document.title =
-    mode === "creator-packs"
-      ? "Paket Kreator · Kelana Ria"
-      : rulebookStudio
-        ? "Studio Kreator · Kelana Ria"
-        : `${format} · Kelana Ria`;
-  const hasOwnShell = rulebookStudio || rulebookSeek || rulebookClaim;
-  const heading = mode === "creator-packs"
-    ? '<h1>Paket Kreator Jakarta</h1><p class="intro">Jakarta (Compact) · Claim the City · Tinjauan &amp; Katalog</p>'
-    : hasOwnShell
-      ? ""
-      : `<h1 lang="en">${format}</h1><p class="intro">${boardLabel} · ${mode === "solo-claim" ? "Solo" : "Berdua"} · Gratis</p>`;
-  play.innerHTML = `${heading}<p class="catalog-loading" role="status">Membuka permainan…</p>`;
+  const format = rulebookSeek ? "Hide & Seek" : "Claim the City";
+  document.title = rulebookStudio ? "Studio Kreator · Kelana Ria" : `${format} · Kelana Ria`;
+  play.innerHTML = `<p class="catalog-loading" role="status">Membuka permainan…</p>`;
   try {
-    const mount = seeking ? (await import("./seek-play")).mountSeekPlay
-      : rulebookSeek ? (await import("./rulebook-seek-play")).mountRulebookSeekPlay
-      : rulebookClaim ? (await import("./rulebook-claim-play")).mountRulebookClaimPlay
-      : rulebookStudio ? (await import("./rulebook-studio")).mountRulebookStudio
-      : mode === "creator-packs" ? (await import("./pack-play")).mountPackPlay
-      : mode === "duo-claim" ? (await import("./duo-play")).mountDuoPlay
-      : (await import("./solo-play")).mountSoloPlay;
+    const mount = rulebookSeek
+      ? (await import("./rulebook-seek-play")).mountRulebookSeekPlay
+      : rulebookClaim
+        ? (await import("./rulebook-claim-play")).mountRulebookClaimPlay
+        : (await import("./rulebook-studio")).mountRulebookStudio;
     if (currentNavigation === navigation) unmountPlay = mount(play, returnToSetup);
   } catch {
     if (currentNavigation !== navigation) return;
-    const fallbackHeading = heading || `<h1>${rulebookStudio ? "Studio Kreator" : format}</h1>`;
-    play.innerHTML = `${fallbackHeading}
+    play.innerHTML = `<h1>${rulebookStudio ? "Studio Kreator" : format}</h1>
       <p class="intro" role="alert">Permainan belum bisa dibuka. Periksa koneksi lalu coba lagi.</p>
       <button id="play-reload" class="secondary" type="button">Coba lagi</button>
       <button id="play-back" class="secondary" type="button">Kembali ke katalog</button>`;

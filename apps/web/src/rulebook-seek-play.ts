@@ -15,7 +15,7 @@ import type {
   RulebookEntitlementSummary,
 } from "@kelana-ria/contracts";
 import type { BoardMapHandle, BoardMapOptions, BoardMapUpdateOptions, mountBoardMap } from "./board-map";
-import { escapeText } from "./solo-view";
+import { escapeText } from "./escape-text";
 import { getLocation } from "./device-location";
 import {
   createLiveLocationWatcher,

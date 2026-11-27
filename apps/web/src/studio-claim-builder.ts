@@ -5,7 +5,7 @@ import type {
   ClaimChallengePrimitive,
   ClaimRulebookPack,
 } from "@kelana-ria/contracts";
-import { escapeText } from "./solo-view";
+import { escapeText } from "./escape-text";
 import {
   challengePrimitiveTileMeta,
   renderGameCardPreviewHtml,

@@ -1,17 +1,6 @@
-import type { GameBoard } from "@kelana-ria/contracts";
-import {
-  compactCatalog,
-  compactWalkingSnapshot,
-  type CompactBoardCatalog,
-  type RouteLeg,
-  type WalkingRouteSnapshot,
-} from "./solo-fixture.js";
-import type {
-  EditionGenerator,
-  EditionGeneratorRequest,
-  ProposedSoloEdition,
-  RouteSnapshotProvider,
-} from "./solo-validation.js";
+import type { GameBoard, GeoCoordinate } from "@kelana-ria/contracts";
+import { loadOfficialClaimPacks, type LoadedOfficialClaimPack } from "./official-packs.js";
+import { haversineMeters } from "./seek-engine/rulebook-validator.js";
 
 export const DEFAULT_CLOUDFLARE_AI_MODEL = "@cf/zai-org/glm-4.7-flash";
 export const DEFAULT_CLOUDFLARE_AI_BASE_URL = "https://api.cloudflare.com/client/v4";
@@ -24,6 +13,104 @@ export const GEOAPIFY_FREE_DAILY_CREDITS = 3_000;
 export const WORKERS_AI_FREE_DAILY_NEURONS = 10_000;
 
 export type ProviderEvidenceMode = "live" | "recorded-rehearsal";
+
+export type ProviderCatalogPoint = GeoCoordinate & {
+  id: string;
+  name: string;
+  zone: string;
+};
+
+export type ProviderBoardCatalog = {
+  packId: string;
+  board: GameBoard;
+  boardVersion: string;
+  format: "claim-the-city";
+  players: 1 | 2;
+  durationMs: number;
+  targets: { landmarks: number; zones: number };
+  start: ProviderCatalogPoint;
+  checkpoints: Record<string, ProviderCatalogPoint>;
+};
+
+export type RouteLeg = {
+  fromId: string;
+  toId: string;
+  mode: "walk";
+  distanceMeters: number;
+  travelMs: number;
+};
+
+export type WalkingRouteSnapshot = {
+  board: GameBoard;
+  boardVersion: string;
+  provider: string;
+  retrievedAt: string;
+  attribution: string;
+  legs: RouteLeg[];
+};
+
+export type EditionGeneratorRequest = {
+  board: GameBoard;
+  boardVersion: string;
+  format: "claim-the-city";
+  players: 1 | 2;
+  attempt: 1 | 2;
+  remainingBudgetMs: number;
+  previousEditionId?: string;
+};
+
+export type ProposedProviderEdition = {
+  id: string;
+  board?: string;
+  boardVersion?: string;
+  format?: string;
+  players?: number;
+  durationMs?: number;
+  targets?: { landmarks: number; zones: number };
+  checkpoints: string[];
+};
+
+export type EditionGenerator = (request: EditionGeneratorRequest) => Promise<ProposedProviderEdition>;
+
+export type RouteSnapshotProvider = (request: {
+  board: GameBoard;
+  boardVersion: string;
+}) => Promise<WalkingRouteSnapshot>;
+
+export type PreparedProviderEdition = {
+  id: string;
+  board: GameBoard;
+  boardVersion: string;
+  format: "claim-the-city";
+  players: 1 | 2;
+  origin: "live" | "prepared";
+  fallbackReason?: string;
+  durationMs: number;
+  targets: { landmarks: number; zones: number };
+  start: ProviderCatalogPoint;
+  checkpoints: ProviderCatalogPoint[];
+  routes: {
+    source: "live" | "snapshot";
+    provider: string;
+    retrievedAt: string;
+    attribution: string;
+  };
+};
+
+export type PrepareProviderEditionResult =
+  | {
+      ok: true;
+      origin: "live" | "prepared";
+      routeSource: "live" | "snapshot";
+      attempts: number;
+      fallbackReason?: string;
+      edition: PreparedProviderEdition;
+    }
+  | {
+      ok: false;
+      error: string;
+      attempts: number;
+    };
 
 export type RedactedAiEvidenceEvent = {
   kind: "ai-edition";
@@ -71,6 +158,88 @@ export type RedactedRouteEvidenceEvent = {
 
 export type RedactedProviderEvent = RedactedAiEvidenceEvent | RedactedRouteEvidenceEvent;
 
+export function buildProviderCatalogFromClaimPack(loaded: LoadedOfficialClaimPack): {
+  catalog: ProviderBoardCatalog;
+  snapshot: WalkingRouteSnapshot;
+} {
+  const { pack, snapshot: geo } = loaded;
+  const board: GameBoard = pack.meta.packId.includes("wide") ? "jakarta-wide" : "compact";
+  const boardVersion = `${pack.meta.packId}@v${pack.meta.version}-${geo.hash.slice(0, 8)}`;
+  const start: ProviderCatalogPoint = {
+    id: geo.startPoint.id,
+    name: geo.startPoint.name,
+    zone: "start",
+    latitude: geo.startPoint.latitude,
+    longitude: geo.startPoint.longitude,
+  };
+  const checkpoints: Record<string, ProviderCatalogPoint> = {};
+  for (const landmark of pack.geography.landmarks) {
+    checkpoints[landmark.id] = {
+      id: landmark.id,
+      name: landmark.name,
+      zone: landmark.zoneId,
+      latitude: landmark.latitude,
+      longitude: landmark.longitude,
+    };
+  }
+  const catalog: ProviderBoardCatalog = {
+    packId: pack.meta.packId,
+    board,
+    boardVersion,
+    format: "claim-the-city",
+    players: 1,
+    durationMs: pack.session.durationMs,
+    targets: {
+      landmarks: pack.session.soloTargets?.lockedLandmarks ?? 4,
+      zones: pack.session.soloTargets?.distinctZones ?? 2,
+    },
+    start,
+    checkpoints,
+  };
+
+  // Build deterministic walking leg snapshot between start and each landmark (plus sequential neighbors)
+  const legs: RouteLeg[] = [];
+  const landmarks = Object.values(checkpoints);
+  const addWalkLeg = (a: ProviderCatalogPoint, b: ProviderCatalogPoint) => {
+    const meters = Math.max(80, Math.round(haversineMeters(a, b) * 1.25));
+    const travelMs = Math.round((meters / 1.25) * 1000);
+    legs.push({ fromId: a.id, toId: b.id, mode: "walk", distanceMeters: meters, travelMs });
+  };
+  for (const lm of landmarks) {
+    addWalkLeg(start, lm);
+  }
+  for (let i = 0; i + 1 < landmarks.length; i++) {
+    addWalkLeg(landmarks[i], landmarks[i + 1]);
+  }
+
+  return {
+    catalog,
+    snapshot: {
+      board,
+      boardVersion,
+      provider: "Geoapify Snapshot",
+      retrievedAt: geo.attributions[0]?.retrievedAt ?? "2026-01-01T00:00:00.000Z",
+      attribution: GEOAPIFY_WALKING_ATTRIBUTION,
+      legs,
+    },
+  };
+}
+
+let cachedDefault: { catalog: ProviderBoardCatalog; snapshot: WalkingRouteSnapshot } | null = null;
+
+export function getDefaultProviderAssets(): {
+  catalog: ProviderBoardCatalog;
+  snapshot: WalkingRouteSnapshot;
+} {
+  if (!cachedDefault) {
+    const packs = loadOfficialClaimPacks();
+    const compact = packs.find((item) => item.pack.meta.packId.includes("compact")) ?? packs[0];
+    if (!compact) throw new Error("No official Claim rulebook pack available for provider rehearsal");
+    cachedDefault = buildProviderCatalogFromClaimPack(compact);
+  }
+  return cachedDefault;
+}
+
 export function redactUrlCredentials(rawUrl: string, secrets: string[] = []): string {
   let sanitized = rawUrl;
   try {
@@ -103,17 +272,18 @@ export function redactUrlCredentials(rawUrl: string, secrets: string[] = []): st
  * Never includes player coordinates, device credentials, room secrets, or answer keys.
  */
 export function buildPublicEditionPrompt(
-  catalog: CompactBoardCatalog,
+  catalog: ProviderBoardCatalog,
   request: EditionGeneratorRequest,
 ): { system: string; user: string } {
   const publicCatalog = {
+    packId: catalog.packId,
     board: catalog.board,
     boardVersion: catalog.boardVersion,
     format: catalog.format,
     players: catalog.players,
     startId: catalog.start.id,
-    durationMs: 60 * 60 * 1000,
-    targets: { landmarks: 4, zones: 2 },
+    durationMs: catalog.durationMs,
+    targets: catalog.targets,
     checkpoints: Object.values(catalog.checkpoints).map((point) => ({
       id: point.id,
       zone: point.zone,
@@ -124,9 +294,9 @@ export function buildPublicEditionPrompt(
 
   return {
     system: [
-      "You design a Jakarta Compact solo Claim the City game edition from an approved public catalog.",
-      "Return ONLY valid JSON with shape: {\"id\": string, \"checkpoints\": string[], \"targets\": {\"landmarks\": 4, \"zones\": 2}, \"durationMs\": 3600000}.",
-      "Use ONLY checkpoint IDs listed in the catalog. Pick 6 distinct checkpoints across at least 2 zones so multiple opening routes reach 4 landmarks in 2 zones within 60 minutes while leaving at least 1 checkpoint unvisited.",
+      "You select a Claim the City game edition from an approved public rulebook catalog.",
+      `Return ONLY valid JSON with shape: {"id": string, "checkpoints": string[], "targets": {"landmarks": ${catalog.targets.landmarks}, "zones": ${catalog.targets.zones}}, "durationMs": ${catalog.durationMs}}.`,
+      `Use ONLY checkpoint IDs listed in the catalog. Pick at least 6 distinct checkpoints across at least ${catalog.targets.zones} zones.`,
       "Do not invent IDs, coordinates, rules, or challenges.",
     ].join(" "),
     user: JSON.stringify(publicCatalog),
@@ -163,7 +333,7 @@ function extractJsonObject(rawText: string): Record<string, unknown> | undefined
 export function parseWorkersAiEditionResponse(
   payload: unknown,
   request: EditionGeneratorRequest,
-): ProposedSoloEdition | undefined {
+): ProposedProviderEdition | undefined {
   if (!payload || typeof payload !== "object") return undefined;
   const envelope = payload as Record<string, unknown>;
   if (envelope.success === false) return undefined;
@@ -195,14 +365,14 @@ export function parseWorkersAiEditionResponse(
   if (!parsed) return undefined;
 
   const checkpoints = Array.isArray(parsed.checkpoints)
-    ? (parsed.checkpoints as ProposedSoloEdition["checkpoints"])
+    ? parsed.checkpoints.filter((id): id is string => typeof id === "string")
     : undefined;
   if (!checkpoints || checkpoints.length === 0) return undefined;
 
   const rawId =
     typeof parsed.id === "string" && /^[A-Za-z0-9_-]{3,80}$/.test(parsed.id.trim())
       ? parsed.id.trim()
-      : `compact-solo-ai-a${request.attempt}`;
+      : `edition-ai-a${request.attempt}`;
 
   const rawTargets = parsed.targets as Record<string, unknown> | undefined;
   const targets =
@@ -210,12 +380,12 @@ export function parseWorkersAiEditionResponse(
     typeof rawTargets.landmarks === "number" &&
     typeof rawTargets.zones === "number"
       ? { landmarks: rawTargets.landmarks, zones: rawTargets.zones }
-      : { landmarks: 4, zones: 2 };
+      : undefined;
 
   const durationMs =
     typeof parsed.durationMs === "number" && Number.isFinite(parsed.durationMs)
       ? parsed.durationMs
-      : 60 * 60 * 1000;
+      : undefined;
 
   return {
     id: rawId,
@@ -272,7 +442,7 @@ export function createWorkersAiEditionGenerator({
   apiToken,
   model = DEFAULT_CLOUDFLARE_AI_MODEL,
   baseUrl = DEFAULT_CLOUDFLARE_AI_BASE_URL,
-  catalog = compactCatalog,
+  catalog = getDefaultProviderAssets().catalog,
   mode = "live",
   fetchImpl = fetch,
   now = Date.now,
@@ -282,7 +452,7 @@ export function createWorkersAiEditionGenerator({
   apiToken: string;
   model?: string;
   baseUrl?: string;
-  catalog?: CompactBoardCatalog;
+  catalog?: ProviderBoardCatalog;
   mode?: ProviderEvidenceMode;
   fetchImpl?: typeof fetch;
   now?: () => number;
@@ -296,7 +466,7 @@ export function createWorkersAiEditionGenerator({
   const endpointUrl = `${cleanBase}/accounts/${encodeURIComponent(accountId)}/ai/run/${encodedModel}`;
   const redactedEndpoint = redactUrlCredentials(endpointUrl, [accountId, apiToken]);
 
-  return async (request: EditionGeneratorRequest): Promise<ProposedSoloEdition> => {
+  return async (request: EditionGeneratorRequest): Promise<ProposedProviderEdition> => {
     const startedAt = now();
     const prompt = buildPublicEditionPrompt(catalog, request);
     const timeoutMs = Math.max(100, Math.floor(request.remainingBudgetMs));
@@ -406,7 +576,6 @@ export function createWorkersAiEditionGenerator({
         errorCode: "malformed-json",
         redacted: true,
       });
-      // Return an invalid empty proposal so prepareSoloFixture triggers its single retry inside the 15s budget.
       return {
         id: `invalid-ai-attempt-${request.attempt}`,
         board: request.board,
@@ -458,8 +627,8 @@ export function uniqueWalkingPairs(snapshot: WalkingRouteSnapshot): Array<[strin
 export function createGeoapifyWalkingRouteProvider({
   apiKey,
   baseUrl = DEFAULT_GEOAPIFY_BASE_URL,
-  catalog = compactCatalog,
-  baseSnapshot = compactWalkingSnapshot,
+  catalog = getDefaultProviderAssets().catalog,
+  baseSnapshot = getDefaultProviderAssets().snapshot,
   pairs,
   mode = "live",
   timeoutMs = 8_000,
@@ -469,7 +638,7 @@ export function createGeoapifyWalkingRouteProvider({
 }: {
   apiKey: string;
   baseUrl?: string;
-  catalog?: CompactBoardCatalog;
+  catalog?: ProviderBoardCatalog;
   baseSnapshot?: WalkingRouteSnapshot;
   pairs?: Array<[string, string]>;
   mode?: ProviderEvidenceMode;
@@ -646,10 +815,153 @@ export function createGeoapifyWalkingRouteProvider({
   };
 }
 
+export function validateProviderProposal(
+  proposal: ProposedProviderEdition,
+  catalog: ProviderBoardCatalog,
+): { ok: true; checkpoints: ProviderCatalogPoint[] } | { ok: false; error: string } {
+  if (!proposal || typeof proposal.id !== "string" || !proposal.id.trim()) {
+    return { ok: false, error: "invalid-edition-id" };
+  }
+  if (!Array.isArray(proposal.checkpoints) || proposal.checkpoints.length < Math.max(6, catalog.targets.landmarks + 1)) {
+    return { ok: false, error: "insufficient-checkpoints" };
+  }
+  const seen = new Set<string>();
+  const resolved: ProviderCatalogPoint[] = [];
+  for (const id of proposal.checkpoints) {
+    if (seen.has(id)) return { ok: false, error: "duplicate-checkpoint" };
+    const point = catalog.checkpoints[id];
+    if (!point) return { ok: false, error: "unknown-checkpoint" };
+    seen.add(id);
+    resolved.push(point);
+  }
+  const distinctZones = new Set(resolved.map((point) => point.zone));
+  if (distinctZones.size < catalog.targets.zones) {
+    return { ok: false, error: "insufficient-zones" };
+  }
+  return { ok: true, checkpoints: resolved };
+}
+
+export async function prepareProviderEdition({
+  catalog = getDefaultProviderAssets().catalog,
+  snapshotRoutes = getDefaultProviderAssets().snapshot,
+  aiProvider,
+  routeProvider,
+  budgetMs = 15_000,
+  now = Date.now,
+}: {
+  catalog?: ProviderBoardCatalog;
+  snapshotRoutes?: WalkingRouteSnapshot;
+  aiProvider?: EditionGenerator;
+  routeProvider?: RouteSnapshotProvider;
+  budgetMs?: number;
+  now?: () => number;
+} = {}): Promise<PrepareProviderEditionResult> {
+  let routes = snapshotRoutes;
+  let routeSource: "live" | "snapshot" = "snapshot";
+
+  if (routeProvider) {
+    try {
+      const liveRoutes = await routeProvider({
+        board: catalog.board,
+        boardVersion: catalog.boardVersion,
+      });
+      if (liveRoutes && Array.isArray(liveRoutes.legs) && liveRoutes.legs.length > 0) {
+        routes = liveRoutes;
+        routeSource = "live";
+      }
+    } catch {
+      routes = snapshotRoutes;
+      routeSource = "snapshot";
+    }
+  }
+
+  const routeMeta = {
+    source: routeSource,
+    provider: routes.provider,
+    retrievedAt: routes.retrievedAt,
+    attribution: routes.attribution,
+  };
+
+  let attempts = 0;
+  let fallbackReason: string | undefined;
+  const startedAt = now();
+
+  if (aiProvider) {
+    for (const attempt of [1, 2] as const) {
+      const remainingBudgetMs = budgetMs - Math.max(0, now() - startedAt);
+      if (remainingBudgetMs <= 0) {
+        fallbackReason = "ai-timeout";
+        break;
+      }
+      attempts = attempt;
+      try {
+        const proposal = await aiProvider({
+          board: catalog.board,
+          boardVersion: catalog.boardVersion,
+          format: catalog.format,
+          players: catalog.players,
+          attempt,
+          remainingBudgetMs,
+        });
+        const checked = validateProviderProposal(proposal, catalog);
+        if (checked.ok) {
+          return {
+            ok: true,
+            origin: "live",
+            routeSource,
+            attempts,
+            edition: {
+              id: proposal.id,
+              board: catalog.board,
+              boardVersion: catalog.boardVersion,
+              format: catalog.format,
+              players: catalog.players,
+              origin: "live",
+              durationMs: proposal.durationMs ?? catalog.durationMs,
+              targets: proposal.targets ?? catalog.targets,
+              start: catalog.start,
+              checkpoints: checked.checkpoints,
+              routes: routeMeta,
+            },
+          };
+        }
+        fallbackReason = checked.error;
+      } catch {
+        fallbackReason = "ai-unavailable";
+        break;
+      }
+    }
+  }
+
+  // Deterministic same-configuration prepared fallback from the official validated Rulebook pack
+  const preparedCheckpoints = Object.values(catalog.checkpoints);
+  return {
+    ok: true,
+    origin: "prepared",
+    routeSource,
+    attempts,
+    fallbackReason,
+    edition: {
+      id: `${catalog.packId}-prepared`,
+      board: catalog.board,
+      boardVersion: catalog.boardVersion,
+      format: catalog.format,
+      players: catalog.players,
+      origin: "prepared",
+      fallbackReason,
+      durationMs: catalog.durationMs,
+      targets: catalog.targets,
+      start: catalog.start,
+      checkpoints: preparedCheckpoints,
+      routes: routeMeta,
+    },
+  };
+}
+
 export function createProvidersFromEnv(
   env: Record<string, string | undefined> = process.env,
   options: {
-    catalog?: CompactBoardCatalog;
+    catalog?: ProviderBoardCatalog;
     baseSnapshot?: WalkingRouteSnapshot;
     fetchImpl?: typeof fetch;
     now?: () => number;

@@ -20,7 +20,7 @@ import {
   openAuthModal,
   renderAccountChip,
 } from "./auth-modal";
-import { escapeText } from "./solo-view";
+import { escapeText } from "./escape-text";
 import {
   buildClaimCardFromForm,
   buildClaimChallengeFromForm,
