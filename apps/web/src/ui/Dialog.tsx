@@ -1,5 +1,5 @@
 import type { ComponentChildren } from "preact";
-import { useEffect } from "preact/hooks";
+import { useLayoutEffect } from "preact/hooks";
 
 export type DialogProps = {
   titleId: string;
@@ -32,7 +32,7 @@ export function Dialog({
   testId,
   children,
 }: DialogProps) {
-  useEffect(() => {
+  useLayoutEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !closeDisabled) {
         event.preventDefault();

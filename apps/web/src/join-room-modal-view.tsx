@@ -1,6 +1,6 @@
 import type { AuthMeReply, RulebookFormat } from "@kelana-ria/contracts";
 import { useSignal } from "@preact/signals";
-import { useEffect, useRef } from "preact/hooks";
+import { useLayoutEffect, useRef } from "preact/hooks";
 import { resolveDefaultPlayerName, saveRememberedGuestName } from "./guest-name";
 import { fetchApiJson, resolvePlayerError, type PlayerErrorTone } from "./player-errors";
 import { Dialog } from "./ui/Dialog";
@@ -36,7 +36,7 @@ function JoinRoomModal({
   const codeInputRef = useRef<HTMLInputElement | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     codeInputRef.current?.focus({ preventScroll: true });
     return () => {
       submitAbortRef.current?.abort();
