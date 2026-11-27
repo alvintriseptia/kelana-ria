@@ -821,6 +821,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }
 
   function handleStudioAuthRequired() {
+    refreshSeq++;
     authRequired = true;
     authState = {
       authenticated: false,
@@ -1221,7 +1222,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         <summary>${validationErrors.length} hal perlu diperiksa</summary>${issues}</details>` : issues}
     </div>`;
 
-    if (authRequired && view !== "review") {
+    if (authRequired) {
       stepperSlot.innerHTML = "";
       destroyStep2Map();
       bodySlot.innerHTML = `<div class="rb-card" data-testid="studio-auth-gate">
@@ -2876,6 +2877,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }, { signal });
 
   onAuthChange((next) => {
+    if (next.user?.userId !== authState?.user?.userId || next.user?.role !== "admin") {
+      isAdmin = false;
+      reviewVersions = [];
+    }
     authState = next;
     if (next.authenticated) {
       authRequired = false;
@@ -2883,10 +2888,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       errorMsg = "";
       render();
       void refresh();
-    } else if (view !== "review") {
-      handleStudioAuthRequired();
     } else {
-      render();
+      handleStudioAuthRequired();
     }
   }, signal);
 
