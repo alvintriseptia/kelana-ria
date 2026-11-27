@@ -1292,6 +1292,31 @@ try {
   assert.ok(blockedStudioTiles > tilesBeforeFallback);
   await exercisePoiCurator(page, "seek", { fallback: true });
 
+  const otherCreator = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  try {
+    const other = await otherCreator.newPage();
+    await signInQaContext(otherCreator, baseUrl, "duplicate-title@kelana.test");
+    for (const creatorPage of [page, other]) {
+      await creatorPage.goto(`${baseUrl}${studioUrl}`);
+      await startDraft(creatorPage, "hide-and-seek");
+      await creatorPage.fill("#st-title", "Kopi Senopati QA");
+      assert.equal(await creatorPage.getByTestId("pack-id-advanced").getAttribute("open"), null);
+      const [cloneResponse] = await Promise.all([
+        creatorPage.waitForResponse(response => response.url().endsWith("/api/rulebooks") &&
+          response.request().method() === "POST" && response.request().postDataJSON().type === "clone-official"),
+        creatorPage.locator('button[data-action="clone"]').click(),
+      ]);
+      const clone = await cloneResponse.json();
+      assert.equal(cloneResponse.status(), 200, JSON.stringify(clone));
+      assert.equal(clone.record.packId, creatorPage === page ? "pack-kopi-senopati-qa" : "pack-kopi-senopati-qa-2");
+      await creatorPage.locator("#ed-meta-title").waitFor();
+      assert.equal(await creatorPage.locator("#ed-meta-title").inputValue(), "Kopi Senopati QA");
+    }
+    await other.screenshot({ path: path.join(results, "studio-duplicate-title-draft.png") });
+  } finally {
+    await otherCreator.close();
+  }
+
   await ctx.close();
   console.log("qa:rulebook-studio passed (Studio lifecycle, OpenStreetMap curation and tile fallback, private playtests, mobile Admin moderation and access, Midtrans)");
 } finally {

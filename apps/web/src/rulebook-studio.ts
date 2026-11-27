@@ -3072,6 +3072,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         const res = await apiJson<{ ok?: boolean; record?: StudioVersionRecord; error?: string }>("/api/rulebooks", {
           type: "clone-official",
           ...cloneFields,
+          autoAllocatePackId: !packIdManual,
           priceIdr: Number(cloneFields.priceIdr),
         });
         if (res.ok && res.record) {

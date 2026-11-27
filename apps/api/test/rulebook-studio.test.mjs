@@ -81,6 +81,40 @@ test("rulebook Studio scopes draft ownership and independently authorizes editor
   assert.equal(JSON.stringify(catalog).includes("correctChoiceId"), false);
 });
 
+test("automatic Studio clones reserve distinct IDs across accounts while manual IDs keep their rules", async t => {
+  const { get, post, signIn } = await studioServer(t);
+  const creators = await Promise.all([
+    signIn("duplicate-title-a@kelana.test"),
+    signIn("duplicate-title-b@kelana.test"),
+  ]);
+  const clone = {
+    type: "clone-official", templatePackId: "official-jakarta-compact-seek",
+    packId: "pack-kopi-senopati", title: "Kopi Senopati", byline: "Kreator QA", priceIdr: 0,
+  };
+  const responses = await Promise.all(creators.map(creator =>
+    post({ ...clone, autoAllocatePackId: true }, creator)));
+  const records = await Promise.all(responses.map(async response => {
+    assert.equal(response.status, 200);
+    const { record } = await response.json();
+    assert.equal(record.version, 1);
+    assert.equal(record.pack.meta.packId, record.packId);
+    assert.equal(record.pack.meta.title, clone.title);
+    return record;
+  }));
+  assert.deepEqual(records.map(record => record.packId).sort(), [clone.packId, `${clone.packId}-2`]);
+  for (const [index, creator] of creators.entries()) {
+    const { versions } = await (await get("?role=writer", creator)).json();
+    assert.deepEqual(versions.map(version => version.packId), [records[index].packId]);
+  }
+  const owner = records.findIndex(record => record.packId === clone.packId);
+  const collision = await post(clone, creators[1 - owner]);
+  assert.equal(collision.status, 400);
+  assert.equal((await collision.json()).error, "pack-unavailable");
+  const ownerVersion = await post(clone, creators[owner]);
+  assert.equal(ownerVersion.status, 200);
+  assert.equal((await ownerVersion.json()).record.version, 2);
+});
+
 test("rulebook editorial actions require an admin account", async t => {
   const { get, post, signIn } = await studioServer(t);
   const writer = await signIn("studio-noreview@kelana.test");

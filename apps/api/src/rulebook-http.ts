@@ -529,6 +529,7 @@ export function rulebookHandler(
             title: String(body.title ?? ""),
             byline: String(body.byline ?? ""),
             priceIdr: Number(body.priceIdr ?? 0),
+            autoAllocatePackId: body.autoAllocatePackId === true,
           },
           ts,
         );
