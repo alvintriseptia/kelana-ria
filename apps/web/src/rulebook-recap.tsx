@@ -11,8 +11,14 @@ import type {
   SeekMatchRecap,
 } from "@kelana-ria/contracts";
 import { useSignal } from "@preact/signals";
-import { useEffect } from "preact/hooks";
+import { useEffect, useRef } from "preact/hooks";
 import { fetchAuthMe, getCachedAuth, onAuthChange, openAuthModal } from "./auth-modal";
+import {
+  animateCountUp,
+  animateSheetIn,
+  animateStaggerIn,
+  attachPress,
+} from "./game-motion";
 import { claimDecidingMetric, claimResultReasons } from "./rulebook-claim-result";
 import { AccountChip } from "./ui/AccountChip";
 import { mountPreact } from "./ui/mount";
@@ -39,6 +45,30 @@ const seekTurnReason: Record<SeekMatchRecap["turns"][number]["reason"], string> 
 function duration(ms: number) {
   const seconds = Math.max(0, Math.ceil(ms / 1000));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function CountUpText({
+  value,
+  format = (n: number) => String(Math.round(n)),
+  enabled = true,
+}: {
+  value: number;
+  format?: (value: number) => string;
+  enabled?: boolean;
+}) {
+  const spanRef = useRef<HTMLSpanElement | null>(null);
+  const formattedFinal = format(value);
+
+  useEffect(() => {
+    if (!enabled) return;
+    return animateCountUp(spanRef.current, 0, value, format, 0.44);
+  }, [value, enabled]);
+
+  return (
+    <span ref={spanRef} class="recap-tabular" data-final-value={formattedFinal}>
+      {formattedFinal}
+    </span>
+  );
 }
 
 function editionHref(packId: string, version: number) {
@@ -230,13 +260,13 @@ function ClaimResultPanels({ recap }: { recap: ClaimMatchRecap }) {
             <div>
               <dt>Landmark terkunci</dt>
               <dd>
-                {soloProgress.lockedLandmarks}/{soloProgress.targetLandmarks}
+                <CountUpText value={soloProgress.lockedLandmarks} />/{soloProgress.targetLandmarks}
               </dd>
             </div>
             <div>
               <dt>Zona berbeda</dt>
               <dd>
-                {soloProgress.distinctZones}/{soloProgress.targetZones}
+                <CountUpText value={soloProgress.distinctZones} />/{soloProgress.targetZones}
               </dd>
             </div>
           </dl>
@@ -246,8 +276,9 @@ function ClaimResultPanels({ recap }: { recap: ClaimMatchRecap }) {
               <li key={score.teamId}>
                 <strong>{teamName(score.teamId)}</strong>
                 <small>
-                  {score.zonesControlled} zona · {score.lockedLandmarks} terkunci ·{" "}
-                  {score.totalLandmarks} total landmark
+                  <CountUpText value={score.zonesControlled} /> zona ·{" "}
+                  <CountUpText value={score.lockedLandmarks} /> terkunci ·{" "}
+                  <CountUpText value={score.totalLandmarks} /> total landmark
                 </small>
               </li>
             ))}
@@ -297,7 +328,8 @@ function SeekResultPanels({ recap }: { recap: SeekMatchRecap }) {
             {recap.turns.map((turn) => (
               <li key={turn.turnNumber}>
                 <strong>
-                  {playerName(recap, turn.hiderSeatId)} · {duration(turn.adjustedMs)}
+                  {playerName(recap, turn.hiderSeatId)} ·{" "}
+                  <CountUpText value={turn.adjustedMs} format={(v) => duration(Math.round(v))} />
                 </strong>
                 <small>
                   Giliran {turn.turnNumber} · {seekTurnReason[turn.reason]} ·{" "}
@@ -350,13 +382,15 @@ function PublicResultPanels({
               <div>
                 <dt>Landmark terkunci</dt>
                 <dd>
-                  {recap.soloProgress.lockedLandmarks}/{recap.soloProgress.targetLandmarks}
+                  <CountUpText value={recap.soloProgress.lockedLandmarks} enabled={!preview} />/
+                  {recap.soloProgress.targetLandmarks}
                 </dd>
               </div>
               <div>
                 <dt>Zona berbeda</dt>
                 <dd>
-                  {recap.soloProgress.distinctZones}/{recap.soloProgress.targetZones}
+                  <CountUpText value={recap.soloProgress.distinctZones} enabled={!preview} />/
+                  {recap.soloProgress.targetZones}
                 </dd>
               </div>
             </dl>
@@ -369,8 +403,9 @@ function PublicResultPanels({
                     {score.isWinner ? " ★" : ""}
                   </strong>
                   <small>
-                    {score.zonesControlled} zona · {score.lockedLandmarks} terkunci ·{" "}
-                    {score.totalLandmarks} total landmark
+                    <CountUpText value={score.zonesControlled} enabled={!preview} /> zona ·{" "}
+                    <CountUpText value={score.lockedLandmarks} enabled={!preview} /> terkunci ·{" "}
+                    <CountUpText value={score.totalLandmarks} enabled={!preview} /> total landmark
                   </small>
                 </li>
               ))}
@@ -407,7 +442,12 @@ function PublicResultPanels({
             {recap.turns.map((turn) => (
               <li key={turn.turnNumber}>
                 <strong>
-                  {turn.hiderAlias} · {duration(turn.adjustedMs)}
+                  {turn.hiderAlias} ·{" "}
+                  <CountUpText
+                    value={turn.adjustedMs}
+                    format={(v) => duration(Math.round(v))}
+                    enabled={!preview}
+                  />
                 </strong>
                 <small>
                   Giliran {turn.turnNumber} · {seekTurnReason[turn.reason]} ·{" "}
@@ -458,6 +498,8 @@ function SharedRecapView({ sharedId, signal }: { sharedId: string; signal: Abort
     }
   }
 
+  const shellRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
     document.title = "Ringkasan komunitas · Kelana Ria";
     void loadShared();
@@ -467,8 +509,32 @@ function SharedRecapView({ sharedId, signal }: { sharedId: string; signal: Abort
   const backHref = current.kind === "ready" ? current.recap.editionHref : "/catalog";
   const backLabel = current.kind === "ready" ? `Edisi v${current.recap.editionVersion}` : "Katalog";
 
+  useEffect(() => {
+    if (current.kind !== "ready" || !shellRef.current) return;
+    const outcome = shellRef.current.querySelector<HTMLElement>("[data-recap-outcome]");
+    const moments = shellRef.current.querySelectorAll("[data-recap-moments] li");
+    const buttons = shellRef.current.querySelectorAll("a.recap-edition-cta, button");
+    const stopOutcome = animateSheetIn(outcome, {
+      offsetY: 14,
+      fromScale: 0.96,
+      preset: "dramatic",
+    });
+    const stopMoments = animateStaggerIn(moments, {
+      startDelay: 0.12,
+      delayStep: 0.055,
+      offsetY: 10,
+      preset: "tactile",
+    });
+    const stopPress = attachPress(buttons, { scale: 0.97, preset: "snappy" });
+    return () => {
+      stopOutcome();
+      stopMoments();
+      stopPress();
+    };
+  }, [current.kind, current.kind === "ready" ? current.recap.shareId : ""]);
+
   return (
-    <article class="recap-shell">
+    <article ref={shellRef} class="recap-shell">
       <a class="recap-back" href={backHref}>
         ‹ {backLabel}
       </a>
@@ -656,6 +722,9 @@ function PrivateRecapApp({ matchId, signal }: { matchId: string | null; signal: 
     }
   }
 
+  const shellRef = useRef<HTMLElement | null>(null);
+  const animatedKeyRef = useRef<string | null>(null);
+
   useEffect(() => {
     document.title = `${title} · Kelana Ria`;
     onAuthChange((next) => {
@@ -676,8 +745,52 @@ function PrivateRecapApp({ matchId, signal }: { matchId: string | null; signal: 
   const publicPath = share ? `/?shared=${encodeURIComponent(share.shareId)}` : "";
   const status = statusSig.value;
 
+  useEffect(() => {
+    if (!shellRef.current) return;
+    const buttons = shellRef.current.querySelectorAll(
+      ".recap-share-actions button, .recap-alias-presets button, .recap-history a",
+    );
+    return attachPress(buttons, { scale: 0.97, preset: "snappy" });
+  }, [current.kind, isShared]);
+
+  useEffect(() => {
+    if (!shellRef.current) return;
+    if (current.kind === "list") {
+      const key = `list:${current.recaps.length}`;
+      if (animatedKeyRef.current === key) return;
+      animatedKeyRef.current = key;
+      return animateStaggerIn(shellRef.current.querySelectorAll(".recap-history li"), {
+        delayStep: 0.045,
+        offsetY: 10,
+        preset: "tactile",
+      });
+    }
+    if (current.kind === "detail") {
+      const key = `detail:${current.recap.matchId}`;
+      if (animatedKeyRef.current === key) return;
+      animatedKeyRef.current = key;
+      const outcome = shellRef.current.querySelector<HTMLElement>("[data-recap-outcome]");
+      const moments = shellRef.current.querySelectorAll("[data-recap-moments] li");
+      const stopOutcome = animateSheetIn(outcome, {
+        offsetY: 14,
+        fromScale: 0.96,
+        preset: "dramatic",
+      });
+      const stopMoments = animateStaggerIn(moments, {
+        startDelay: 0.12,
+        delayStep: 0.055,
+        offsetY: 10,
+        preset: "tactile",
+      });
+      return () => {
+        stopOutcome();
+        stopMoments();
+      };
+    }
+  }, [current.kind, current.kind === "detail" ? current.recap.matchId : current.kind === "list" ? current.recaps.length : 0]);
+
   return (
-    <article class="recap-shell">
+    <article ref={shellRef} class="recap-shell">
       <div class="recap-topbar">
         <a class="recap-back" href={back}>
           ‹ {matchId ? "Riwayat" : "Katalog"}

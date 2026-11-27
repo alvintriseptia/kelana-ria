@@ -54,3 +54,8 @@
 .recap-unshare-btn { border-color: #8f3d2e; color: #6b2419; }
 .recap-status { margin: 0; padding: 8px 10px; border-radius: 8px; background: #d9f18180; color: #12362e; font-size: .86rem; font-weight: 650; }
 .recap-status-error { background: #fae8d9; color: #6b2419; }
+.recap-tabular { font-variant-numeric: tabular-nums; }
+[data-recap-outcome] { will-change: transform, opacity; }
+@media (prefers-reduced-motion: reduce) {
+  [data-recap-outcome] { will-change: auto; }
+}

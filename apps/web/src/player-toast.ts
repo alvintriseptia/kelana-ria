@@ -25,6 +25,35 @@ export function renderInlineAlert(message: string, tone: PlayerErrorTone = "warn
   return `<p class="pt-inline-alert pt-inline-alert--${tone}" role="alert" aria-atomic="true"${attrs}><span class="pt-inline-alert-mark" aria-hidden="true">${toneIcons[tone]}</span><span>${escapeText(message)}</span></p>`;
 }
 
+type ToastMotionApi = Pick<
+  typeof import("./game-motion"),
+  "motionAllowed" | "animateToastIn" | "animateToastOut"
+>;
+
+let cachedToastMotion: ToastMotionApi | null = null;
+let loadingToastMotion: Promise<ToastMotionApi | null> | null = null;
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+function loadToastMotion(): Promise<ToastMotionApi | null> {
+  if (cachedToastMotion) return Promise.resolve(cachedToastMotion);
+  if (!loadingToastMotion) {
+    loadingToastMotion = import("./game-motion")
+      .then((mod) => {
+        cachedToastMotion = mod;
+        return mod;
+      })
+      .catch(() => null);
+  }
+  return loadingToastMotion;
+}
+
 const AUTO_DISMISS_MS = 9000;
 const DEDUPE_COOLDOWN_MS = 12_000;
 
@@ -59,12 +88,41 @@ export function createPlayerToast(options: {
     }
   }
 
-  function removeToast(restoreFocus = false) {
+  function clearGhosts() {
+    host.querySelectorAll(".pt-toast-ghost").forEach((el) => el.remove());
+  }
+
+  function spawnExitGhost(source: HTMLElement) {
+    if (!cachedToastMotion || !cachedToastMotion.motionAllowed()) return;
+    const ghost = source.cloneNode(true) as HTMLElement;
+    ghost.classList.add("pt-toast-ghost");
+    ghost.removeAttribute("data-testid");
+    ghost.removeAttribute("data-toast-key");
+    ghost.setAttribute("aria-hidden", "true");
+    ghost.style.pointerEvents = "none";
+    ghost.querySelectorAll("[role]").forEach((node) => node.removeAttribute("role"));
+    ghost.querySelectorAll("button").forEach((btn) => {
+      btn.tabIndex = -1;
+      btn.setAttribute("disabled", "");
+    });
+    host.appendChild(ghost);
+    void cachedToastMotion.animateToastOut(ghost).finally(() => {
+      ghost.remove();
+    });
+  }
+
+  function removeToast(restoreFocus = false, animateExit = false) {
     clearTimer();
-    const wasFocusedInside = Boolean(activeToast && document.activeElement && activeToast.contains(document.activeElement));
+    const wasFocusedInside = Boolean(
+      activeToast && document.activeElement && activeToast.contains(document.activeElement),
+    );
     if (activeToast) {
-      activeToast.remove();
+      const closing = activeToast;
       activeToast = null;
+      if (animateExit && !signal.aborted) {
+        spawnExitGhost(closing);
+      }
+      closing.remove();
     }
     activeKey = null;
     if (restoreFocus && wasFocusedInside && lastTriggerFocus?.isConnected) {
@@ -90,7 +148,8 @@ export function createPlayerToast(options: {
     if (document.activeElement instanceof HTMLElement && !host.contains(document.activeElement)) {
       lastTriggerFocus = document.activeElement;
     }
-    removeToast(false);
+    clearGhosts();
+    removeToast(false, false);
 
     const toastEl = document.createElement("div");
     toastEl.className = `pt-toast pt-toast--${resolution.tone}`;
@@ -114,18 +173,34 @@ export function createPlayerToast(options: {
     closeBtn.className = "pt-toast-dismiss";
     closeBtn.setAttribute("aria-label", "Tutup pemberitahuan");
     closeBtn.textContent = "×";
-    closeBtn.addEventListener("click", () => {
-      removeToast(true);
-    }, { signal });
+    closeBtn.addEventListener(
+      "click",
+      () => {
+        removeToast(true, true);
+      },
+      { signal },
+    );
 
     toastEl.append(badge, body, closeBtn);
     host.appendChild(toastEl);
     activeToast = toastEl;
     activeKey = key;
 
+    if (!prefersReducedMotion()) {
+      if (cachedToastMotion) {
+        cachedToastMotion.animateToastIn(toastEl);
+      } else {
+        void loadToastMotion().then((mod) => {
+          if (!signal.aborted && activeToast === toastEl && toastEl.isConnected) {
+            mod?.animateToastIn(toastEl);
+          }
+        });
+      }
+    }
+
     if (autoDismissMs > 0) {
       dismissTimer = window.setTimeout(() => {
-        removeToast(false);
+        removeToast(false, true);
       }, autoDismissMs);
     }
     return true;
@@ -137,25 +212,31 @@ export function createPlayerToast(options: {
   }
 
   function destroy() {
-    removeToast(false);
+    clearGhosts();
+    removeToast(false, false);
     seenKeys.clear();
     host.remove();
   }
 
-  document.addEventListener("keydown", (event) => {
-    if (event.key !== "Escape" || !activeToast) return;
-    if (document.querySelector(".sg-room-menu[open]")) return;
-    event.preventDefault();
-    removeToast(true);
-  }, { signal });
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (event.key !== "Escape" || !activeToast) return;
+      if (document.querySelector(".sg-room-menu[open]")) return;
+      event.preventDefault();
+      removeToast(true, true);
+    },
+    { signal },
+  );
 
   signal.addEventListener("abort", destroy, { once: true });
 
   return {
     show,
-    dismiss: (restoreFocus = true) => removeToast(restoreFocus),
+    dismiss: (restoreFocus = true) => removeToast(restoreFocus, true),
     clear: () => {
-      removeToast(false);
+      clearGhosts();
+      removeToast(false, false);
     },
     resetDedupe,
     setLayout,

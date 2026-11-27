@@ -35,6 +35,27 @@ import { mountPreact } from "./ui/mount";
 import jakartaCover from "./assets/jakarta.webp";
 import "./rulebook-catalog.css";
 
+type CatalogMotionApi = Pick<
+  typeof import("./game-motion"),
+  "motionAllowed" | "attachPress" | "animateStaggerIn" | "animatePop"
+>;
+
+let cachedCatalogMotion: CatalogMotionApi | null = null;
+let loadingCatalogMotion: Promise<CatalogMotionApi | null> | null = null;
+
+function loadCatalogMotion(): Promise<CatalogMotionApi | null> {
+  if (cachedCatalogMotion) return Promise.resolve(cachedCatalogMotion);
+  if (!loadingCatalogMotion) {
+    loadingCatalogMotion = import("./game-motion")
+      .then((mod) => {
+        cachedCatalogMotion = mod;
+        return mod;
+      })
+      .catch(() => null);
+  }
+  return loadingCatalogMotion;
+}
+
 const endpoint = "/api/rulebooks/catalog";
 const cacheKey = "kelana-rulebook-catalog";
 const formatNames = { "claim-the-city": "Claim the City", "hide-and-seek": "Hide & Seek" } as const;
@@ -754,6 +775,69 @@ function CatalogApp({
       anchor.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
     }
   }, [pack, catalogSig.value?.editions?.length]);
+
+  const motionApiSig = useSignal<CatalogMotionApi | null>(cachedCatalogMotion);
+  const animatedRouteKeyRef = useRef<string | null>(null);
+  const prevEffectiveModeRef = useRef<RulebookPlayMode | null>(null);
+
+  useEffect(() => {
+    if (motionApiSig.value) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const activate = () => {
+      void loadCatalogMotion().then((mod) => {
+        if (!signal.aborted && mod) {
+          motionApiSig.value = mod;
+        }
+      });
+    };
+    root.addEventListener("pointerdown", activate, { once: true, passive: true, signal });
+    root.addEventListener("keydown", activate, { once: true, passive: true, signal });
+    return () => {
+      root.removeEventListener("pointerdown", activate);
+      root.removeEventListener("keydown", activate);
+    };
+  }, []);
+
+  useEffect(() => {
+    const api = motionApiSig.value;
+    if (!api || !api.motionAllowed()) return;
+    const targets = root.querySelectorAll(
+      ".cat-card, .cat-actions button, .cat-modes button, .cat-resume-banner button",
+    );
+    return api.attachPress(targets, { scale: 0.97, preset: "snappy" });
+  }, [motionApiSig.value, pack, item?.packId, catalogSig.value?.editions?.length, Boolean(activeRoomSig.value)]);
+
+  useEffect(() => {
+    const api = motionApiSig.value;
+    if (!api || !api.motionAllowed()) return;
+    const routeKey = pack && item ? `detail:${item.packId}@${item.version}` : !pack && catalogSig.value?.editions?.length ? "grid" : null;
+    if (!routeKey || animatedRouteKeyRef.current === routeKey) return;
+    animatedRouteKeyRef.current = routeKey;
+    if (routeKey.startsWith("detail:")) {
+      const blocks = root.querySelectorAll(
+        ".cat-detail > .cat-hero, .cat-detail > .cat-modes, .cat-detail > .cat-box, .cat-detail > .cat-rules, .cat-detail > .cat-actions",
+      );
+      return api.animateStaggerIn(blocks, { offsetY: 10, delayStep: 0.04, preset: "snappy" });
+    }
+    const cards = root.querySelectorAll(".cat-card");
+    return api.animateStaggerIn(cards, { offsetY: 10, delayStep: 0.04, preset: "tactile" });
+  }, [motionApiSig.value, pack, item?.packId, item?.version, catalogSig.value?.editions?.length]);
+
+  useEffect(() => {
+    const prev = prevEffectiveModeRef.current;
+    prevEffectiveModeRef.current = effectiveMode;
+    if (!pack || !item || !prev || prev === effectiveMode) return;
+    const api = motionApiSig.value;
+    if (!api || !api.motionAllowed()) return;
+    const activeBtn = root.querySelector<HTMLElement>(`.cat-modes button[data-cat-action="${effectiveMode}"]`);
+    const stopPop = api.animatePop(activeBtn, { fromScale: 0.9, preset: "snappy" });
+    const facts = root.querySelectorAll(".cat-facts > div");
+    const stopFacts = api.animateStaggerIn(facts, { offsetY: 6, delayStep: 0.025, preset: "snappy" });
+    return () => {
+      stopPop();
+      stopFacts();
+    };
+  }, [effectiveMode, pack, item?.packId]);
 
   const openAccount = () =>
     openAuthModal({

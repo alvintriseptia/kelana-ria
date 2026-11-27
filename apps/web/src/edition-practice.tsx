@@ -9,6 +9,14 @@ import {
   type CatalogEdition,
   type PracticeCardExample,
 } from "./rulebook-catalog";
+import {
+  animateCardDeal,
+  animateCardFlip,
+  animatePop,
+  animateShake,
+  animateSheetIn,
+  attachPress,
+} from "./game-motion";
 import { practiceDeck } from "./edition-practice-deck";
 import samplePhoto from "./assets/jakarta.webp";
 import "./edition-practice.css";
@@ -138,9 +146,20 @@ function EditionPracticeView({
   const selectedSig = useSignal<number[]>([]);
 
   const titleRef = useRef<HTMLHeadingElement | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const sceneRef = useRef<HTMLElement | null>(null);
+  const dotsRef = useRef<HTMLSpanElement | null>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  const cardsRef = useRef<HTMLDivElement | null>(null);
+  const toastRef = useRef<HTMLDivElement | null>(null);
+  const hasMountedRef = useRef(false);
+  const lastSelectedCardRef = useRef<number | null>(null);
 
   useEffect(() => {
     titleRef.current?.focus();
+    const stopIn = animateSheetIn(shellRef.current, { offsetY: 14, fromScale: 0.97, preset: "sheet" });
+    hasMountedRef.current = true;
+    return stopIn;
   }, []);
 
   const focusSelector = (selector: string) => {
@@ -418,6 +437,7 @@ function EditionPracticeView({
         : Array.from({ length: handCount }, (_, idx) => idx);
       return (
         <div
+          ref={cardsRef}
           class="ep-cards ep-hand"
           role="region"
           aria-label={deck.earns ? "Kartu latihan" : "Contoh kartu"}
@@ -435,7 +455,12 @@ function EditionPracticeView({
         <p class="ep-card-count" role="status">
           {selectedSet.size}/{handCount} kartu dipilih
         </p>
-        <div class={`ep-cards${dealingSig.value ? " deal" : ""}`} role="group" aria-label="Tawaran kartu">
+        <div
+          ref={cardsRef}
+          class={`ep-cards${dealingSig.value ? " deal" : ""}`}
+          role="group"
+          aria-label="Tawaran kartu"
+        >
           {Array.from({ length: cardCount }, (_, offset) => {
             const index = start + offset;
             const card = cards[index % cards.length];
@@ -445,6 +470,7 @@ function EditionPracticeView({
               return (
                 <div
                   key={index}
+                  data-card-slot={index}
                   class={`ep-card-slot${flippedSig.value === index ? " flipped" : ""}`}
                 >
                   <PracticeCardFace card={card} />
@@ -461,8 +487,13 @@ function EditionPracticeView({
                       flippedSig.value = undefined;
                       dealingSig.value = false;
                       const next = new Set(selectedSig.value);
-                      if (next.has(index)) next.delete(index);
-                      else next.add(index);
+                      if (next.has(index)) {
+                        next.delete(index);
+                        lastSelectedCardRef.current = null;
+                      } else {
+                        next.add(index);
+                        lastSelectedCardRef.current = index;
+                      }
                       selectedSig.value = [...next];
                       focusSelector(`[data-card="${index}"]`);
                     }}
@@ -530,8 +561,82 @@ function EditionPracticeView({
     );
   };
 
+  useEffect(() => {
+    const buttons = shellRef.current?.querySelectorAll(
+      ".ep-actions button, .ep-options button, .ep-clue-chip, .ep-card-back, .ep-card-select, .ep-pin",
+    );
+    return attachPress(buttons, { scale: 0.96, preset: "snappy" });
+  }, [step, family, inDeck, cardPageSig.value, revealedSig.value.length]);
+
+  useEffect(() => {
+    if (!hasMountedRef.current) return;
+    const stopScene = animateSheetIn(sceneRef.current, {
+      offsetY: 8,
+      fromScale: 0.99,
+      preset: "snappy",
+    });
+    const activeDot = dotsRef.current?.querySelector<HTMLElement>(".ep-dot.active");
+    const stopDot = animatePop(activeDot, { fromScale: 0.72, preset: "bouncy" });
+    return () => {
+      stopScene();
+      stopDot();
+    };
+  }, [step, family]);
+
+  useEffect(() => {
+    if (!hasMountedRef.current || !family) return;
+    const chip = shellRef.current?.querySelector<HTMLElement>(
+      `.ep-clue-chip[data-family="${family}"]`,
+    );
+    return animatePop(chip, { fromScale: 0.9, preset: "snappy" });
+  }, [family]);
+
+  useEffect(() => {
+    if (inDeck) return;
+    const overlay = boardRef.current?.querySelector<HTMLElement>(".ep-overlay");
+    const lockedPin = boardRef.current?.querySelector<HTMLElement>(".ep-pin-visual.locked");
+    const stopOverlay = overlay
+      ? animatePop(overlay, { fromScale: 0.92, preset: "tactile" })
+      : () => undefined;
+    const stopPin = lockedPin
+      ? animatePop(lockedPin, { fromScale: 0.72, preset: "bouncy" })
+      : () => undefined;
+    return () => {
+      stopOverlay();
+      stopPin();
+    };
+  }, [inDeck, preview, finished, family]);
+
+  useEffect(() => {
+    if (!inDeck || !cardsRef.current) return;
+    if (!dealingSig.value && step !== finalStep) return;
+    return animateCardDeal(cardsRef.current.children);
+  }, [inDeck, dealingSig.value, step, finalStep, cardPageSig.value]);
+
+  useEffect(() => {
+    const idx = flippedSig.value;
+    if (idx === undefined || !cardsRef.current) return;
+    const face = cardsRef.current.querySelector<HTMLElement>(
+      `[data-card-slot="${idx}"] .ep-card-face`,
+    );
+    return animateCardFlip(face);
+  }, [flippedSig.value]);
+
+  useEffect(() => {
+    const picked = lastSelectedCardRef.current;
+    if (picked === null || !cardsRef.current) return;
+    lastSelectedCardRef.current = null;
+    const slot = cardsRef.current.querySelector<HTMLElement>(`[data-card-slot="${picked}"]`);
+    return animatePop(slot, { fromScale: 0.94, preset: "snappy" });
+  }, [selectedSig.value]);
+
+  useEffect(() => {
+    if (!messageSig.value) return;
+    return animateShake(toastRef.current);
+  }, [messageSig.value]);
+
   return (
-    <div class="ep-shell">
+    <div ref={shellRef} class="ep-shell">
       <header class="ep-top">
         <button
           type="button"
@@ -560,7 +665,7 @@ function EditionPracticeView({
           data-testid="practice-progress"
           aria-label={`Langkah ${step + 1} dari ${finalStep + 1}`}
         >
-          <span class="ep-dots" aria-hidden="true">
+          <span ref={dotsRef} class="ep-dots" aria-hidden="true">
             {Array.from({ length: finalStep + 1 }, (_, idx) => (
               <span
                 key={idx}
@@ -609,6 +714,7 @@ function EditionPracticeView({
 
       {!inDeck && (
         <div
+          ref={boardRef}
           class={`ep-board${nearSig.value ? " nearby" : ""}`}
           data-practice-map={finished && preview ? "deduced" : preview ? "preview" : "board"}
           role="region"
@@ -657,7 +763,7 @@ function EditionPracticeView({
         </div>
       )}
 
-      <section class="ep-scene" aria-labelledby="edition-practice-title">
+      <section ref={sceneRef} class="ep-scene" aria-labelledby="edition-practice-title">
         <h2 ref={titleRef} id="edition-practice-title" tabIndex={-1}>
           {scene.title}
         </h2>
@@ -698,7 +804,7 @@ function EditionPracticeView({
       </section>
 
       {messageSig.value && (
-        <div class="ep-toast">
+        <div ref={toastRef} class="ep-toast">
           <span role="alert">{messageSig.value}</span>
           <button
             type="button"

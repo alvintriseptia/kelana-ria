@@ -70,7 +70,12 @@ export async function guardChooser(context) {
   return { requests, locationCalls };
 }
 
-export async function checkChooserTraffic(traffic, origin, dist, { forbidGsap = false } = {}) {
+export async function checkChooserTraffic(
+  traffic,
+  origin,
+  dist,
+  { forbidGsap = false, forbidMotion = false } = {},
+) {
   assert.deepEqual(traffic.locationCalls, [], 'The chooser requested the player’s location');
   const checked = new Set();
   for (const request of traffic.requests) {
@@ -88,14 +93,31 @@ export async function checkChooserTraffic(traffic, origin, dist, { forbidGsap = 
     if (forbidGsap) {
       assert.doesNotMatch(url.pathname, /gsap|landing-gsap/i, `GSAP chunk fetched on /catalog: ${url.pathname}`);
     }
+    if (forbidMotion) {
+      assert.doesNotMatch(url.pathname, /game-motion/i, `Motion chunk fetched on /catalog cold load: ${url.pathname}`);
+    }
     // Inspect modules inside fetched production chunks, including chunks with hashed names.
     if (/\/assets\/.*\.m?js$/.test(url.pathname) && !checked.has(url.pathname)) {
+      if (/^\/assets\/rolldown-runtime-[^/]+\.m?js$/.test(url.pathname)) {
+        const helperCode = await readFile(join(dist, url.pathname), 'utf8');
+        assert.ok(helperCode.length > 0 && helperCode.length < 4096, `Unexpected rolldown runtime size for ${url.pathname}`);
+        assert.doesNotMatch(helperCode, /maplibre|mapbox-gl/i, 'Map renderer leaked into rolldown runtime');
+        checked.add(url.pathname);
+        continue;
+      }
       const map = JSON.parse(await readFile(join(dist, url.pathname + '.map'), 'utf8'));
       assert.ok(map.sources.length, `Empty module list for ${url.pathname}`);
       for (const module of map.sources) {
         assert.doesNotMatch(module, /maplibre|mapbox-gl/i, 'Map renderer bundled into chooser');
         if (forbidGsap) {
           assert.doesNotMatch(module, /(?:^|\/)node_modules\/gsap\/|landing-gsap/i, 'GSAP bundled into /catalog chooser chunk');
+        }
+        if (forbidMotion) {
+          assert.doesNotMatch(
+            module,
+            /(?:^|\/)node_modules\/motion(?:-dom|-utils)?\/|game-motion/i,
+            'Motion eagerly bundled into /catalog cold-load chunk',
+          );
         }
       }
       checked.add(url.pathname);
@@ -176,7 +198,7 @@ export async function measure(browser, origin, dist, results, run, httpServer) {
       await page.screenshot({ path: join(results, 'chooser.png') });
     }
     await writeFile(join(results, `requests-${run}.json`), JSON.stringify(traffic, null, 2));
-    await checkChooserTraffic(traffic, origin, dist, { forbidGsap: true });
+    await checkChooserTraffic(traffic, origin, dist, { forbidGsap: true, forbidMotion: true });
     assert.ok(scripts.size, 'No JavaScript response recorded');
     for (const script of scripts.values()) {
       assert.ok(script.transferredBytes > 0, `Missing cold transfer for ${script.url}`);
