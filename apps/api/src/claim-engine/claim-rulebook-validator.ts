@@ -1,3 +1,4 @@
+import { validateStudioAiDraft, validateStudioPoint } from "../studio-field-verification.js";
 import type {
   ClaimCardDefinition,
   ClaimChallengeItem,
@@ -276,7 +277,8 @@ export function validateClaimRulebook(
   }
 
   const poisByCategory = new Map<string, GeoPoi[]>();
-  for (const poi of Array.isArray(snapshot.pois) ? snapshot.pois : []) {
+  for (const [index, poi] of (Array.isArray(snapshot.pois) ? snapshot.pois : []).entries()) {
+    if (poi) validateStudioPoint(poi, `snapshot.pois[${index}]`, "poi", addError);
     if (poi && isNonEmptyString(poi.category) && isValidCoordinate(poi)) {
       const list = poisByCategory.get(poi.category) ?? [];
       list.push(poi);
@@ -341,6 +343,7 @@ export function validateClaimRulebook(
         addError("invalid-landmark", path, "Landmark requires non-empty id and name.");
         return;
       }
+      validateStudioPoint(landmark, path, "landmark", addError);
       const landmarkId = landmark.id;
       if (landmarkIds.has(landmarkId)) {
         addError("duplicate-landmark-id", `${path}.id`, `Duplicate landmark id "${landmarkId}".`);
@@ -557,6 +560,21 @@ export function validateClaimRulebook(
     }
     const backupPool = Array.isArray(challenges.backupPool) ? challenges.backupPool : [];
     backupCount = backupPool.length;
+    const verificationLists: [string, unknown][] = [
+      ["challenges.backupPool", backupPool],
+      ["challenges.challengeHandPool", challenges.challengeHandPool],
+    ];
+    for (const [id, list] of Object.entries(challenges.landmarkChallenges ?? {})) {
+      verificationLists.push([`challenges.landmarkChallenges.${id}`, list]);
+    }
+    for (const [path, list] of verificationLists) {
+      if (!Array.isArray(list)) continue;
+      for (const [index, item] of list.entries() as Iterable<[number, ClaimChallengeItem]>) {
+        if (!item) continue;
+        validateStudioAiDraft(item.aiProvenance, item.reviewed, item.reviewedAt, item.verificationNotes,
+          `${path}[${index}]`, "challenge", addError);
+      }
+    }
     backupPool.forEach((item, idx) => validateChallengeItem(item, `challenges.backupPool[${idx}]`, seenChallengeIds));
 
     if (challenges.challengeMode === "per_landmark") {

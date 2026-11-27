@@ -10,6 +10,7 @@ import type {
   RulebookValidationIssue,
   TransitMode,
 } from "./rulebook.js";
+import type { StudioAiProvenance, StudioPointProvenance } from "./studio-cocreator.js";
 import type { RoomActivityFeed } from "./rulebook-activity.js";
 import type { LocationFix } from "./index.js";
 
@@ -55,7 +56,7 @@ export type ClaimZoneDefinition = {
   icon?: string;
 };
 
-export type ClaimLandmarkDefinition = GeoCoordinate & {
+export type ClaimLandmarkDefinition = GeoCoordinate & StudioPointProvenance & {
   id: string;
   name: string;
   zoneId: string;
@@ -146,6 +147,7 @@ export type ClaimChallengeItem = {
   estimatedSeconds?: number;
   reviewed: boolean;
   reviewedAt: string;
+  aiProvenance?: StudioAiProvenance;
   payload: ClaimChallengePrimitive;
 };
 

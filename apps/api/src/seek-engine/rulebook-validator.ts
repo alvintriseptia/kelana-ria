@@ -1,3 +1,4 @@
+import { validateStudioAiDraft, validateStudioPoint } from "../studio-field-verification.js";
 import { createHash } from "node:crypto";
 import type {
   CurseCastingCost,
@@ -105,7 +106,7 @@ export function haversineMeters(a: GeoCoordinate, b: GeoCoordinate): number {
   return 2 * 6_371_000 * Math.asin(Math.sqrt(Math.min(1, h)));
 }
 
-function pointOnSegment(point: GeoCoordinate, start: GeoCoordinate, end: GeoCoordinate): boolean {
+export function pointOnSegment(point: GeoCoordinate, start: GeoCoordinate, end: GeoCoordinate): boolean {
   const eps = 1e-9;
   const cross =
     (point.latitude - start.latitude) * (end.longitude - start.longitude) -
@@ -423,6 +424,7 @@ export function validateHideSeekRulebook(
       addError("invalid-station", basePath, "Station must have non-empty id and name.");
       continue;
     }
+    validateStudioPoint(station, basePath, "station", addError);
     const stationId = station.id;
     if (stationIds.has(stationId)) {
       addError("duplicate-station-id", `${basePath}.id`, `Duplicate station id ${stationId}.`);
@@ -476,6 +478,7 @@ export function validateHideSeekRulebook(
       addError("invalid-poi", basePath, "POI must have non-empty id, name, and category.");
       continue;
     }
+    validateStudioPoint(poi, basePath, "poi", addError);
     const poiId = poi.id;
     if (poiIds.has(poiId)) {
       addError("duplicate-poi-id", `${basePath}.id`, `Duplicate POI id ${poiId}.`);
@@ -631,9 +634,17 @@ export function validateHideSeekRulebook(
       });
     }
 
+    if (Array.isArray(photo?.items)) {
+      photo.items.forEach((item, i) => {
+        if (!item) return;
+        const path = `investigationBook.families.photo.items[${i}]`;
+        validateStudioAiDraft(item.aiProvenance, item.fieldVerified, item.fieldVerifiedAt, item.verificationNotes, path, "photo-prompt", addError);
+      });
+    }
     if (validateFamilyHeader("photo", photo) && photo) {
       photoQuestionCount += photo.items.length;
       photo.items.forEach((item, i) => {
+        if (!item) return;
         const itemPath = `investigationBook.families.photo.items[${i}]`;
         if (!isNonEmptyString(item.prompt, 4)) {
           addError("invalid-photo-prompt", `${itemPath}.prompt`, "Photo prompt must be at least 4 characters.");

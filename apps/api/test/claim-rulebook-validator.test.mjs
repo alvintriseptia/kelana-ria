@@ -343,3 +343,36 @@ test("accepts Claim session maxPlayers up to 12 and rejects > 12 or minPlayers >
   assert.ok(inverted.errors.some((e) => e.code === "invalid-player-range" && e.path === "session.minPlayers"));
 });
 
+
+test("Claim verifies imported landmarks and POIs and requires edited AI challenge field notes", () => {
+  for (const { pack, snapshot } of api.loadOfficialClaimPacks()) assert.equal(api.validateClaimRulebook(pack, snapshot).ok, true);
+  const { pack, snapshot } = structuredClone(api.loadOfficialClaimPacks()[0]);
+  const landmark = pack.geography.landmarks[0];
+  const poi = snapshot.pois[0];
+  const challenge = pack.challenges.landmarkChallenges[landmark.id][0];
+  Object.assign(landmark, { source: "osm-curated", osmId: "node/12345", fieldVerified: false });
+  Object.assign(poi, { source: "osm-curated", fieldVerified: true, fieldVerifiedAt: "2026-02-31", gpsVerifiedProximityMeters: -1 });
+  Object.assign(challenge, {
+    aiProvenance: { source: "ai-co-creator", mode: "recorded-rehearsal", generatedAt: "2026-11-27T01:00:00Z", draftNoteMarker: "[DRAFT]" },
+    reviewed: false, reviewedAt: "", verificationNotes: "[DRAFT] Proposed observation.",
+  });
+  const verify = () => {
+    snapshot.hash = api.computeGeoSnapshotHash(snapshot);
+    pack.geography.geoSnapshotHash = snapshot.hash;
+    return api.validateClaimRulebook(pack, snapshot);
+  };
+  const errors = verify().errors;
+  for (const code of ["unverified-osm-landmark", "unverified-osm-poi", "osm-verification-note-required",
+    "invalid-verification-proximity", "unverified-ai-challenge", "unedited-ai-verification-notes"]) {
+    assert.ok(errors.some(issue => issue.code === code), code);
+  }
+  for (const point of [poi, landmark]) Object.assign(point, {
+    fieldVerified: true, fieldVerifiedAt: "2026-11-27", fieldVerificationNote: "Checked public access on site.",
+    gpsVerifiedProximityMeters: 0,
+  });
+  Object.assign(challenge, {
+    reviewed: true, reviewedAt: "2026-11-27", verificationNotes: "Confirmed the observation from the public entrance.",
+  });
+  const result = verify();
+  assert.equal(result.ok, true, JSON.stringify(result.errors));
+});

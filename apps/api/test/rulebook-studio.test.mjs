@@ -299,3 +299,39 @@ test("start-draft-playtest validates drafts, supports Claim & Hide & Seek QA pla
   assert.equal(viewSeek.qa, true);
   assert.equal(viewSeek.draftPlaytest, true);
 });
+
+test("Studio saves unverified content and gates submission and publication on current field evidence", async t => {
+  const key = "studio-field-review-fixture";
+  const { get, post, signIn } = await studioServer(t, key);
+  const owner = await signIn("field-verification@kelana.test");
+  const reviewer = { authorization: `Bearer ${key}` };
+  const packId = "field-verification-claim";
+  const clone = await post({
+    type: "clone-official", templatePackId: "official-jakarta-compact-claim", packId,
+    title: "Field Verification Demo", byline: "Test creator", priceIdr: 0,
+  }, owner);
+  assert.equal(clone.status, 200);
+  const { record: { pack, snapshot } } = await clone.json();
+  const landmark = pack.geography.landmarks[0];
+  Object.assign(landmark, { source: "osm-curated", osmId: "node/123456", fieldVerified: false });
+  const save = () => post({ type: "save-draft", pack, snapshot }, owner);
+  const submit = () => post({ type: "submit-draft", packId, version: 1 }, owner);
+  const publish = () => post({ type: "publish-version", packId, version: 1 }, reviewer);
+
+  const saved = await save();
+  assert.equal(saved.status, 200);
+  const body = await saved.json();
+  assert.equal(body.record.pack.geography.landmarks[0].fieldVerified, false);
+  assert.ok(body.validation.errors.some(issue => issue.code === "unverified-osm-landmark"));
+  assert.equal((await submit()).status, 400);
+  assert.equal((await publish()).status, 400);
+  assert.equal((await (await get()).json()).listings.some(listing => listing.packId === packId), false);
+
+  Object.assign(landmark, {
+    fieldVerified: true, fieldVerifiedAt: "2026-11-27", fieldVerificationNote: "Checked the public entrance in person.",
+  });
+  assert.equal((await (await save()).json()).validation.ok, true);
+  assert.equal((await submit()).status, 200);
+  assert.equal((await publish()).status, 200);
+  assert.ok((await (await get()).json()).listings.some(listing => listing.packId === packId));
+});

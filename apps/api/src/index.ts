@@ -1,3 +1,5 @@
+export { createOsmPoiCurator } from "./osm-poi-curator.js";
+import type { OsmPoiCuratorOptions } from "./osm-poi-curator.js";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -300,6 +302,7 @@ export type GameServerOptions = {
   allowSandboxAuthOtp?: boolean;
   rulebookReviewerKey?: string;
   demoVideoYoutubeId?: string | null;
+  osmPoi?: OsmPoiCuratorOptions;
 };
 
 export function createSoloServer({
@@ -317,6 +320,7 @@ export function createSoloServer({
   allowSandboxAuthOtp = false,
   rulebookReviewerKey = "",
   demoVideoYoutubeId = null,
+  osmPoi,
 }: GameServerOptions = {}) {
   const auth = authStore(databasePath);
   const resolvedEmailAdapter =
@@ -340,6 +344,7 @@ export function createSoloServer({
     rulebookReviewerKey,
     handleAuth.resolveUser,
     allowSandboxAuthOtp,
+    osmPoi,
   );
   const handleMap = mapHandler(mapProxy);
   const handleStatic = staticDir ? staticHandler(staticDir) : undefined;
@@ -451,6 +456,10 @@ if (import.meta.main) {
     allowSandboxAuthOtp,
     rulebookReviewerKey: process.env.RULEBOOK_REVIEWER_KEY,
     demoVideoYoutubeId: process.env.DEMO_VIDEO_YOUTUBE_ID,
+    osmPoi: {
+      overpassApiUrl: process.env.OVERPASS_API_URL,
+      mode: process.env.OSM_POI_MODE === "fixture" ? "fixture" : "live",
+    },
     healthMeta: { aiMode: providers.aiMode, routeMode: providers.routeMode },
     mapProxy: {
       geoapifyApiKey: process.env.GEOAPIFY_API_KEY,

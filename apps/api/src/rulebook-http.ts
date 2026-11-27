@@ -1,3 +1,4 @@
+import { createOsmPoiCurator, type OsmPoiCuratorOptions } from "./osm-poi-curator.js";
 import { maxBase64Length } from "./seek-photo.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -53,7 +54,9 @@ export function rulebookHandler(
   reviewerKey = "",
   resolveUser?: ResolveUserFn,
   allowSandboxAuthOtp = false,
+  osmPoiOptions: OsmPoiCuratorOptions = {},
 ): RulebookRequestHandler {
+  const poiCurator = createOsmPoiCurator({ ...osmPoiOptions, now });
   const configuredReviewer = reviewerKey.trim();
   const reviewerHash = configuredReviewer ? hashKey(configuredReviewer) : undefined;
   const activeSseStreams = new Set<() => void>();
@@ -353,6 +356,15 @@ export function rulebookHandler(
     if (!isObject(body)) return json(response, 400, { error: "invalid-request" });
 
     const ts = now();
+
+    if (path === "/api/rulebooks/studio/curate-pois") {
+      const signedIn = requireSignedIn(request, response, ts);
+      if (!signedIn) return;
+      const result = await poiCurator.curate(signedIn.cred, body);
+      if (result.ok) return json(response, 200, result.data, { "Cache-Control": "private, no-store" });
+      return json(response, result.status, { error: result.error },
+        result.status === 429 ? { "Retry-After": String(result.retryAfter) } : undefined);
+    }
 
     const presenceRoute = /^\/api\/rulebooks\/rooms\/([^/]+)\/presence$/.exec(path);
     if (presenceRoute) {
