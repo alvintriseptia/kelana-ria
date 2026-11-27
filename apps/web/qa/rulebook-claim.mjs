@@ -199,7 +199,7 @@ try {
   await pageSolo.getByRole("list", { name: "Daftar Landmark" }).getByRole("button", { name: /Blok M Plaza/i }).click();
   assert.match(await pageSolo.locator(".cg-selected").innerText(), /hangus/);
   await pageSolo.unroute("**/api/map/config");
-  await pageSolo.getByRole("button", { name: "Coba Lagi" }).click();
+  await pageSolo.getByRole("button", { name: "Coba Lagi", exact: true }).click();
   await pageSolo.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
   assert.equal(await pageSolo.getByRole("list", { name: "Daftar Landmark" }).count(), 0);
 
