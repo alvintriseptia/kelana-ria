@@ -279,6 +279,22 @@ try {
   assert.equal(await pageCreator.locator("#sg-panel-title").evaluate(el => el === document.activeElement), true);
   await pageCreator.setViewportSize({ width: 320, height: 640 });
   assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  const codeContrast = await hiderCodeValue.evaluate(el => {
+    const luminance = color => {
+      const components = color.match(/[\d.]+/g).map(value => Number(value) / 255);
+      const linear = components.slice(0, 3).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+      return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+    };
+    const style = getComputedStyle(el);
+    if (style.backgroundColor === "rgba(0, 0, 0, 0)") return 0;
+    const values = [luminance(style.color), luminance(style.backgroundColor)];
+    return (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05);
+  });
+  assert.ok(codeContrast >= 4.5, `Private code contrast must be at least 4.5:1, got ${codeContrast}`);
+  await pageCreator.waitForFunction(() => {
+    const sheet = document.querySelector(".sg-sheet");
+    return sheet && Number(getComputedStyle(sheet).opacity) >= 0.99;
+  });
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-hider-code-320.png") });
   await pageCreator.setViewportSize({ width: 390, height: 844 });
   await hiderHandTab.click();

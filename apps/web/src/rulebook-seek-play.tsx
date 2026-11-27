@@ -2706,7 +2706,7 @@ function SeekActiveGame({
               {panel === "found-code" && foundCode && (
                 <>
                   <h2 id="sg-panel-title" tabIndex={-1}>Kode temuan</h2>
-                  <div class="rb-found-code" data-testid="hider-found-code">{foundCode}</div>
+                  <div class="sg-found-code" data-testid="hider-found-code">{foundCode}</div>
                   <p>Berikan kode ini saat pencari menemukanmu.</p>
                 </>
               )}
