@@ -4,7 +4,7 @@ Kelana Ria is a mobile-first exploration game set in Jakarta. The client and API
 
 | Workspace | Responsibility |
 | --- | --- |
-| `apps/web` | The browser PWA. Keep map rendering and other browser dependencies here. |
+| `apps/web` | The browser PWA (Vite 8 + TypeScript 7, Preact 11 + `@preact/signals` islands via `apps/web/src/ui/mount.tsx` and persistent `MapHost.tsx`, plus lazy GSAP on `/`). Keep map rendering and other browser dependencies here. |
 | `apps/api` | Authoritative sessions and server integrations. Keep private state and answer keys server-side. Read provider credentials from the runtime environment. |
 | `packages/contracts` | Types both apps can see. The first contract describes board, format and supported player counts. |
 

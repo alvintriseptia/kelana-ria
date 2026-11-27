@@ -38,7 +38,9 @@ Use the server’s deadline throughout. On reconnect, restore the current offer 
 - **Creator Studio.** Choose the format and template before entering the editor. Give the map space and put the selected point’s fields and validation in a focused drawer. Show saves and previews where the creator can see their effect.
 - **Results.** Show a clear outcome and the score or objective that decided it. Reveal a few meaningful moments as a recap, with a separate action to share if the game supports public results.
 
-## Motion and verification
+## UI Architecture, Motion and Verification
+
+Kelana Ria uses **Preact 11 + `@preact/signals`** incrementally per route via [`apps/web/src/ui/mount.tsx`](../../../apps/web/src/ui/mount.tsx), while keeping the landing page (`/`) lightweight vanilla TypeScript + lazy GSAP (`ScrollTrigger`) so `/catalog` stays under the `100 KiB` cold-load JS budget. Mount imperative MapLibre GL JS views once inside [`apps/web/src/ui/MapHost.tsx`](../../../apps/web/src/ui/MapHost.tsx) and update layers/markers in-place across signal updates so the canvas never tears down.
 
 Default to lightweight 2D. Use CSS transforms and opacity for short deals, flips, selection, and board feedback. Use the Web Animations API when a sequence needs explicit timing or cancellation. Keep layout, hit targets, and state updates usable during motion. Three.js is optional for a specific scene where depth improves understanding and a phone prototype demonstrates a clear benefit. Keep MapLibre responsible for the live map.
 
