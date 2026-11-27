@@ -109,7 +109,8 @@ try {
   await openDraft(pageCreator, "pack-senopati-seek");
   await pageCreator.waitForSelector('[data-testid="revision-note-banner"]');
 
-  // Verify JSON export + malformed JSON guard + valid JSON import round-trip
+  // Verify JSON export + malformed JSON guard + valid JSON import round-trip via quiet header overflow menu
+  await pageCreator.click('[data-testid="studio-more-menu"] summary');
   const [download] = await Promise.all([
     pageCreator.waitForEvent("download"),
     pageCreator.click('button[data-action="export-json"]'),
@@ -118,6 +119,7 @@ try {
   assert.ok(exportedJson.includes("pack-senopati-seek"), "Exported JSON should contain active pack");
   await pageCreator.click('button[data-studio-view="home"]');
   await startDraft(pageCreator, "hide-and-seek");
+  await pageCreator.click('[data-testid="studio-more-menu"] summary');
   await pageCreator.click('button[data-studio-view="import"]');
   await pageCreator.fill("#st-json-text", "{broken-json");
   await pageCreator.click('button[data-action="import-json"]');

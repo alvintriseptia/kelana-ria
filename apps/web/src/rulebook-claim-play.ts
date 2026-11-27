@@ -76,12 +76,14 @@ type ClaimPublicListing = {
 type ClaimRoomPayload = {
   activity: RoomActivityFeed;
   format: "claim-the-city";
+  qa?: true;
+  draftPlaytest?: true;
   stateRev?: number;
   room: ClaimEngineRoomView;
   publicBoard: ClaimPublicBoard;
   pass: {
     roomCode: string; packId: string; version: number; maxPlayers: number; paid: boolean;
-    minPlayers?: number; mode?: RulebookPlayMode;
+    minPlayers?: number; mode?: RulebookPlayMode; draftPlaytest?: boolean;
   };
 };
 
@@ -569,7 +571,59 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   });
   const toast = createPlayerToast({ signal: lifetime.signal, layout: "page" });
   let demoLocation = false;
+  let qaLocationId = "";
   let mapFailed = false;
+
+  function isDraftPlaytest(payload: ClaimRoomPayload | null): boolean {
+    return Boolean(payload?.draftPlaytest || payload?.pass?.draftPlaytest);
+  }
+
+  function isQaRoom(payload: ClaimRoomPayload | null): boolean {
+    return Boolean(payload?.qa || isDraftPlaytest(payload));
+  }
+
+  function draftStudioUrl(pass: ClaimRoomPayload["pass"]): string {
+    return `/?play=rulebook-studio&studio=editor&format=claim-the-city&draft=${encodeURIComponent(pass.packId)}&version=${pass.version}`;
+  }
+
+  function resolveQaCoord(payload: ClaimRoomPayload): GeoCoordinate | null {
+    if (!qaLocationId) return null;
+    if (payload.publicBoard.startPoint.id === qaLocationId) return payload.publicBoard.startPoint;
+    const lm = payload.publicBoard.landmarks.find((item) => item.id === qaLocationId);
+    return lm ?? null;
+  }
+
+  function renderClaimDraftBar(payload: ClaimRoomPayload): string {
+    if (!isQaRoom(payload)) return "";
+    const isDraft = isDraftPlaytest(payload);
+    const isActive = payload.room.phase === "active" && !payload.room.outcome;
+    const ownSeat = payload.room.seats.find((s) => s.seatId === payload.room.seatId);
+    const isHost = Boolean(ownSeat?.isHost);
+    return `<section class="cg-draft-bar" data-testid="draft-playtest-bar" aria-label="Kontrol Uji Draf">
+      <div class="cg-draft-bar-head">
+        ${isDraft ? '<span class="rb-badge sg-qa-badge" data-testid="draft-playtest-badge">Uji Draf</span>' : '<span class="rb-badge sg-qa-badge">Mode QA</span>'}
+        ${isDraft ? `<a class="cg-back-studio-link" data-testid="back-to-studio-btn" href="${draftStudioUrl(payload.pass)}">← Kembali ke Studio</a>` : ""}
+      </div>
+      <label class="cg-qa-loc-field">
+        <span>Simulasi GPS</span>
+        <select id="claim-qa-location" data-testid="claim-qa-location">
+          <option value="" ${qaLocationId === "" ? "selected" : ""}>Otomatis di target check-in</option>
+          <option value="${escapeText(payload.publicBoard.startPoint.id)}" ${qaLocationId === payload.publicBoard.startPoint.id ? "selected" : ""}>Titik Awal · ${escapeText(payload.publicBoard.startPoint.name)}</option>
+          ${payload.publicBoard.landmarks
+            .map(
+              (lm) =>
+                `<option value="${escapeText(lm.id)}" ${qaLocationId === lm.id ? "selected" : ""}>Landmark · ${escapeText(lm.name)}</option>`,
+            )
+            .join("")}
+        </select>
+      </label>
+      ${isActive && isHost ? `<div class="cg-qa-clock-row">
+        <button type="button" class="secondary" data-action="claim-qa-advance" data-step="minute" ${busy ? "disabled" : ""}>+1 menit</button>
+        <button type="button" class="secondary" data-action="claim-qa-advance" data-step="five-minutes" ${busy ? "disabled" : ""}>+5 menit</button>
+        <button type="button" class="secondary" data-action="claim-qa-advance" data-step="phase-end" ${busy ? "disabled" : ""}>Akhiri Ronde</button>
+      </div>` : ""}
+    </section>`;
+  }
   let claimMapHandle: BoardMapHandle | undefined;
   let claimMapRoomCode = "";
   let claimMapReq = 0;
@@ -854,7 +908,20 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         panel = "score";
         folded = false;
       }
+      const switchedRoom = live?.room.code !== payload.room.code;
       live = payload;
+      if (switchedRoom) {
+        qaLocationId = isQaRoom(payload) ? (sessionStorage.getItem(`claim-qa-location:${payload.room.code}`) ?? "") : "";
+        const qaCoord = resolveQaCoord(payload);
+        if (qaCoord) {
+          liveLocation.setManualFix({
+            latitude: qaCoord.latitude,
+            longitude: qaCoord.longitude,
+            accuracy: 10,
+            timestamp: payload.room.now,
+          });
+        }
+      }
       syncRoomUrl(roomCode);
       roomEvents.markSynced();
     } else if (background) {
@@ -1538,6 +1605,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         </div>
         ${statusMsg ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
         ${slotAlert("lobby")}
+        ${renderClaimDraftBar(payload)}
         ${startCard.html}
         ${isGroupLobby ? renderLobbyInviteCard({ roomCode: room.code, inviteUrl: invite, copiedCode, copiedLink }) : ""}
         <h3>Kursi Pemain (${room.seats.length}/${pass.maxPlayers})</h3>
@@ -1598,7 +1666,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
         ${pass.mode !== "solo" ? '<p class="cg-presence-notice">Lokasi dibagikan ke pemain di ruang selama ronde aktif.</p>' : ""}
         ${slotAlert("lobby-checkin")}
         <div class="rb-actions">
-          <button type="button" class="secondary${startCard.proximity.state === "ready" ? " loc-btn-ready" : ""}" data-action="sim-start-checkin">${demoLocation ? "Simulasikan Check-in Titik Awal" : "Check-in Titik Awal"}</button>
+          <button type="button" class="secondary${startCard.proximity.state === "ready" ? " loc-btn-ready" : ""}" data-action="sim-start-checkin">${demoLocation || isQaRoom(payload) ? "Simulasikan Check-in Titik Awal" : "Check-in Titik Awal"}</button>
           ${ownSeat?.ready
             ? `<button type="button" class="secondary" data-action="unmark-ready">Batal Siap</button>`
             : `<button type="button" class="primary" data-action="mark-ready">Tandai Siap</button>`}
@@ -1617,7 +1685,10 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
 
   function renderMoreMenuItems(): string {
     const exitSpec = live ? destructiveExitSpec(live) : null;
-    return `<button type="button" data-action="panel" data-panel="activity">Aktivitas terbaru</button>
+    const backStudio = live && isDraftPlaytest(live)
+      ? `<a class="cg-menu-link" data-testid="menu-back-to-studio" href="${draftStudioUrl(live.pass)}">← Kembali ke Studio</a>`
+      : "";
+    return `${backStudio}<button type="button" data-action="panel" data-panel="activity">Aktivitas terbaru</button>
         ${wakeLockSupported ? `<button type="button" data-action="toggle-wakelock" aria-pressed="${wakeLockWanted}">Layar tetap menyala: ${wakeLockWanted ? "Aktif" : "Nonaktif"}</button>` : ""}
         <button type="button" data-action="refresh">Muat Ulang Ruang</button>
         <button type="button" data-nav="catalog">Kembali ke Katalog</button>
@@ -2061,7 +2132,7 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
       : "";
     sheet.dataset.draftKey = draftKey;
     sheet.hidden = folded;
-    sheet.innerHTML = `${activeScreenAlert}${renderRivalCard(room)}
+    sheet.innerHTML = `${renderClaimDraftBar(live)}${activeScreenAlert}${renderRivalCard(room)}
       ${panel === "activity" ? renderRoomActivity(live.activity, Date.now() + serverOffset) : panel === "cards" ? renderCards(room) : panel === "score" ? renderScore(live) : `
         ${room.ownActiveAttempt
           ? renderActiveAttempt(room.ownActiveAttempt, room) + (room.ownActiveAttempt.landmarkId !== selectedId && selectedId ? renderLandmark(live) : "")
@@ -2123,6 +2194,14 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   }
 
   async function locationFix(target?: GeoCoordinate) {
+    if (live && isQaRoom(live)) {
+      const chosen = resolveQaCoord(live) ?? target;
+      if (chosen) {
+        const fix = { latitude: chosen.latitude, longitude: chosen.longitude, accuracy: 10, timestamp: live.room.now };
+        liveLocation.setManualFix(fix);
+        return fix;
+      }
+    }
     if (demoLocation && target && live) {
       return { latitude: target.latitude, longitude: target.longitude, accuracy: 10, timestamp: live.room.now };
     }
@@ -2143,6 +2222,21 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
   }, { signal: lifetime.signal });
 
   root.addEventListener("change", event => {
+    if (event.target instanceof HTMLSelectElement && event.target.id === "claim-qa-location" && live && isQaRoom(live)) {
+      qaLocationId = event.target.value;
+      sessionStorage.setItem(`claim-qa-location:${live.room.code}`, qaLocationId);
+      const chosen = resolveQaCoord(live);
+      if (chosen) {
+        liveLocation.setManualFix({
+          latitude: chosen.latitude,
+          longitude: chosen.longitude,
+          accuracy: 10,
+          timestamp: live.room.now,
+        });
+      }
+      render();
+      return;
+    }
     if (event.target instanceof HTMLInputElement && event.target.hasAttribute("data-cg-photo")) {
       const targetId = event.target.dataset.cgPhoto ?? "";
       const isCurse = Boolean(live?.room.activeCurses.some((c) => c.curseInstanceId === targetId));
@@ -2537,6 +2631,27 @@ export function mountRulebookClaimPlay(root: HTMLElement, onBack: () => void): (
     else if (action === "join-room") catchSlot = "join";
 
     void (async () => {
+      if (action === "claim-qa-advance" && live && isQaRoom(live) && btn.dataset.step) {
+        const step = btn.dataset.step;
+        const pending = ensurePendingAction(`qa-advance:${live.room.code}:${step}:${live.room.deadline ?? "none"}`, "qa-advance");
+        const { ok, status, data } = await fetchApiJson<{ ok?: boolean; error?: string }>("/api/rulebooks", {
+          signal: lifetime.signal,
+          body: {
+            type: "qa-advance",
+            roomCode: live.room.code,
+            step,
+            actionId: pending.id,
+            ...(step === "phase-end" ? { expectedDeadline: live.room.deadline } : {}),
+          },
+        });
+        clearPendingAction();
+        if (!ok || !data.ok) {
+          reportError({ error: data.error ?? "qa-deadline-changed", status }, { action: "qa-advance", target: step }, "landmark-checkin");
+        } else {
+          await refreshRoom(false, false, true);
+        }
+        return;
+      }
       if (action === "start-free" || action === "start-owned") {
         render();
         const packId = btn.dataset.pack ?? "";

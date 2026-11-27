@@ -307,6 +307,7 @@ export type RulebookRoomPassSummary = {
   mode?: RulebookPlayMode;
   minPlayers?: number;
   paid: boolean;
+  draftPlaytest?: boolean;
   createdAt: number;
 };
 

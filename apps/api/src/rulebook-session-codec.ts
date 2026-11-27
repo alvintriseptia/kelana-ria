@@ -34,6 +34,7 @@ export type LiveClaimSession = {
   photos: Map<string, Buffer>;
   seatPositions: Map<string, ClaimSeatPosition>;
   activity: ReturnType<typeof createRoomActivity>;
+  qa?: { offsetMs: number; advances: Set<string> };
   recapSaved?: boolean;
   stateRev: number;
 };
@@ -62,6 +63,7 @@ export type SerializedLiveClaimSession = {
   pass: RulebookRoomPass;
   match: SerializedClaimMatch;
   activity: RoomActivitySnapshot;
+  qa?: { offsetMs: number; advances: string[] };
   recapSaved: boolean;
   stateRev: number;
 };
@@ -101,6 +103,7 @@ export function serializeLiveSession(session: LiveSession): SerializedLiveSessio
         appliedActions: [...appliedActions.entries()],
       },
       activity: session.activity.snapshot(),
+      ...(session.qa ? { qa: { offsetMs: session.qa.offsetMs, advances: [...session.qa.advances] } } : {}),
       recapSaved: Boolean(session.recapSaved),
       stateRev: session.stateRev,
     };
@@ -158,6 +161,7 @@ export function deserializeLiveSession(
       photos,
       seatPositions: new Map(),
       activity: createRoomActivity(raw.activity),
+      ...(raw.qa ? { qa: { offsetMs: raw.qa.offsetMs, advances: new Set(raw.qa.advances) } } : {}),
       recapSaved: Boolean(raw.recapSaved),
       stateRev,
     };

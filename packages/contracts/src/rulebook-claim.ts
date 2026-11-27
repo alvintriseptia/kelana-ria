@@ -478,6 +478,8 @@ export type ClaimPublicBoard = {
 
 export type ClaimRoomPayloadResponse = {
   format: "claim-the-city";
+  qa?: true;
+  draftPlaytest?: true;
   stateRev: number;
   room: ClaimEngineRoomView;
   activity: RoomActivityFeed;
