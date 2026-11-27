@@ -83,53 +83,67 @@ function renderLandingResumeBanner(room: ActiveRulebookRoomSummary): string {
 const STEP_SVGS = [
   `<svg class="lp-step-art" viewBox="0 0 88 56" aria-hidden="true">
     <rect width="88" height="56" rx="10" fill="#e5f2e5"/>
-    <path d="M12 42c14-14 26-2 40-16 8-8 16-10 24-10" fill="none" stroke="#104a40" stroke-width="2.4" stroke-dasharray="4 3" stroke-linecap="round"/>
+    <path d="M12 42c14-14 26-2 40-16 8-8 16-10 24-10" fill="none" stroke="#87aa9b" stroke-width="2.2" stroke-dasharray="4 3" stroke-linecap="round" opacity=".55"/>
+    <path data-beat-route d="M12 42c14-14 26-2 40-16 8-8 16-10 24-10" fill="none" stroke="#104a40" stroke-width="2.5" stroke-linecap="round"/>
     <circle cx="18" cy="39" r="5" fill="#fffef7" stroke="#153d34" stroke-width="2"/>
-    <path d="M62 34s9-8.8 9-15.5a9 9 0 1 0-18 0C53 25.2 62 34 62 34Z" fill="#ffce55" stroke="#153d34" stroke-width="2"/>
-    <circle cx="62" cy="18.5" r="3.2" fill="#153d34"/>
+    <g data-beat-pin>
+      <path d="M62 34s9-8.8 9-15.5a9 9 0 1 0-18 0C53 25.2 62 34 62 34Z" fill="#ffce55" stroke="#153d34" stroke-width="2"/>
+      <circle cx="62" cy="18.5" r="3.2" fill="#153d34"/>
+    </g>
   </svg>`,
   `<svg class="lp-step-art" viewBox="0 0 88 56" aria-hidden="true">
     <rect width="88" height="56" rx="10" fill="#eef4fa"/>
-    <circle cx="30" cy="28" r="16" fill="#0f766e" fill-opacity=".14" stroke="#0f766e" stroke-width="1.8" stroke-dasharray="3 2.5"/>
+    <circle data-beat-radar cx="30" cy="28" r="16" fill="#0f766e" fill-opacity=".14" stroke="#0f766e" stroke-width="1.8" stroke-dasharray="3 2.5"/>
     <circle cx="30" cy="28" r="7" fill="#fff" stroke="#0f766e" stroke-width="1.8"/>
     <circle cx="30" cy="28" r="2.8" fill="#153d34"/>
     <rect x="49" y="13" width="28" height="30" rx="6" fill="#fffef7" stroke="#153d34" stroke-width="1.8"/>
     <path d="M55 23h16M55 30h11" stroke="#153d34" stroke-width="2" stroke-linecap="round"/>
-    <circle cx="71" cy="35" r="5" fill="#d9f181" stroke="#153d34" stroke-width="1.5"/>
-    <path d="m68.8 35 1.5 1.6 3-3.2" fill="none" stroke="#153d34" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <g data-beat-check>
+      <circle cx="71" cy="35" r="5" fill="#d9f181" stroke="#153d34" stroke-width="1.5"/>
+      <path d="m68.8 35 1.5 1.6 3-3.2" fill="none" stroke="#153d34" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
   </svg>`,
   `<svg class="lp-step-art" viewBox="0 0 88 56" aria-hidden="true">
     <rect width="88" height="56" rx="10" fill="#fef7e2"/>
-    <rect x="16" y="13" width="26" height="33" rx="6" fill="#075c54" stroke="#153d34" stroke-width="1.8" transform="rotate(-8 29 29)"/>
-    <rect x="33" y="10" width="26" height="34" rx="6" fill="#ffce55" stroke="#153d34" stroke-width="1.8"/>
-    <rect x="49" y="14" width="25" height="32" rx="6" fill="#d9f181" stroke="#153d34" stroke-width="1.8" transform="rotate(8 61 30)"/>
+    <rect data-beat-card x="16" y="13" width="26" height="33" rx="6" fill="#075c54" stroke="#153d34" stroke-width="1.8" transform="rotate(-8 29 29)"/>
+    <rect data-beat-card x="33" y="10" width="26" height="34" rx="6" fill="#ffce55" stroke="#153d34" stroke-width="1.8"/>
+    <rect data-beat-card x="49" y="14" width="25" height="32" rx="6" fill="#d9f181" stroke="#153d34" stroke-width="1.8" transform="rotate(8 61 30)"/>
     <path d="M46 19l2.4 5 5.4.7-4 3.8 1 5.4-4.8-2.6-4.8 2.6 1-5.4-4-3.8 5.4-.7Z" fill="#153d34"/>
   </svg>`,
 ];
 
+const STORY_SPINE_SVG = `<svg class="lp-story-spine" viewBox="0 0 300 20" preserveAspectRatio="none" aria-hidden="true">
+  <path class="lp-story-spine-track" d="M12 10 L288 10" fill="none" stroke="#c4cebb" stroke-width="4" stroke-linecap="round" stroke-dasharray="6 6"/>
+  <path data-story-spine-fill class="lp-story-spine-fill" d="M12 10 L288 10" fill="none" stroke="#104a40" stroke-width="4.5" stroke-linecap="round"/>
+</svg>`;
+
 const STUDIO_ART_SVG = `<svg class="lp-studio-art" viewBox="0 0 96 72" aria-hidden="true">
   <rect width="96" height="72" rx="12" fill="#e5f2e5"/>
-  <path d="M12 52 34 22l22 14 28-20" fill="none" stroke="#104a40" stroke-width="2.2" stroke-dasharray="4 3"/>
+  <path d="M12 52 34 22l22 14 28-20" fill="none" stroke="#87aa9b" stroke-width="2" stroke-dasharray="4 3" opacity=".55"/>
+  <path data-studio-route d="M12 52 34 22l22 14 28-20" fill="none" stroke="#104a40" stroke-width="2.4" stroke-linecap="round"/>
   <rect x="18" y="14" width="58" height="44" rx="8" fill="none" stroke="#87aa9b" stroke-width="1.5" stroke-dasharray="3 3"/>
-  <circle cx="34" cy="22" r="6" fill="#ffce55" stroke="#153d34" stroke-width="2"/>
-  <circle cx="56" cy="36" r="6" fill="#d9f181" stroke="#153d34" stroke-width="2"/>
-  <circle cx="76" cy="20" r="6" fill="#075c54" stroke="#153d34" stroke-width="2"/>
+  <circle data-studio-node cx="34" cy="22" r="6" fill="#ffce55" stroke="#153d34" stroke-width="2"/>
+  <circle data-studio-node cx="56" cy="36" r="6" fill="#d9f181" stroke="#153d34" stroke-width="2"/>
+  <circle data-studio-node cx="76" cy="20" r="6" fill="#075c54" stroke="#153d34" stroke-width="2"/>
   <circle cx="34" cy="22" r="2" fill="#153d34"/>
   <circle cx="56" cy="36" r="2" fill="#153d34"/>
   <circle cx="76" cy="20" r="2" fill="#fff"/>
 </svg>`;
 
 const HERO_OVERLAY_SVG = `<svg class="lp-hero-pins" viewBox="0 0 320 120" aria-hidden="true">
-  <path d="M42 86 C 95 44, 152 94, 212 46 C 242 24, 272 36, 290 54" fill="none" stroke="#ffce55" stroke-width="2.5" stroke-dasharray="6 5" stroke-linecap="round" opacity=".9"/>
-  <g transform="translate(42 86)">
+  <path data-hero-route d="M42 86 C 95 44, 152 94, 212 46 C 242 24, 272 36, 290 54" fill="none" stroke="#ffce55" stroke-width="2.5" stroke-dasharray="6 5" stroke-linecap="round" opacity=".95"/>
+  <g data-hero-pin transform="translate(42 86)">
+    <circle data-hero-halo r="7" fill="none" stroke="#d9f181" stroke-width="2" opacity=".85"/>
     <circle r="7" fill="#d9f181" stroke="#153d34" stroke-width="2.2"/>
     <circle r="2.5" fill="#153d34"/>
   </g>
-  <g transform="translate(212 46)">
+  <g data-hero-pin transform="translate(212 46)">
+    <circle data-hero-halo r="8" fill="none" stroke="#ffce55" stroke-width="2" opacity=".85"/>
     <circle r="8" fill="#ffce55" stroke="#153d34" stroke-width="2.2"/>
     <circle r="2.8" fill="#153d34"/>
   </g>
-  <g transform="translate(286 52)">
+  <g data-hero-pin transform="translate(286 52)">
+    <circle data-hero-halo r="6" fill="none" stroke="#b7e5f1" stroke-width="2" opacity=".85"/>
     <circle r="6" fill="#b7e5f1" stroke="#153d34" stroke-width="2.2"/>
     <circle r="2.2" fill="#153d34"/>
   </g>
@@ -278,27 +292,35 @@ export function mountLandingPage(
       <div class="lp-demo-slot" data-lp-demo-slot hidden></div>
       <div class="pwa-install-slot" data-pwa-install-slot hidden></div>
 
-      <section class="lp-section" aria-labelledby="lp-steps-title">
+      <section class="lp-section lp-story-stage" aria-labelledby="lp-steps-title" data-testid="landing-story-chapter" data-story-stage data-active-beat="0">
         <div class="lp-section-head">
           <h2 id="lp-steps-title">Cara Bermain</h2>
           <span class="lp-section-tag">3 Langkah</span>
         </div>
+        <div class="lp-story-rail" aria-hidden="true">
+          ${STORY_SPINE_SVG}
+          <div class="lp-story-stops">
+            <span class="lp-story-stop" data-story-dot="0" data-beat-active="true">01</span>
+            <span class="lp-story-stop" data-story-dot="1" data-beat-active="false">02</span>
+            <span class="lp-story-stop" data-story-dot="2" data-beat-active="false">03</span>
+          </div>
+        </div>
         <ol class="lp-steps-grid">
-          <li class="lp-step-card">
+          <li class="lp-step-card" data-beat-index="0" data-beat-active="true">
             ${STEP_SVGS[0]}
             <div class="lp-step-copy">
               <h3>1. Jelajahi Kota Nyata</h3>
               <p>Datangi landmark atau stasiun sungguhan di peta.</p>
             </div>
           </li>
-          <li class="lp-step-card">
+          <li class="lp-step-card" data-beat-index="1" data-beat-active="false">
             ${STEP_SVGS[1]}
             <div class="lp-step-copy">
               <h3>2. Selesaikan Misi &amp; Petunjuk</h3>
               <p>Tuntaskan tantangan lokasi atau lacak lawan lewat radar.</p>
             </div>
           </li>
-          <li class="lp-step-card">
+          <li class="lp-step-card" data-beat-index="2" data-beat-active="false">
             ${STEP_SVGS[2]}
             <div class="lp-step-copy">
               <h3>3. Mainkan Kartu Aksi</h3>
@@ -308,7 +330,7 @@ export function mountLandingPage(
         </ol>
       </section>
 
-      <section class="lp-section" aria-labelledby="lp-formats-title">
+      <section class="lp-section lp-formats-chapter" aria-labelledby="lp-formats-title" data-testid="landing-format-spotlight">
         <div class="lp-section-head">
           <h2 id="lp-formats-title">Dua Format Permainan</h2>
         </div>
@@ -345,7 +367,7 @@ export function mountLandingPage(
         </div>
       </section>
 
-      <section class="lp-studio" aria-labelledby="lp-studio-title">
+      <section class="lp-studio" aria-labelledby="lp-studio-title" data-testid="landing-studio-chapter">
         ${STUDIO_ART_SVG}
         <div class="lp-studio-copy">
           <span class="lp-studio-badge">Studio Kreator</span>

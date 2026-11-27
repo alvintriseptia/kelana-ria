@@ -339,7 +339,64 @@
   font-weight: 850;
 }
 
-/* 3-Step Strip */
+/* 3-Step Guided Storytelling Stage */
+.lp-story-stage {
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 14px;
+  border: 1.5px solid #30574b;
+  border-radius: 18px;
+  background: linear-gradient(180deg, #fffef7 0%, #f3f9f0 100%);
+  box-shadow: 0 4px #153d341f;
+}
+
+.lp-story-rail {
+  position: relative;
+  display: grid;
+  align-items: center;
+  min-height: 28px;
+  padding-inline: 2px;
+}
+
+.lp-story-spine {
+  position: absolute;
+  inset: 50% 10px auto 10px;
+  width: calc(100% - 20px);
+  height: 16px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.lp-story-stops {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.lp-story-stop {
+  display: inline-grid;
+  place-items: center;
+  min-width: 28px;
+  height: 28px;
+  padding-inline: 6px;
+  border-radius: 999px;
+  border: 2px solid #30574b;
+  background: #fffef7;
+  color: #30574b;
+  font: 800 0.72rem/1 "DM Sans", sans-serif;
+  transition: background-color 180ms ease, color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+}
+
+.lp-story-stop[data-beat-active="true"] {
+  background: var(--yellow);
+  border-color: var(--ink);
+  color: var(--ink);
+  box-shadow: 0 2px #153d34;
+  transform: scale(1.06);
+}
+
 .lp-steps-grid {
   list-style: none;
   margin: 0;
@@ -353,10 +410,17 @@
   display: grid;
   gap: 9px;
   padding: 11px;
-  border: 1.5px solid #30574b;
+  border: 1.5px solid #87aa9b;
   border-radius: 14px;
   background: var(--card);
-  box-shadow: 0 3px #153d341c;
+  box-shadow: 0 3px #153d3416;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.lp-step-card[data-beat-active="true"] {
+  border-color: var(--ink);
+  background: #fffef3;
+  box-shadow: 0 5px #153d342f;
 }
 
 .lp-step-art {
@@ -398,6 +462,7 @@
   border-radius: 16px;
   background: #e5f2e5;
   box-shadow: 0 3px #153d3424;
+  overflow: hidden;
 }
 
 .lp-format-card--seek {
@@ -414,6 +479,11 @@
 .lp-format-head h3 {
   font: 700 1.55rem/1 "Barlow Condensed", sans-serif;
   color: var(--ink);
+}
+
+.lp-format-art {
+  overflow: hidden;
+  border-radius: 10px;
 }
 
 .lp-format-art svg {
@@ -592,6 +662,9 @@
   .lp-cta-primary {
     justify-content: space-between;
   }
+  .lp-story-stage {
+    padding: 11px;
+  }
   .lp-step-card {
     grid-template-columns: 76px minmax(0, 1fr);
     gap: 9px;
@@ -604,10 +677,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lp-demo-play-btn {
+  .lp-demo-play-btn,
+  .lp-story-stop,
+  .lp-step-card {
     transition: none;
   }
-  .lp-demo-trigger:hover .lp-demo-play-btn {
+  .lp-demo-trigger:hover .lp-demo-play-btn,
+  .lp-story-stop[data-beat-active="true"] {
     transform: none;
   }
 }
