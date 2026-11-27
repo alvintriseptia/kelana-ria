@@ -461,15 +461,12 @@ function QrModalView({
   onClose: () => void;
 }) {
   const copied = useSignal(false);
-  const qrBoxRef = useRef<HTMLDivElement | null>(null);
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  const qrSvg = renderQrSvg(inviteUrl, `Kode QR untuk ruang ${roomCode}`);
 
   useEffect(() => {
-    if (qrBoxRef.current) {
-      qrBoxRef.current.innerHTML = renderQrSvg(inviteUrl, `Kode QR untuk ruang ${roomCode}`);
-    }
     closeBtnRef.current?.focus({ preventScroll: true });
-  }, [inviteUrl, roomCode]);
+  }, []);
 
   return (
     <Dialog
@@ -487,7 +484,7 @@ function QrModalView({
         Arahkan kamera ponsel teman ke kode QR ini untuk langsung masuk ke <strong>{title}</strong>.
       </p>
       <div class="lobby-qr-box">
-        <div ref={qrBoxRef} />
+        <div dangerouslySetInnerHTML={{ __html: qrSvg }} />
         <code class="lobby-invite-code">{roomCode}</code>
       </div>
       <div class="lobby-dialog-actions">
