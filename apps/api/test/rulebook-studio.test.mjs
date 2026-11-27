@@ -301,10 +301,9 @@ test("start-draft-playtest validates drafts, supports Claim & Hide & Seek QA pla
 });
 
 test("Studio saves unverified content and gates submission and publication on current field evidence", async t => {
-  const key = "studio-field-review-fixture";
-  const { get, post, signIn } = await studioServer(t, key);
+  const { get, post, signIn } = await studioServer(t, [adminEmail]);
   const owner = await signIn("field-verification@kelana.test");
-  const reviewer = { authorization: `Bearer ${key}` };
+  const reviewer = await signIn(adminEmail);
   const packId = "field-verification-claim";
   const clone = await post({
     type: "clone-official", templatePackId: "official-jakarta-compact-claim", packId,
