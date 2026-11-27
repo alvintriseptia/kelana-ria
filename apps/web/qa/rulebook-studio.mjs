@@ -26,6 +26,7 @@ const server = createSoloServer({
   allowRulebookSandboxCheckout: true,
   allowSandboxAuthOtp: true,
   adminEmails: [adminEmail],
+  osmPoi: { mode: "fixture" },
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -80,6 +81,112 @@ async function assertNoHorizontalOverflow(page, label) {
     report.scrollWidth <= report.innerWidth && report.offenders.length === 0,
     `Horizontal overflow on ${label} (${report.scrollWidth} > ${report.innerWidth}): ${JSON.stringify(report.offenders)}`,
   );
+}
+
+async function exercisePoiCurator(page, format, { fallback = false } = {}) {
+  const mapCanvas = page.locator("#st-map-host .maplibregl-canvas");
+  const canvas = fallback ? null : await mapCanvas.elementHandle();
+  const drawer = page.getByRole("region", { name: "Kurasi POI" });
+  await page.getByRole("button", { name: "Kurasi POI", exact: true }).press("Enter");
+  await drawer.waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement.id), "st-osm-heading");
+  const curateRoute = "**/api/rulebooks/studio/curate-pois";
+  await page.route(curateRoute, route => route.fulfill({ status: 429, json: { error: "rate-limited" } }), { times: 1 });
+  await drawer.getByRole("button", { name: "Cari POI di Area" }).click();
+  await drawer.getByRole("alert").filter({ hasText: "Pencarian terlalu sering" }).waitFor();
+  const [search] = await Promise.all([
+    page.waitForResponse(response => response.url().endsWith("/studio/curate-pois")),
+    drawer.getByRole("button", { name: "Coba Lagi" }).press("Enter"),
+  ]);
+  const { boundaryPolygon, zones, existingPoints } = search.request().postDataJSON();
+  const { mode, candidates } = await search.json();
+  assert.ok(search.ok(), JSON.stringify(await search.json()));
+  assert.ok(boundaryPolygon.length >= 3 && existingPoints.length > 1);
+  assert.ok(format === "claim" ? zones.length > 0 : zones === undefined);
+  assert.equal(mode, "recorded-rehearsal");
+  assert.ok(candidates.length > 5);
+  const inside = ({ latitude, longitude }) => boundaryPolygon.reduce((inArea, vertex, index) => {
+    const previous = boundaryPolygon.at(index - 1);
+    const crosses = (vertex.latitude > latitude) !== (previous.latitude > latitude) &&
+      longitude < vertex.longitude + (previous.longitude - vertex.longitude) *
+        (latitude - vertex.latitude) / (previous.latitude - vertex.latitude);
+    return crosses ? !inArea : inArea;
+  }, false);
+  assert.ok(candidates.every(inside), "All suggestions must be inside the submitted boundary");
+  await drawer.getByText("Data Simulasi / Cadangan").waitFor();
+  await drawer.getByText("© OpenStreetMap contributors (ODbL)").waitFor();
+
+  const parks = drawer.getByRole("button", { name: "Taman", exact: true });
+  await parks.press("Enter");
+  assert.equal(await parks.getAttribute("aria-pressed"), "false");
+  assert.equal(await drawer.locator("li").getByText("Taman", { exact: true }).count(), 0);
+  await parks.press("Enter");
+  await drawer.getByRole("button", { name: "Berikutnya" }).press("Enter");
+  await drawer.locator("li:focus").waitFor();
+  await drawer.getByRole("button", { name: "Sebelumnya" }).press("Enter");
+  await drawer.locator("li:focus").waitFor();
+
+  for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 640 }]) {
+    await page.setViewportSize(viewport);
+    const label = `OSM ${format}${fallback ? " tile failure" : ""} at ${viewport.width}×${viewport.height}`;
+    await assertCleanUiCopy(page, label);
+    await assertNoHorizontalOverflow(page, label);
+    assert.ok(await drawer.locator("button:visible, select:visible").evaluateAll(controls =>
+      controls.every(control => control.offsetWidth >= 44 && control.offsetHeight >= 44)));
+  }
+  await drawer.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(results, `studio-kurasi-poi-${format}${fallback ? "-fallback" : ""}.png`) });
+  await page.setViewportSize({ width: 390, height: 844 });
+
+  const importActions = format === "claim" ? ["+ Jadikan Landmark", "+ Tambah sebagai POI"] : ["+ Tambah ke POI"];
+  for (const action of importActions) {
+    const actionButton = drawer.getByRole("button", { name: action, exact: true });
+    const cardId = await actionButton.first().locator("..").getAttribute("data-osm-card");
+    const card = drawer.locator(`[data-osm-card="${cardId}"]`);
+    const candidate = candidates.find(point => point.osmId === cardId);
+    const button = card.getByRole("button", { name: action, exact: true });
+    const zone = action.includes("Landmark") ? await card.locator("select").inputValue() : undefined;
+    if (zone && candidate.suggestedZoneId) assert.equal(zone, candidate.suggestedZoneId);
+    const waitSave = () => page.waitForResponse(response => response.request().method() === "POST" &&
+      response.url().endsWith("/api/rulebooks") && response.request().postDataJSON().type === "save-draft");
+    if (format === "seek" && !fallback) {
+      const undo = page.getByTestId("studio-map-undo");
+      const undoBefore = await undo.getAttribute("aria-label");
+      await page.route("**/api/rulebooks", route =>
+        route.fulfill({ status: 503, json: { error: "Draf belum dapat disimpan." } }), { times: 1 });
+      await button.press("Enter");
+      await drawer.getByRole("alert").filter({ hasText: "POI belum tersimpan" }).waitFor();
+      assert.equal(await undo.getAttribute("aria-label"), undoBefore, "Failed import must leave undo history intact");
+      assert.equal(await card.getByText("Sudah di Draf ✓").count(), 0);
+    }
+    const [saved] = await Promise.all([waitSave(), button.press("Enter")]);
+    const saveBody = await saved.json();
+    assert.equal(saveBody.ok, true);
+    const imported = zone ? saveBody.record.pack.geography.landmarks : saveBody.record.snapshot.pois;
+    const point = imported.find(entry => entry.osmId === candidate.osmId);
+    assert.equal(point.source, "osm-curated");
+    assert.equal(point.fieldVerified, false);
+    assert.equal(point.fieldVerificationNote, "");
+    if (zone) assert.equal(point.zoneId, zone);
+    else assert.equal(point.category, candidate.category);
+    const attribution = saveBody.record.snapshot.attributions.filter(entry => entry.license === "ODbL 1.0");
+    assert.ok(attribution.some(entry => entry.notice === "© OpenStreetMap contributors (ODbL)"));
+    assert.equal(attribution.filter(entry => entry.source === "OpenStreetMap Overpass API").length, 1);
+
+    await card.getByText("Sudah di Draf ✓").waitFor();
+    await page.getByTestId("step2-inspector").locator("summary").getByText("Perlu Cek Lapangan").waitFor();
+    const [undone] = await Promise.all([waitSave(), page.getByTestId("studio-map-undo").click()]);
+    const undoBody = await undone.json();
+    const remaining = zone ? undoBody.record.pack.geography.landmarks : undoBody.record.snapshot.pois;
+    assert.ok(remaining.every(entry => entry.osmId !== candidate.osmId));
+    assert.ok(undoBody.record.snapshot.attributions.every(entry => entry.source !== "OpenStreetMap Overpass API"));
+    await button.waitFor();
+  }
+
+  if (canvas) assert.ok(await canvas.evaluate(element =>
+    element === document.querySelector("#st-map-host .maplibregl-canvas")), "POI curation must retain the MapLibre canvas");
+  await drawer.getByRole("button", { name: "Tutup", exact: true }).click();
+  await drawer.waitFor({ state: "hidden" });
 }
 
 async function checkCompactForm(page, scope, label, saveSelector) {
@@ -549,7 +656,16 @@ try {
   await page.route("**/api/map/config", route => route.fulfill({ json: {
     mode: "geoapify-vector", styleUrl: "/qa-failed-studio-style", mapLibreLicenseUrl: "/licenses/maplibre-gl.txt",
   } }));
-  await page.route("**/qa-failed-studio-style", route => route.abort());
+  let blockedStudioTiles = 0;
+  await page.route("**/qa-studio-tiles/**", route => {
+    blockedStudioTiles++;
+    return route.abort();
+  });
+  await page.route("**/qa-failed-studio-style", route => route.fulfill({ json: {
+    version: 8,
+    sources: { qa: { type: "vector", tiles: [`${baseUrl}/qa-studio-tiles/{z}/{x}/{y}.pbf`] } },
+    layers: [{ id: "qa-land", type: "fill", source: "qa", "source-layer": "land" }],
+  } }));
   await page.reload();
   await page.click('button[data-step="2"]');
   await page.getByTestId("studio-map-fallback").waitFor();
@@ -560,6 +676,8 @@ try {
   await clickAndWaitStudioSave(page, 'button[data-map-action="apply-selected"]');
   assert.equal(await pointName.inputValue(), "Senayan Wide QA fallback");
   await assertNoHorizontalOverflow(page, "Wide fallback point editor");
+  assert.ok(blockedStudioTiles > 0);
+  await page.unroute("**/qa-studio-tiles/**");
   await page.unroute("**/api/map/config");
   await page.unroute("**/qa-failed-studio-style");
   await page.getByRole("button", { name: "Coba muat peta" }).click();
@@ -642,6 +760,7 @@ try {
     await assertNoHorizontalOverflow(page, `Hide & Seek Step 2 tab=${mapTab}`);
   }
   await assertCleanUiCopy(page, "Hide & Seek Step 2 map");
+  await exercisePoiCurator(page, "seek");
   assert.equal(styleFetchCount, 1, "Hide & Seek Step 2 transit toggles & tabs must not re-fetch style.json");
   assert.equal(
     await seekCanvas.evaluate((el) => el.isConnected && document.querySelector("#st-map-host .maplibregl-canvas") === el),
@@ -791,6 +910,7 @@ try {
   const countOnClaimStep2 = styleFetchCount;
   assert.equal(countOnClaimStep2, countBeforeClaimStep2 + 1, "Expected exactly 1 style.json fetch when mounting Claim Step 2");
   await checkCompactForm(page, '[data-testid="step2-inspector"]', "Claim map inspector", '[data-map-action="apply-selected"]');
+  await exercisePoiCurator(page, "claim");
 
   // Zoom in once to verify camera scale is preserved across Studio interactions
   const fixedPin = page.locator('#st-map-host button[data-map-point="m-bloc"]');
@@ -1152,8 +1272,28 @@ try {
   assert.match(await homeEarnings.innerText(), /Studio QA Claim Pack/);
   assert.match(await homeEarnings.innerText(), /Rp\s*25\.000/);
 
+  // Compact has a searchable boundary within the curator's area limit.
+  await openDraft(page, "pack-seek-alpha");
+  const tilesBeforeFallback = blockedStudioTiles;
+  await page.route("**/api/map/config", route => route.fulfill({ json: {
+    mode: "geoapify-vector", styleUrl: "/qa-blocked-compact-style",
+  } }));
+  await page.route("**/qa-blocked-compact-style", route => route.fulfill({ json: {
+    version: 8,
+    sources: { qa: { type: "vector", tiles: [`${baseUrl}/qa-compact-tiles/{z}/{x}/{y}.pbf`] } },
+    layers: [{ id: "qa-land", type: "fill", source: "qa", "source-layer": "land" }],
+  } }));
+  await page.route("**/qa-compact-tiles/**", route => {
+    blockedStudioTiles++;
+    return route.abort();
+  });
+  await page.click('button[data-step="2"]');
+  await page.getByTestId("studio-map-fallback").waitFor();
+  assert.ok(blockedStudioTiles > tilesBeforeFallback);
+  await exercisePoiCurator(page, "seek", { fallback: true });
+
   await ctx.close();
-  console.log("qa:rulebook-studio passed (Studio lifecycle, private playtests, mobile Admin moderation and access, Midtrans)");
+  console.log("qa:rulebook-studio passed (Studio lifecycle, OpenStreetMap curation and tile fallback, private playtests, mobile Admin moderation and access, Midtrans)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

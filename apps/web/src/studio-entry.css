@@ -606,3 +606,47 @@
 
 
 
+
+.studio-poi-drawer {
+  display: grid;
+  gap: 8px;
+  min-inline-size: 0;
+  padding: 12px;
+  border: 1px solid #b9cfc3;
+  border-radius: 16px;
+  background: #f2f7ed;
+  overflow-wrap: anywhere;
+}
+.studio-poi-drawer header,
+.studio-poi-categories,
+.studio-poi-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+.studio-poi-drawer header { justify-content: space-between; }
+.studio-poi-drawer :is(button, select) { min-block-size: 44px; min-inline-size: 44px; max-inline-size: 100%; }
+.studio-poi-drawer :is(h3, p) { margin: 0; }
+.studio-poi-status:empty,
+.studio-poi-cards:empty { display: none; }
+.studio-poi-cards {
+  display: grid;
+  gap: 8px;
+  min-inline-size: 0;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.studio-poi-card {
+  display: grid;
+  gap: 6px;
+  min-inline-size: 0;
+  padding: 10px;
+  border: 1px solid #b9cfc3;
+  border-radius: 12px;
+  background: #fff;
+}
+.studio-poi-card[data-selected="true"],
+.studio-poi-card:focus { outline: 2px solid #8b4c05; }
+.studio-poi-card .rb-badge { justify-self: start; }
