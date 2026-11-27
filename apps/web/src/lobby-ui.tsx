@@ -2,7 +2,6 @@ import type { LocationFix, RulebookFormat } from "@kelana-ria/contracts";
 import { useSignal } from "@preact/signals";
 import type { ComponentChildren } from "preact";
 import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
-import { escapeText } from "./escape-text";
 import {
   animatePop,
   animateShake,
@@ -541,89 +540,6 @@ export function OutdoorReadinessStrip({
       </div>
     </section>
   );
-}
-
-// String-render wrappers kept solely until #183 (Claim) and #184 (Hide & Seek) migrate to Preact.
-export function renderLobbyInviteCard(options: {
-  roomCode: string;
-  inviteUrl: string;
-  copiedCode: boolean;
-  copiedLink: boolean;
-}): string {
-  const shareSupported = canUseWebShare();
-  const shareLabel = options.copiedLink
-    ? "✓ Tautan Tersalin"
-    : shareSupported
-      ? "Bagikan Undangan"
-      : "Salin Tautan";
-  return `<section class="lobby-invite-card" aria-label="Undang teman ke ruang" data-testid="lobby-invite-card">
-    <div class="lobby-invite-top">
-      <div class="lobby-invite-code-wrap">
-        <span class="lobby-invite-label">Kode Ruang</span>
-        <code class="lobby-invite-code" data-testid="lobby-room-code">${escapeText(options.roomCode)}</code>
-      </div>
-      <button type="button" class="secondary" data-lobby-action="copy-code" data-testid="copy-room-code">
-        ${options.copiedCode ? "✓ Tersalin" : "Salin Kode"}
-      </button>
-    </div>
-    <div class="lobby-invite-actions">
-      <button type="button" class="primary" data-lobby-action="share-invite" data-testid="share-invite-btn">${shareLabel}</button>
-      <button type="button" class="secondary" data-lobby-action="show-qr" data-testid="show-qr-btn">Tampilkan QR</button>
-    </div>
-    <div class="lobby-invite-url-row">
-      <a class="lobby-invite-url" href="${escapeText(options.inviteUrl)}" data-testid="invite-link">${escapeText(options.inviteUrl)}</a>
-    </div>
-  </section>`;
-}
-
-export function renderCanceledRoomCard(options: { roomCode: string; title: string }): string {
-  return `<section class="rb-shell" aria-label="Ruang dibatalkan">
-    <div class="rb-card lobby-canceled-card" data-testid="canceled-room-card">
-      <div class="rb-badges">
-        <span class="rb-badge">Kode: ${escapeText(options.roomCode)}</span>
-        <span class="rb-badge rb-badge-danger">Dibatalkan</span>
-      </div>
-      <h2>Host membatalkan ruang ini</h2>
-      <p>Lobi untuk <strong>${escapeText(options.title)}</strong> sudah ditutup oleh Host. Kamu bisa kembali ke katalog untuk membuat ruang baru atau bergabung ke ruang lain.</p>
-      <div class="rb-actions">
-        <button type="button" class="primary" data-nav="catalog">Kembali ke Katalog</button>
-      </div>
-    </div>
-  </section>`;
-}
-
-export function renderPostMatchActions(opts: {
-  roomCode: string;
-  packId: string;
-  version: number;
-  started: boolean;
-  canPlayAgain: boolean;
-  busy?: boolean;
-}): string {
-  const disabledAttr = opts.busy ? " disabled" : "";
-  const recapLink = opts.started
-    ? `<a class="cat-link" href="/?recap=${encodeURIComponent(opts.roomCode)}" data-testid="postmatch-recap-link">Buka ringkasan</a>`
-    : "";
-  const packHref = `/catalog?edition=${encodeURIComponent(opts.packId)}&version=${encodeURIComponent(String(opts.version))}`;
-
-  if (opts.canPlayAgain) {
-    return `<div class="postmatch-actions" data-testid="postmatch-actions">
-      <button type="button" class="sg-main" data-action="play-again" data-testid="postmatch-play-again"${disabledAttr}>Main Lagi</button>
-      <div class="postmatch-secondary-row">
-        ${recapLink}
-        <button type="button" class="secondary" data-nav="catalog" data-testid="postmatch-back-catalog"${disabledAttr}>Kembali ke Katalog</button>
-      </div>
-    </div>`;
-  }
-
-  return `<div class="postmatch-actions" data-testid="postmatch-actions">
-    <button type="button" class="sg-main" data-action="join-new-room" data-testid="postmatch-join-new-room"${disabledAttr}>Gabung Ruang Baru</button>
-    <div class="postmatch-secondary-row">
-      <a class="cat-link" href="${escapeText(packHref)}" data-testid="postmatch-view-pack">Lihat Paket Ini</a>
-      ${recapLink}
-      <button type="button" class="secondary" data-nav="catalog" data-testid="postmatch-back-catalog"${disabledAttr}>Kembali ke Katalog</button>
-    </div>
-  </div>`;
 }
 
 let activeDialogClose: (() => void) | null = null;

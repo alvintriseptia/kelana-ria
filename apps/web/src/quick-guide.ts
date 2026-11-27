@@ -1,6 +1,5 @@
-import type { LocationFix, RulebookFormat, RulebookPlayMode } from "@kelana-ria/contracts";
+import type { RulebookFormat, RulebookPlayMode } from "@kelana-ria/contracts";
 import { escapeText } from "./escape-text";
-import type { LiveLocationStatus } from "./live-location";
 import type { CatalogEdition } from "./rulebook-catalog";
 import "./quick-guide.css";
 
@@ -87,80 +86,6 @@ export function resetAllPhaseCues(): void {
     }
   } catch {
     // Ignore storage errors in private browsing.
-  }
-}
-
-export function renderPhaseCueStrip(key: PhaseCueKey, extraNote?: string): string {
-  if (isPhaseCueDismissed(key)) return "";
-  const spec = CUE_META[key];
-  const fullText = extraNote ? `${spec.text} ${extraNote}` : spec.text;
-  return `<div class="qg-cue-strip" role="note" data-testid="phase-cue-strip" data-cue-key="${key}">
-    <span class="qg-cue-icon" aria-hidden="true">${spec.icon}</span>
-    <span class="qg-cue-text">${escapeText(fullText)}</span>
-    <button type="button" class="qg-cue-dismiss" data-action="dismiss-phase-cue" data-cue-key="${key}" data-testid="phase-cue-dismiss" aria-label="Tutup petunjuk">×</button>
-  </div>`;
-}
-
-export function renderOutdoorReadinessStrip(opts: {
-  fix: LocationFix | null;
-  status: LiveLocationStatus;
-}): string {
-  const ready = Boolean(opts.fix) || opts.status === "watching";
-  let gpsControl = "";
-  if (ready) {
-    gpsControl = `<span class="qg-readiness-pill" data-testid="readiness-gps-status" data-gps-ready="true" data-gps-state="ready">Siap ✓</span>`;
-  } else if (opts.status === "requesting") {
-    gpsControl = `<span class="qg-readiness-pill" data-testid="readiness-gps-status" data-gps-ready="false" data-gps-state="requesting" role="status">Mencari…</span>`;
-  } else if (opts.status === "denied") {
-    gpsControl = `<div class="qg-header-tools">
-      <span class="qg-readiness-pill" data-testid="readiness-gps-status" data-gps-ready="false" data-gps-state="denied">Ditolak</span>
-      <button type="button" class="qg-readiness-btn" data-loc-action="enable-live-location" data-testid="readiness-gps-btn">Coba Lagi</button>
-    </div>`;
-  } else if (opts.status === "unavailable") {
-    gpsControl = `<span class="qg-readiness-pill" data-testid="readiness-gps-status" data-gps-ready="false" data-gps-state="unavailable">Tidak tersedia</span>`;
-  } else {
-    gpsControl = `<button type="button" class="qg-readiness-btn" data-loc-action="enable-live-location" data-testid="readiness-gps-btn">Aktifkan Lokasi</button>`;
-  }
-
-  return `<section class="qg-readiness" aria-label="Kesiapan Lapangan" data-testid="lobby-readiness-strip">
-    <div class="qg-readiness-head">
-      <span class="qg-readiness-eyebrow">Kesiapan Lapangan</span>
-    </div>
-    <div class="qg-readiness-items">
-      <div class="qg-readiness-row">
-        <span class="qg-readiness-label"><span aria-hidden="true">📍</span> Lokasi GPS</span>
-        ${gpsControl}
-      </div>
-      <div class="qg-readiness-row">
-        <span class="qg-readiness-label"><span aria-hidden="true">📷</span> Kamera</span>
-        <span class="qg-readiness-tip">Foto bukti memakai kamera belakang saat bermain</span>
-      </div>
-    </div>
-  </section>`;
-}
-
-export function syncOutdoorReadinessInPlace(
-  container: ParentNode,
-  opts: { fix: LocationFix | null; status: LiveLocationStatus },
-): void {
-  const existing = container.querySelector<HTMLElement>('[data-testid="lobby-readiness-strip"]');
-  if (!existing) return;
-  const prevState = existing.querySelector<HTMLElement>('[data-testid="readiness-gps-status"]')?.dataset.gpsState ?? "";
-  const tmp = document.createElement("div");
-  tmp.innerHTML = renderOutdoorReadinessStrip(opts);
-  const next = tmp.firstElementChild;
-  if (!next) return;
-  existing.replaceWith(next);
-  const nextPill = next.querySelector<HTMLElement>('[data-testid="readiness-gps-status"]');
-  const nextState = nextPill?.dataset.gpsState ?? "";
-  if (nextPill && nextState !== prevState && (nextState === "ready" || nextState === "denied")) {
-    void import("./game-motion")
-      .then((m) => {
-        if (!nextPill.isConnected) return;
-        if (nextState === "ready") m.animatePop(nextPill, { fromScale: 0.82, preset: "bouncy" });
-        else m.animateShake(nextPill);
-      })
-      .catch(() => undefined);
   }
 }
 

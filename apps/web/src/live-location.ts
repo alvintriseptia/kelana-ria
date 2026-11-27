@@ -1,5 +1,4 @@
 import type { GeoCoordinate, LocationFix } from "@kelana-ria/contracts";
-import { escapeText } from "./escape-text";
 import "./live-location.css";
 
 export type LiveLocationStatus = "prompt" | "requesting" | "watching" | "denied" | "unavailable";
@@ -67,103 +66,6 @@ export function evaluateCheckInProximity(
     accuracyMeters,
     label: `◎ ${distanceMeters} m lagi · butuh ≤ ${radius} m`,
   };
-}
-
-export function renderDirectionsLink(
-  coord: GeoCoordinate,
-  opts?: { label?: string; testId?: string; className?: string },
-): string {
-  const label = opts?.label ?? "Arah di Google Maps";
-  const testIdAttr = opts?.testId ? ` data-testid="${escapeText(opts.testId)}"` : "";
-  const extraClass = opts?.className ? ` ${opts.className}` : "";
-  return `<a class="loc-directions-link${extraClass}" href="${escapeText(googleMapsDirectionsUrl(coord))}" target="_blank" rel="noopener noreferrer"${testIdAttr}><span aria-hidden="true">↗</span> ${escapeText(label)}</a>`;
-}
-
-export function renderDistanceMeter(opts: {
-  fix: LocationFix | null;
-  target: GeoCoordinate;
-  checkInRadiusMeters: number;
-  maxGpsAccuracyMeters: number;
-  status: LiveLocationStatus;
-  testId?: string;
-  showEnableChip?: boolean;
-}): { html: string; proximity: ProximityEvaluation } {
-  const proximity = evaluateCheckInProximity(
-    opts.fix,
-    opts.target,
-    opts.checkInRadiusMeters,
-    opts.maxGpsAccuracyMeters,
-  );
-  const testIdAttr = opts.testId ? ` data-testid="${escapeText(opts.testId)}"` : "";
-  if (proximity.state !== "none") {
-    return {
-      proximity,
-      html: `<div class="loc-meter loc-meter--${proximity.state}" data-proximity-state="${proximity.state}" role="status"${testIdAttr}>${escapeText(proximity.label)}</div>`,
-    };
-  }
-  if (!opts.showEnableChip) {
-    return { proximity, html: "" };
-  }
-  if (opts.status === "requesting" || opts.status === "watching") {
-    return {
-      proximity,
-      html: `<div class="loc-meter loc-meter--pending" data-proximity-state="pending" role="status"${testIdAttr}>◎ Mencari posisi GPS…</div>`,
-    };
-  }
-  if (opts.status === "denied") {
-    return {
-      proximity,
-      html: `<div class="loc-meter-row">
-        <span class="loc-meter loc-meter--low-accuracy" data-proximity-state="denied" role="status"${testIdAttr}>⚠ Izin lokasi ditolak</span>
-        <button type="button" class="loc-enable-chip" data-loc-action="enable-live-location">◎ Coba Lagi</button>
-      </div>`,
-    };
-  }
-  if (opts.status === "unavailable") {
-    return { proximity, html: "" };
-  }
-  return {
-    proximity,
-    html: `<button type="button" class="loc-enable-chip" data-loc-action="enable-live-location" data-testid="enable-live-location-btn">◎ Aktifkan Lokasi</button>`,
-  };
-}
-
-export function renderStartPointCard(opts: {
-  startPoint: GeoCoordinate & { name: string; accessNotes?: string };
-  fix: LocationFix | null;
-  checkInRadiusMeters: number;
-  maxGpsAccuracyMeters: number;
-  status: LiveLocationStatus;
-  mapExpanded: boolean;
-  mapHostId: string;
-}): { html: string; proximity: ProximityEvaluation } {
-  const meter = renderDistanceMeter({
-    fix: opts.fix,
-    target: opts.startPoint,
-    checkInRadiusMeters: opts.checkInRadiusMeters,
-    maxGpsAccuracyMeters: opts.maxGpsAccuracyMeters,
-    status: opts.status,
-    testId: "lobby-distance-meter",
-    showEnableChip: true,
-  });
-  const html = `<section class="loc-start-card" aria-label="Titik Awal" data-testid="lobby-start-card">
-    <div class="loc-start-head">
-      <div class="loc-start-title-wrap">
-        <span class="loc-start-eyebrow">Titik Awal</span>
-        <strong class="loc-start-name">${escapeText(opts.startPoint.name)}</strong>
-        ${opts.startPoint.accessNotes ? `<small class="loc-start-notes">${escapeText(opts.startPoint.accessNotes)}</small>` : ""}
-      </div>
-    </div>
-    ${meter.html}
-    <div class="loc-start-actions">
-      ${renderDirectionsLink(opts.startPoint, { testId: "lobby-directions-link" })}
-      <button type="button" class="secondary loc-map-toggle" data-loc-action="toggle-start-map" data-testid="lobby-start-map-toggle" aria-expanded="${opts.mapExpanded}">
-        ${opts.mapExpanded ? "Tutup Peta" : "Peta Titik Awal"}
-      </button>
-    </div>
-    ${opts.mapExpanded ? `<div id="${escapeText(opts.mapHostId)}" class="loc-mini-map" data-testid="lobby-start-minimap"></div>` : ""}
-  </section>`;
-  return { html, proximity: meter.proximity };
 }
 
 export type LiveLocationWatcher = {
