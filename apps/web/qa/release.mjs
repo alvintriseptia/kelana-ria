@@ -275,6 +275,7 @@ try {
       await refreshSeekRoom(host.page);
       await host.page.getByRole("button", { name: "Kode temuan", exact: true }).click();
       const code = (await host.page.locator('[data-testid="hider-found-code"]').textContent()).trim();
+      await guestBoard.click();
       await guest.page.locator("#rb-found-input").fill(code);
       await clickAndWaitPost(guest.page, 'button[data-action="submit-found-code"]');
       await refreshSeekRoom(host.page);
