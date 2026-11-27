@@ -141,10 +141,23 @@ export function syncOutdoorReadinessInPlace(
 ): void {
   const existing = container.querySelector<HTMLElement>('[data-testid="lobby-readiness-strip"]');
   if (!existing) return;
+  const prevState = existing.querySelector<HTMLElement>('[data-testid="readiness-gps-status"]')?.dataset.gpsState ?? "";
   const tmp = document.createElement("div");
   tmp.innerHTML = renderOutdoorReadinessStrip(opts);
   const next = tmp.firstElementChild;
-  if (next) existing.replaceWith(next);
+  if (!next) return;
+  existing.replaceWith(next);
+  const nextPill = next.querySelector<HTMLElement>('[data-testid="readiness-gps-status"]');
+  const nextState = nextPill?.dataset.gpsState ?? "";
+  if (nextPill && nextState !== prevState && (nextState === "ready" || nextState === "denied")) {
+    void import("./game-motion")
+      .then((m) => {
+        if (!nextPill.isConnected) return;
+        if (nextState === "ready") m.animatePop(nextPill, { fromScale: 0.82, preset: "bouncy" });
+        else m.animateShake(nextPill);
+      })
+      .catch(() => undefined);
+  }
 }
 
 export type QuickGuideContext = {

@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
-import { useLayoutEffect } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
+import { animateSheetIn } from "../game-motion";
 
 export type DialogProps = {
   titleId: string;
@@ -17,7 +18,7 @@ export type DialogProps = {
 
 /**
  * Accessible overlay dialog primitive supporting Escape dismissal, backdrop
- * click close, busy lockouts, and 44x44 minimum mobile touch targets.
+ * click close, busy lockouts, Motion spring entrance, and 44x44 minimum mobile touch targets.
  */
 export function Dialog({
   titleId,
@@ -32,6 +33,8 @@ export function Dialog({
   testId,
   children,
 }: DialogProps) {
+  const surfaceRef = useRef<HTMLElement | null>(null);
+
   useLayoutEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape" && !closeDisabled) {
@@ -43,6 +46,10 @@ export function Dialog({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [closeDisabled, onClose]);
 
+  useEffect(() => {
+    return animateSheetIn(surfaceRef.current, { offsetY: 14, fromScale: 0.96, preset: "sheet" });
+  }, []);
+
   return (
     <div
       class={backdropClassName}
@@ -53,7 +60,13 @@ export function Dialog({
         }
       }}
     >
-      <section class={dialogClassName} role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      <section
+        ref={surfaceRef}
+        class={dialogClassName}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
         <div class={headClassName}>
           <h2 id={titleId}>{title}</h2>
           <button

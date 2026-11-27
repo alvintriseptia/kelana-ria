@@ -62,7 +62,7 @@
   background: #f1c76e; color: #18372f; box-shadow: 0 2px 5px #143d35ab;
 }
 .ep-pin-visual { margin: 7px; }
-.ep-pin-visual.locked { background: #0b5b4d; color: #f4ffed; border-radius: 7px; animation: ep-lock .24s ease-out; }
+.ep-pin-visual.locked { background: #0b5b4d; color: #f4ffed; border-radius: 7px; }
 .ep-pin-caption {
   position: absolute; top: calc(100% + 1px); left: 50%; transform: translateX(-50%);
   background: #fafff6; padding: 2px 5px; border-radius: 4px; font-size: .72rem; font-weight: 750; white-space: nowrap;
@@ -75,7 +75,7 @@
 .ep-reference.ep-end { top: 51%; left: 71%; }
 .ep-hider { top: 44%; left: 44%; background: #74482a; }
 .ep-board:has(.thermometer) .ep-hider { left: 75%; top: 33%; }
-.ep-overlay { position: absolute; z-index: 1; pointer-events: none; animation: ep-appear .18s ease-out; }
+.ep-overlay { position: absolute; z-index: 1; pointer-events: none; }
 .ep-overlay.radar, .ep-overlay.measuring, .ep-overlay.tentacles {
   top: 18%; left: 19%; width: min(54%, 164px); aspect-ratio: 1; border-radius: 50%;
   background: #538ecd2f; border: 2px dashed #365d8d;
@@ -135,14 +135,6 @@
 .ep-card-select { min-height: 44px; border: 1px solid #5b835d; border-radius: 8px; color: #164137; background: #faffed; }
 .ep-card-select[aria-pressed="true"] { background: #d9f181; font-weight: 800; }
 .ep-card-select[aria-disabled="true"] { opacity: .65; }
-.ep-cards.deal > *, .ep-hand > * { animation: ep-deal .26s ease-out both; }
-.ep-cards.deal > :nth-child(even) { animation-delay: .055s; }
-.ep-card-slot.flipped .ep-card-face { animation: ep-flip .23s ease-out; }
-@keyframes ep-lock { from { transform: scale(.72); } 65% { transform: scale(1.16); } }
-@keyframes ep-appear { from { opacity: .4; } }
-@keyframes ep-deal { from { transform: translate(-18px, -12px) scale(.85); opacity: .4; } }
-@keyframes ep-flip { from { transform: perspective(450px) rotateY(-84deg); opacity: .5; } }
 @media (prefers-reduced-motion: reduce) {
-  .ep-position, .ep-pin-visual, .ep-overlay { transition: none; animation: none; }
-  .ep-cards.deal > *, .ep-hand > *, .ep-card-slot.flipped .ep-card-face { animation: none; }
+  .ep-dot, .ep-position, .ep-pin-visual, .ep-overlay, .ep-card-face { transition: none; animation: none; }
 }

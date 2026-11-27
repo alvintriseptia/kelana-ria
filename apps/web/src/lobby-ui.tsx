@@ -1,7 +1,14 @@
 import type { LocationFix, RulebookFormat } from "@kelana-ria/contracts";
 import { useSignal } from "@preact/signals";
-import { useLayoutEffect, useRef } from "preact/hooks";
+import type { ComponentChildren } from "preact";
+import { useEffect, useLayoutEffect, useRef } from "preact/hooks";
 import { escapeText } from "./escape-text";
+import {
+  animatePop,
+  animateShake,
+  animateSheetIn,
+  attachPress,
+} from "./game-motion";
 import { resolveDefaultPlayerName, saveRememberedGuestName } from "./guest-name";
 import type { LiveLocationStatus } from "./live-location";
 import { fetchApiJson, resolvePlayerError, type PlayerErrorTone } from "./player-errors";
@@ -84,6 +91,9 @@ export function LobbyInviteCard({
   onShareInvite: () => void;
   onShowQr: () => void;
 }) {
+  const cardRef = useRef<HTMLElement | null>(null);
+  const copyBtnRef = useRef<HTMLButtonElement | null>(null);
+  const shareBtnRef = useRef<HTMLButtonElement | null>(null);
   const shareSupported = canUseWebShare();
   const shareLabel = copiedLink
     ? "✓ Tautan Tersalin"
@@ -91,8 +101,24 @@ export function LobbyInviteCard({
       ? "Bagikan Undangan"
       : "Salin Tautan";
 
+  useEffect(() => {
+    const buttons = cardRef.current?.querySelectorAll("button");
+    return attachPress(buttons, { scale: 0.96, preset: "snappy" });
+  }, []);
+
+  useEffect(() => {
+    if (!copiedCode) return;
+    return animatePop(copyBtnRef.current, { fromScale: 0.9, preset: "bouncy" });
+  }, [copiedCode]);
+
+  useEffect(() => {
+    if (!copiedLink) return;
+    return animatePop(shareBtnRef.current, { fromScale: 0.9, preset: "bouncy" });
+  }, [copiedLink]);
+
   return (
     <section
+      ref={cardRef}
       class="lobby-invite-card"
       aria-label="Undang teman ke ruang"
       data-testid="lobby-invite-card"
@@ -105,6 +131,7 @@ export function LobbyInviteCard({
           </code>
         </div>
         <button
+          ref={copyBtnRef}
           type="button"
           class="secondary"
           data-lobby-action="copy-code"
@@ -116,6 +143,7 @@ export function LobbyInviteCard({
       </div>
       <div class="lobby-invite-actions">
         <button
+          ref={shareBtnRef}
           type="button"
           class="primary"
           data-lobby-action="share-invite"
@@ -143,6 +171,102 @@ export function LobbyInviteCard({
   );
 }
 
+/**
+ * Spring-animated lobby team badge that pops smoothly whenever a player switches teams.
+ */
+export function LobbyTeamChip({
+  teamIndex,
+  label,
+  className = "rb-badge",
+}: {
+  teamIndex: number;
+  label?: string;
+  className?: string;
+}) {
+  const chipRef = useRef<HTMLSpanElement | null>(null);
+  const prevIndexRef = useRef(teamIndex);
+  const visual = teamVisual(teamIndex);
+
+  useEffect(() => {
+    if (prevIndexRef.current !== teamIndex) {
+      prevIndexRef.current = teamIndex;
+      return animatePop(chipRef.current, { fromScale: 0.84, preset: "bouncy" });
+    }
+  }, [teamIndex]);
+
+  return (
+    <span
+      ref={chipRef}
+      class={className}
+      style={{
+        background: visual.bg,
+        color: visual.accent,
+        borderColor: visual.border,
+      }}
+    >
+      <span aria-hidden="true">{visual.shape}</span> {label ?? visual.label}
+    </span>
+  );
+}
+
+/**
+ * Spring-animated lobby readiness pill that pops cleanly when a seat flips to ready.
+ */
+export function LobbyReadyPill({
+  ready,
+  readyLabel = "Siap ✓",
+  waitingLabel = "Belum siap",
+  className = "rb-badge",
+}: {
+  ready: boolean;
+  readyLabel?: string;
+  waitingLabel?: string;
+  className?: string;
+}) {
+  const pillRef = useRef<HTMLSpanElement | null>(null);
+  const prevReadyRef = useRef(ready);
+
+  useEffect(() => {
+    if (ready && !prevReadyRef.current) {
+      prevReadyRef.current = ready;
+      return animatePop(pillRef.current, { fromScale: 0.82, preset: "bouncy" });
+    }
+    prevReadyRef.current = ready;
+  }, [ready]);
+
+  return (
+    <span ref={pillRef} class={`${className}${ready ? " rb-badge-ready" : ""}`} data-ready={ready ? "true" : "false"}>
+      {ready ? readyLabel : waitingLabel}
+    </span>
+  );
+}
+
+/**
+ * Spring-animated lobby seat row container for new player joins without disturbing focus.
+ */
+export function LobbySeatItem({
+  isNew = false,
+  className = "lobby-seat-row",
+  children,
+}: {
+  isNew?: boolean;
+  className?: string;
+  children: ComponentChildren;
+}) {
+  const rowRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isNew) return;
+    return animateSheetIn(rowRef.current, { offsetY: 8, fromScale: 0.97, preset: "tactile" });
+  }, [isNew]);
+
+  return (
+    <div ref={rowRef} class={className}>
+      {children}
+    </div>
+  );
+}
+
 export function CanceledRoomCard({
   roomCode,
   title,
@@ -152,9 +276,23 @@ export function CanceledRoomCard({
   title: string;
   onBackToCatalog: () => void;
 }) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const stopIn = animateSheetIn(cardRef.current, { offsetY: 12, fromScale: 0.97, preset: "sheet" });
+    const stopPress = attachPress(cardRef.current?.querySelectorAll("button"), {
+      scale: 0.97,
+      preset: "snappy",
+    });
+    return () => {
+      stopIn();
+      stopPress();
+    };
+  }, []);
+
   return (
     <section class="rb-shell" aria-label="Ruang dibatalkan">
-      <div class="rb-card lobby-canceled-card" data-testid="canceled-room-card">
+      <div ref={cardRef} class="rb-card lobby-canceled-card" data-testid="canceled-room-card">
         <div class="rb-badges">
           <span class="rb-badge">Kode: {roomCode}</span>
           <span class="rb-badge rb-badge-danger">Dibatalkan</span>
@@ -195,12 +333,25 @@ export function PostMatchActions({
   onJoinNewRoom: () => void;
   onBackToCatalog: () => void;
 }) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
   const recapHref = `/?recap=${encodeURIComponent(roomCode)}`;
   const packHref = `/catalog?edition=${encodeURIComponent(packId)}&version=${encodeURIComponent(String(version))}`;
 
+  useEffect(() => {
+    const stopIn = animateSheetIn(boxRef.current, { offsetY: 10, fromScale: 0.98, preset: "tactile" });
+    const stopPress = attachPress(boxRef.current?.querySelectorAll("button, a.cat-link"), {
+      scale: 0.97,
+      preset: "snappy",
+    });
+    return () => {
+      stopIn();
+      stopPress();
+    };
+  }, [canPlayAgain]);
+
   if (canPlayAgain) {
     return (
-      <div class="postmatch-actions" data-testid="postmatch-actions">
+      <div ref={boxRef} class="postmatch-actions" data-testid="postmatch-actions">
         <button
           type="button"
           class="sg-main"
@@ -233,7 +384,7 @@ export function PostMatchActions({
   }
 
   return (
-    <div class="postmatch-actions" data-testid="postmatch-actions">
+    <div ref={boxRef} class="postmatch-actions" data-testid="postmatch-actions">
       <button
         type="button"
         class="sg-main"
@@ -278,8 +429,37 @@ export function OutdoorReadinessStrip({
   onEnableLocation: () => void;
 }) {
   const ready = Boolean(fix) || status === "watching";
+  const gpsState = ready ? "ready" : status;
+  const pillRef = useRef<HTMLSpanElement | null>(null);
+  const stripRef = useRef<HTMLElement | null>(null);
+  const prevStateRef = useRef(gpsState);
+
+  useEffect(() => {
+    const prev = prevStateRef.current;
+    prevStateRef.current = gpsState;
+    if (gpsState === prev) return;
+    if (gpsState === "ready") {
+      return animatePop(pillRef.current, { fromScale: 0.82, preset: "bouncy" });
+    }
+    if (gpsState === "denied") {
+      return animateShake(pillRef.current);
+    }
+  }, [gpsState]);
+
+  useEffect(() => {
+    return attachPress(stripRef.current?.querySelectorAll("button"), {
+      scale: 0.96,
+      preset: "snappy",
+    });
+  }, [gpsState]);
+
   return (
-    <section class="qg-readiness" aria-label="Kesiapan Lapangan" data-testid="lobby-readiness-strip">
+    <section
+      ref={stripRef}
+      class="qg-readiness"
+      aria-label="Kesiapan Lapangan"
+      data-testid="lobby-readiness-strip"
+    >
       <div class="qg-readiness-head">
         <span class="qg-readiness-eyebrow">Kesiapan Lapangan</span>
       </div>
@@ -290,6 +470,7 @@ export function OutdoorReadinessStrip({
           </span>
           {ready ? (
             <span
+              ref={pillRef}
               class="qg-readiness-pill"
               data-testid="readiness-gps-status"
               data-gps-ready="true"
@@ -299,6 +480,7 @@ export function OutdoorReadinessStrip({
             </span>
           ) : status === "requesting" ? (
             <span
+              ref={pillRef}
               class="qg-readiness-pill"
               data-testid="readiness-gps-status"
               data-gps-ready="false"
@@ -310,6 +492,7 @@ export function OutdoorReadinessStrip({
           ) : status === "denied" ? (
             <div class="qg-header-tools">
               <span
+                ref={pillRef}
                 class="qg-readiness-pill"
                 data-testid="readiness-gps-status"
                 data-gps-ready="false"
@@ -329,6 +512,7 @@ export function OutdoorReadinessStrip({
             </div>
           ) : status === "unavailable" ? (
             <span
+              ref={pillRef}
               class="qg-readiness-pill"
               data-testid="readiness-gps-status"
               data-gps-ready="false"
@@ -635,6 +819,7 @@ function QuickJoinRoomDialogView({
   const joining = useSignal(false);
   const modalError = useSignal<{ message: string; tone: PlayerErrorTone } | null>(null);
   const codeInputRef = useRef<HTMLInputElement | null>(null);
+  const formRef = useRef<HTMLFormElement | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
 
   useLayoutEffect(() => {
@@ -643,6 +828,11 @@ function QuickJoinRoomDialogView({
       submitAbortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    if (!modalError.value) return;
+    return animateShake(formRef.current);
+  }, [modalError.value]);
 
   async function handleSubmit(event: Event) {
     event.preventDefault();
@@ -726,6 +916,7 @@ function QuickJoinRoomDialogView({
         />
       )}
       <form
+        ref={formRef}
         class="lobby-rename-form"
         data-quick-join-form
         onSubmit={(event) => void handleSubmit(event)}
