@@ -847,7 +847,7 @@ export function rulebookStore(
   function cloneOfficialTemplate(
     templatePackId: string,
     creatorCredential: string,
-    overrides: { packId: string; title: string; byline: string; priceIdr: number },
+    overrides: { packId: string; title: string; byline: string; priceIdr: number; autoAllocatePackId?: boolean },
     now: number,
   ): { ok: true; record: StoredRulebookRecord } | { ok: false; error: string } {
     const template = allRecords().find((r) => r.packId === templatePackId && r.isOfficial && r.status === "published");
@@ -856,39 +856,48 @@ export function rulebookStore(
       return { ok: false, error: "invalid-metadata" };
     }
     const ownerHash = digest(creatorCredential);
-    const previous = latestRecord(overrides.packId);
-    if (previous && (previous.isOfficial || previous.ownerHash !== ownerHash || previous.format !== template.format)) {
-      return { ok: false, error: "pack-unavailable" };
-    }
-    const nextVersion = nextVersionFor(overrides.packId, previous);
-    const clonedPack: AnyRulebookPack = {
-      ...structuredClone(template.pack),
-      meta: {
-        ...template.pack.meta,
-        packId: overrides.packId,
-        version: nextVersion,
+    return transact(() => {
+      let packId = overrides.packId;
+      const previous = latestRecord(packId);
+      let version = nextVersionFor(packId, previous);
+      if (overrides.autoAllocatePackId) {
+        // Reserve the ID and save under the same write lock so simultaneous clones stay separate.
+        for (let suffix = 2; version > 1; suffix++) {
+          packId = `${overrides.packId}-${suffix}`;
+          version = nextVersionFor(packId, latestRecord(packId));
+        }
+      } else if (previous && (previous.isOfficial || previous.ownerHash !== ownerHash || previous.format !== template.format)) {
+        return { ok: false, error: "pack-unavailable" };
+      }
+      const clonedPack: AnyRulebookPack = {
+        ...structuredClone(template.pack),
+        meta: {
+          ...template.pack.meta,
+          packId,
+          version,
+          isOfficial: false,
+          title: overrides.title,
+          byline: overrides.byline,
+          priceIdr: overrides.priceIdr,
+        },
+      } as AnyRulebookPack;
+      const record: StoredRulebookRecord = {
+        packId,
+        version,
+        format: template.format,
         isOfficial: false,
-        title: overrides.title,
-        byline: overrides.byline,
-        priceIdr: overrides.priceIdr,
-      },
-    } as AnyRulebookPack;
-    const record: StoredRulebookRecord = {
-      packId: overrides.packId,
-      version: nextVersion,
-      format: template.format,
-      isOfficial: false,
-      status: "draft",
-      ownerHash,
-      pack: clonedPack,
-      snapshot: structuredClone(template.snapshot),
-      updatedAt: now,
-      publishedAt: null,
-      reviewNote: null,
-      pausedReason: null,
-    };
-    saveRecord(record);
-    return { ok: true, record };
+        status: "draft",
+        ownerHash,
+        pack: clonedPack,
+        snapshot: structuredClone(template.snapshot),
+        updatedAt: now,
+        publishedAt: null,
+        reviewNote: null,
+        pausedReason: null,
+      };
+      saveRecord(record);
+      return { ok: true, record };
+    });
   }
 
   function saveDraft(
