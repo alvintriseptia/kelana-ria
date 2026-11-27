@@ -273,10 +273,7 @@ try {
       await guest.page.locator(`${askClue}[data-item="rad-1km"]:enabled`).waitFor();
 
       await refreshSeekRoom(host.page);
-      for (const page of [host.page, guest.page]) {
-        const boardTab = page.locator('[data-panel="board"]');
-        if (await boardTab.getAttribute("aria-pressed") !== "true") await boardTab.click();
-      }
+      await host.page.getByRole("button", { name: "Kode temuan", exact: true }).click();
       const code = (await host.page.locator('[data-testid="hider-found-code"]').textContent()).trim();
       await guest.page.locator("#rb-found-input").fill(code);
       await clickAndWaitPost(guest.page, 'button[data-action="submit-found-code"]');

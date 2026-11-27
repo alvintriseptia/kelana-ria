@@ -165,7 +165,7 @@ function guideSpec(ctx: QuickGuideContext): {
         },
         {
           title: "Bertahan Selama Mungkin",
-          body: "Berikan kode temuan saat pencari menemukanmu. Waktu sembunyi dan bonus kartu menentukan hasil setelah bertukar peran.",
+          body: "Buka panel Kode dan berikan kode temuan saat pencari menemukanmu. Waktu sembunyi dan bonus kartu menentukan hasil setelah bertukar peran.",
         },
       ],
     };

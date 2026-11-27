@@ -273,8 +273,40 @@ try {
   await hiderSeekCue.waitFor();
   assert.match(await hiderSeekCue.innerText(), /Jawab pertanyaan pencari/);
   await assertCleanUiCopy(pageG2, "seek seeking phase seeker");
-  const seekerBodyBeforeSearch = await pageG2.textContent("body");
-  assert.equal(seekerBodyBeforeSearch.includes("hider-found-code"), false);
+  const hiderCodeTab = pageCreator.getByRole("button", { name: "Kode temuan", exact: true });
+  const hiderCodeValue = pageCreator.getByTestId("hider-found-code");
+  const hiderHandTab = pageCreator.locator('button[data-panel="hand"]');
+  if (await hiderHandTab.getAttribute("aria-pressed") !== "true") await hiderHandTab.click();
+  await hiderCodeTab.press("Enter");
+  await hiderCodeValue.waitFor();
+  const firstFoundCode = (await hiderCodeValue.textContent()).trim();
+  assert.match(firstFoundCode, /^\d{4}$/);
+  assert.equal(await pageCreator.locator("#sg-panel-title").evaluate(el => el === document.activeElement), true);
+  await pageCreator.setViewportSize({ width: 320, height: 640 });
+  assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  const codeContrast = await hiderCodeValue.evaluate(el => {
+    const luminance = color => {
+      const components = color.match(/[\d.]+/g).map(value => Number(value) / 255);
+      const linear = components.slice(0, 3).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+      return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+    };
+    const style = getComputedStyle(el);
+    if (style.backgroundColor === "rgba(0, 0, 0, 0)") return 0;
+    const values = [luminance(style.color), luminance(style.backgroundColor)];
+    return (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05);
+  });
+  assert.ok(codeContrast >= 4.5, `Private code contrast must be at least 4.5:1, got ${codeContrast}`);
+  await pageCreator.waitForFunction(() => {
+    const sheet = document.querySelector(".sg-sheet");
+    return sheet && Number(getComputedStyle(sheet).opacity) >= 0.99;
+  });
+  await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-hider-code-320.png") });
+  await pageCreator.setViewportSize({ width: 390, height: 844 });
+  await hiderHandTab.click();
+  assert.equal(await hiderCodeValue.count(), 0);
+  assert.equal(await hiderCodeTab.isVisible(), true);
+  assert.equal(await pageG2.getByRole("button", { name: "Kode temuan", exact: true }).count(), 0);
+  assert.equal(await pageG2.getByTestId("hider-found-code").count(), 0);
 
   // Seeker asks a Radar clue, Hider answers & picks drawn card, Seeker checks in and enters the found code -> Regroup!
   const radarCard = pageG2.locator('button[data-action="question-family"][data-family="radar"]');
@@ -360,6 +392,10 @@ try {
   assert.equal(await pageCreator.locator("[data-activity-announcement]").textContent(), "");
   await refreshSeekRoom(pageCreator);
   await pendingNotice.getByRole("button", { name: "Buka", exact: true }).click();
+  await pageCreator.locator('button[data-answer="no"]').waitFor();
+  await hiderCodeTab.press("Enter");
+  assert.equal((await hiderCodeValue.textContent()).trim(), firstFoundCode);
+  await hiderHandTab.click();
   await pageCreator.click('button[data-answer="no"]');
   assert.equal(await pageCreator.locator('button[data-action="answer-pending"]').isDisabled(), true);
   assert.equal(await pageCreator.locator('[data-correct="false"]').isVisible(), true);
@@ -536,10 +572,9 @@ try {
   assert.equal(afterLeaving.ownAnchorStationId, undefined);
   await assertCleanUiCopy(pageG2, "seek check-in without revealing the hider");
   await refreshSeekRoom(pageCreator);
-  const hiderBoard = pageCreator.locator('[data-panel="board"]');
-  if (await hiderBoard.getAttribute("aria-pressed") !== "true") await hiderBoard.click();
-  const foundCode = (await pageCreator.textContent('[data-testid="hider-found-code"]')).trim();
-  assert.match(foundCode, /^\d{4}$/);
+  if (await hiderCodeTab.getAttribute("aria-pressed") !== "true") await hiderCodeTab.click();
+  const foundCode = (await hiderCodeValue.textContent()).trim();
+  assert.equal(foundCode, firstFoundCode, "The same private code remains available after reload and clue activity");
   assert.equal(await pageG2.getByTestId("hider-found-code").count(), 0);
   await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-private-code-search.png") });
 
