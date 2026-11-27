@@ -1,6 +1,6 @@
 import type { LocationFix, RulebookFormat } from "@kelana-ria/contracts";
 import { useSignal } from "@preact/signals";
-import { useEffect, useRef } from "preact/hooks";
+import { useLayoutEffect, useRef } from "preact/hooks";
 import { escapeText } from "./escape-text";
 import { resolveDefaultPlayerName, saveRememberedGuestName } from "./guest-name";
 import type { LiveLocationStatus } from "./live-location";
@@ -464,7 +464,7 @@ function QrModalView({
   const closeBtnRef = useRef<HTMLButtonElement | null>(null);
   const qrSvg = renderQrSvg(inviteUrl, `Kode QR untuk ruang ${roomCode}`);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     closeBtnRef.current?.focus({ preventScroll: true });
   }, []);
 
@@ -548,7 +548,7 @@ function ConfirmDialogView({
   onCancel: () => void;
 }) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     cancelRef.current?.focus({ preventScroll: true });
   }, []);
 
@@ -637,7 +637,7 @@ function QuickJoinRoomDialogView({
   const codeInputRef = useRef<HTMLInputElement | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     codeInputRef.current?.focus({ preventScroll: true });
     return () => {
       submitAbortRef.current?.abort();
