@@ -7,7 +7,7 @@ import type {
   GeoStation,
   TransitMode,
 } from "@kelana-ria/contracts";
-import { escapeText } from "./solo-view";
+import { escapeText } from "./escape-text";
 import { mapPinIconSvg } from "./studio-assets";
 import { renderClaimChallenges, type ClaimStep3State } from "./studio-claim-builder";
 import type {

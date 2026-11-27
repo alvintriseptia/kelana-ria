@@ -7,7 +7,7 @@ import type {
   RulebookFormat,
 } from "@kelana-ria/contracts";
 import { matchesClaimInputAnswer } from "@kelana-ria/contracts";
-import { escapeText } from "./solo-view";
+import { escapeText } from "./escape-text";
 import { challengePrimitiveTileMeta } from "./studio-assets";
 import { isClaimStudioPack, type StudioStep, type StudioVersionRecord } from "./studio-types";
 

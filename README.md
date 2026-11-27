@@ -39,7 +39,7 @@ npm run qa --workspace @kelana-ria/web
 
 The checks exercise the chooser, keyboard flow, Chromium installability and offline launch. They also measure three cold loads at 390 × 844 with a 4× CPU slowdown and throttled mobile network. Screenshots, traces and the run report are written to `apps/web/qa-results/` and uploaded with PR checks. Use the [agent guide](AGENTS.md) to claim the next issue.
 
-## Play the Compact solo fixture
+## Play Claim the City & Hide & Seek (Unified Rulebook Engine)
 
 After building, start the API in one terminal and the web server in another.
 
@@ -48,23 +48,17 @@ npm start --workspace @kelana-ria/api
 npm run dev
 ```
 
-Open Claim the City’s Compact edition and choose **Main Solo** to start the current game. For the older simulated fixture, open `/?play=solo-claim` and use **Simulasikan lokasi di sini** to test check-ins without traveling. The board, challenges and location samples in that fixture are prepared data. The local server stores its countdowns, scores and results in `apps/api/.data/solo.sqlite`. Set `SOLO_DATABASE_PATH` to choose another database. The PWA caches the catalog shell. The outing requires a server connection for check-ins, claims and recovery.
+Visit `/` for the landing page or `/catalog` for the Game Catalog. Open any official **Claim the City** or **Hide & Seek** edition (authored as validated `RulebookPack` + `GeoSnapshot` JSON under `apps/api/packs/official/`), choose **Main Solo** or **Main Grup**, and share the room code or QR invite with friends on separate devices. The local server stores packs, accounts, sessions, scores, and recaps in `apps/api/.data/kelana.sqlite` (configurable via `KELANA_DATABASE_PATH` or `SOLO_DATABASE_PATH`).
 
-Run `npm test --workspace @kelana-ria/api` for server rules, edition validation (`compact-board-v1`), two feasible Compact editions with attributed route snapshots, HTTP provider adapters, and same-configuration fallback checks, and `npm run qa:solo --workspace @kelana-ria/web` for the mobile win, loss, provider outage rehearsal, closure notice and recovery paths. The browser test starts a fixture API with an isolated database and controlled clock. It writes screenshots and a result report alongside the chooser QA evidence.
+Run `npm test --workspace @kelana-ria/api` for server rules, Rulebook validators, Claim & Hide & Seek engine transitions, Auth OTP, persistence, SSE, entitlements, Midtrans webhook security, and HTTP provider adapters. Run the Playwright mobile QA suites against a production build:
 
-Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (optional `CLOUDFLARE_AI_MODEL`, defaulting to `@cf/zai-org/glm-4.7-flash`) plus `GEOAPIFY_API_KEY` in the API runtime environment to enable live edition generation and Geoapify walking-route refreshes. When those variables are unset, the API serves validated prepared editions and the approved route snapshot. Run `npm run capture:integration --workspace @kelana-ria/api` to write a redacted evidence bundle to `apps/api/.data/integration-evidence.json` (labeled `live` when credentials are configured, or `recorded-rehearsal` with a local HTTP stub otherwise; pass `-- --require-live` to enforce live credentials). See [live integration evidence](docs/qa/live-integration-evidence.md) for provider quotas, data rights, and recorded rehearsal results.
+- `npm run qa --workspace @kelana-ria/web`: mobile browser, cold-load budget, PWA installability, `Coba Panduan`, and landing page checks.
+- `npm run qa:rulebook-claim --workspace @kelana-ria/web`: Solo & multiplayer Claim the City, live presence, teams/QR/leave, self-location proximity, rear-camera photo compression, and unified checkout.
+- `npm run qa:rulebook-seek --workspace @kelana-ria/web`: multiplayer Hide & Seek, clue privacy, Thermometer, photo proofs, map fallback, role swap, and lobby turn order.
+- `npm run qa:rulebook-studio --workspace @kelana-ria/web`: full Studio Kreator visual lifecycle, map editor, dry-run simulator, draft deletion, private draft playtest rooms, editorial review, publish, and Midtrans settlement.
+- `npm run qa:player-errors --workspace @kelana-ria/web`: actionable inline errors, toasts, offline replay dedup, and reconnect recovery.
 
-## Play the Compact two-player fixture
-
-With the API and web server running, open Claim the City’s Compact edition, select **Grup**, and choose **Main Grup**. Open its invitation in a second browser profile so each player has a separate seat. Both players check in at CSW–ASEAN and mark themselves ready before the host starts. The room shows who owns each landmark and how many landmarks each player has in every zone. The earlier two-player simulation is available at `/?play=duo-claim`.
-
-Run `npm run qa:duo --workspace @kelana-ria/web` against a production build to exercise two independent browser profiles. The test records both views and the public event sequence in the mobile QA artifact.
-
-## Play the Compact Hide & Seek fixture
-
-Choose **Berdua**, **Hide & Seek**, and **Jakarta (Compact)**. Open the simulation, create a room, share its invite with a second browser profile, and choose who hides first. Both players check in at CSW–ASEAN and confirm readiness. The hider privately locks a point before release. The seeker checks in at the start after release and investigates a point at a time. After turn one, both check in at the start again to swap roles.
-
-The prepared fixture allows 30 minutes of head start and 60 minutes of search in each turn, with a 30-minute regroup allowance. Locations and timing are for simulated testing. Run `npm run qa:seek --workspace @kelana-ria/web` after building to advance the server clock through a two-turn browser match and capture both views.
+Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` (optional `CLOUDFLARE_AI_MODEL`, defaulting to `@cf/zai-org/glm-4.7-flash`) plus `GEOAPIFY_API_KEY` in the API runtime environment to enable live edition generation and Geoapify walking-route refreshes. When those variables are unset, the API serves validated official Rulebook packs and deterministic route snapshots. Run `npm run capture:integration --workspace @kelana-ria/api` to write a redacted evidence bundle to `apps/api/.data/integration-evidence.json` (labeled `live` when credentials are configured, or `recorded-rehearsal` with a local HTTP stub otherwise; pass `-- --require-live` to enforce live credentials). See [live integration evidence](docs/qa/live-integration-evidence.md) for provider quotas, data rights, and recorded rehearsal results.
 
 ## Run an interactive Hide & Seek QA room
 
@@ -77,21 +71,17 @@ Open `http://127.0.0.1:8787/?play=rulebook-seek` and choose **Buat Ruang QA** on
 
 QA rooms are temporary and require explicit server opt-in. Run the two-seat browser test with `npm run qa:seek-mode --workspace @kelana-ria/web`.
 
-## Review, publish, and settle a creator pack (Test payment)
+## Studio Kreator & Midtrans sandbox checkout
 
-Open the summary for Jakarta (Compact) Claim the City and choose **Paket kreator Jakarta** (or open `/?play=creator-packs`). Switch between **Penulis**, **Peninjau** and **Katalog Publik** to save a draft, submit it for editorial review, return a correction request, publish the revised version, purchase one sandbox session (**Test payment**), settle it to unlock one paid room and one creator earnings entry, invite a second player on the same pass without starting the clock before readiness, and pause new sales after a confirmed checkpoint closure while keeping existing orders and earnings visible.
+Open **Studio Kreator** (`/?play=rulebook-studio`) and sign in with Email OTP to clone an official template, edit map landmarks/stations/zones, configure timers, challenges, clues, and cards, run a private live playtest (`Main Uji Coba (Draf)`), submit for editorial review, publish to `/catalog`, and test one-time pack checkout.
 
-Set `MIDTRANS_SERVER_KEY` in the API runtime environment to enable live Midtrans Snap sandbox requests (`POST /snap/v1/transactions`, `GET /v2/{order_id}/status`, and SHA-512 verification on `POST /api/packs/midtrans-notification`); optionally override `MIDTRANS_SANDBOX_SNAP_URL` and `MIDTRANS_SANDBOX_API_URL`. When `MIDTRANS_SERVER_KEY` is unset, the API runs in clearly labeled `recorded-sandbox` mode so checkout, idempotent settlement, and paid room unlocking can still be verified offline and in CI without committing secrets. Run `npm run qa:packs --workspace @kelana-ria/web` to verify all roles, checkout settlement, paid room invite, and pause flows in isolated browser profiles.
-
-During a search, verify a point before asking a clue. The question records that point when sent, so moving later keeps its original context. The Compact trial uses the prepared walking snapshot where it has walking data and labeled estimates for the remaining comparisons. Players can investigate while waiting for an answer.
-
-The hider answers objective clues, can send a roofline photo, and manages their private hand. Keep time bonuses for the turn score or spend an effect during search. Photo uploads accept still JPEG, PNG, or WebP up to 2 MiB. The API serves a sanitized JPEG to the two room members and deletes it at match end. The browser test exercises a radar request, photo delivery and deletion, private draw recovery, and the final adjusted scores.
+Set `MIDTRANS_SERVER_KEY` in the API runtime environment to enable live Midtrans Snap sandbox requests (`POST /snap/v1/transactions`, `GET /v2/{order_id}/status`, and SHA-512 verification on `POST /api/rulebooks/midtrans-notification`); optionally override `MIDTRANS_SANDBOX_SNAP_URL` and `MIDTRANS_SANDBOX_API_URL`. When `MIDTRANS_SERVER_KEY` is unset, the API runs in clearly labeled `recorded-sandbox` mode so checkout, idempotent settlement, and pack ownership entitlements can still be verified offline and in CI without committing secrets.
 
 ## Verify Jakarta-wide and all six release configurations
 
-Both **Jakarta (Compact)** and **Jakarta (Wide)** (`jakarta-wide-board-v1`, activating approved checkpoints outside Compact across Sudirman–Tanah Abang, Manggarai–Cikini, and Jakarta Kota) are playable across Solo Claim, Duo Claim, and Duo Hide & Seek (`120 min` Claim; `60 min` head start, `120 min` search, and `60 min` regroup for wide Hide & Seek trial presets).
+Both **Jakarta (Compact)** and **Jakarta (Wide)** official Rulebook packs are playable across Solo Claim, Group Claim, and Hide & Seek.
 
-Run `npm run qa:release --workspace @kelana-ria/web` after building to execute all six configuration smoke journeys from the mobile chooser to terminal state with reload persistence and inspiration credit (`A18`) checks, writing `apps/web/qa-results/release-report.json`. See [release readiness](docs/qa/release-readiness.md) for the full pass/fail/untested release checklist.
+Run `npm run qa:release --workspace @kelana-ria/web` after building to execute all six configuration smoke journeys from `/catalog` to terminal state with reload persistence and inspiration credit (`A18`) checks, writing `apps/web/qa-results/release-report.json`. See [release readiness](docs/qa/release-readiness.md) for the full pass/fail/untested release checklist.
 
 ## Run a single-origin production server (phone & field testing)
 

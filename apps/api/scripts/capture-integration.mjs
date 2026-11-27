@@ -34,13 +34,15 @@ if (requireLive && !isLive) {
 
 const mode = isLive ? "live" : "recorded-rehearsal";
 const secretsToGuard = [accountId, apiToken, geoapifyApiKey].filter(Boolean);
+const { catalog: defaultCatalog, snapshot: defaultSnapshot } = api.getDefaultProviderAssets();
+const sampleCheckpoints = Object.keys(defaultCatalog.checkpoints).slice(0, 6);
 
 async function startRehearsalServer() {
   const snapshotByPair = new Map();
-  for (const leg of api.compactWalkingSnapshot.legs) {
+  for (const leg of defaultSnapshot.legs) {
     if (leg.mode !== "walk") continue;
-    const from = leg.fromId === api.compactStart.id ? api.compactStart : api.compactCheckpoints[leg.fromId];
-    const to = leg.toId === api.compactStart.id ? api.compactStart : api.compactCheckpoints[leg.toId];
+    const from = leg.fromId === defaultCatalog.start.id ? defaultCatalog.start : defaultCatalog.checkpoints[leg.fromId];
+    const to = leg.toId === defaultCatalog.start.id ? defaultCatalog.start : defaultCatalog.checkpoints[leg.toId];
     if (!from || !to) continue;
     const key = `${from.latitude},${from.longitude}|${to.latitude},${to.longitude}`;
     snapshotByPair.set(key, leg);
@@ -61,17 +63,10 @@ async function startRehearsalServer() {
           success: true,
           result: {
             response: JSON.stringify({
-              id: "compact-solo-rehearsal-v1",
-              checkpoints: [
-                "pasar-mayestik",
-                "velbak-kebayoran",
-                "taman-daksa",
-                "taman-ayodya",
-                "plaza-senayan",
-                "stasiun-palmerah",
-              ],
-              targets: { landmarks: 4, zones: 2 },
-              durationMs: 3600000,
+              id: `${defaultCatalog.packId}-rehearsal-v1`,
+              checkpoints: sampleCheckpoints,
+              targets: defaultCatalog.targets,
+              durationMs: defaultCatalog.durationMs,
             }),
           },
         }),
@@ -146,7 +141,7 @@ try {
         onEvent: (event) => captureEvents.push(event),
       });
 
-  const captured = await api.prepareSoloFixture({
+  const captured = await api.prepareProviderEdition({
     aiProvider,
     routeProvider,
   });
@@ -168,7 +163,7 @@ try {
     mode: "recorded-rehearsal",
     onEvent: (event) => outageEvents.push(event),
   });
-  const outage = await api.prepareSoloFixture({
+  const outage = await api.prepareProviderEdition({
     aiProvider: outageAi,
     routeProvider: outageRoutes,
   });
@@ -182,10 +177,11 @@ try {
     mode,
     liveCredentialsPresent: isLive,
     missingCredentials: missingEnv,
-    board: api.compactCatalog.board,
-    boardVersion: api.COMPACT_BOARD_VERSION,
-    format: api.compactCatalog.format,
-    players: api.compactCatalog.players,
+    packId: defaultCatalog.packId,
+    board: defaultCatalog.board,
+    boardVersion: defaultCatalog.boardVersion,
+    format: defaultCatalog.format,
+    players: defaultCatalog.players,
     quotasAndRights: {
       cloudflareWorkersAi: {
         model,
@@ -211,10 +207,9 @@ try {
           origin: captured.origin,
           routeSource: captured.routeSource,
           attempts: captured.attempts,
-          editionId: captured.fixture.edition.id,
-          checkpoints: captured.fixture.edition.checkpoints.map((c) => c.id),
-          openingsCount: captured.fixture.edition.openings?.length ?? 0,
-          routeAttribution: captured.fixture.edition.routes,
+          editionId: captured.edition.id,
+          checkpoints: captured.edition.checkpoints.map((c) => c.id),
+          routeAttribution: captured.edition.routes,
           routingCreditsUsed,
           redactedEvents: captureEvents,
         }
@@ -230,13 +225,13 @@ try {
           origin: outage.origin,
           fallbackReason: outage.fallbackReason,
           routeSource: outage.routeSource,
-          editionId: outage.fixture.edition.id,
+          editionId: outage.edition.id,
           configuration: {
-            board: outage.fixture.edition.board,
-            format: outage.fixture.edition.format,
-            players: outage.fixture.edition.players,
+            board: outage.edition.board,
+            format: outage.edition.format,
+            players: outage.edition.players,
           },
-          routeAttribution: outage.fixture.edition.routes,
+          routeAttribution: outage.edition.routes,
           redactedEvents: outageEvents,
         }
       : {

@@ -6,7 +6,7 @@ import type {
   SeekEngineQuestion,
   SeekPublicBoard,
 } from "@kelana-ria/contracts";
-import { escapeText } from "./solo-view";
+import { escapeText } from "./escape-text";
 import { renderPhotoCaptureWidget, type PreparedPhoto } from "./photo-capture";
 
 export const questionNames: Record<HideSeekQuestionFamily, string> = {

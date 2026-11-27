@@ -26,6 +26,8 @@ async function startMockServer(context, handler) {
 }
 
 test("Workers AI and Geoapify HTTP adapters validate a live edition, preserve attribution, and redact all credentials (§7, A13, A16)", async (context) => {
+  const { catalog, snapshot } = api.getDefaultProviderAssets();
+  const pickSix = Object.keys(catalog.checkpoints).slice(0, 6);
   const capturedBodies = [];
   const capturedAuthHeaders = [];
   let routingCalls = 0;
@@ -42,17 +44,10 @@ test("Workers AI and Geoapify HTTP adapters validate a live edition, preserve at
             response: [
               "```json",
               JSON.stringify({
-                id: "compact-solo-live-kebayoran",
-                checkpoints: [
-                  "pasar-mayestik",
-                  "velbak-kebayoran",
-                  "taman-daksa",
-                  "taman-ayodya",
-                  "plaza-senayan",
-                  "stasiun-palmerah",
-                ],
-                targets: { landmarks: 4, zones: 2 },
-                durationMs: 3600000,
+                id: "compact-claim-live-rehearsal",
+                checkpoints: pickSix,
+                targets: catalog.targets,
+                durationMs: catalog.durationMs,
               }),
               "```",
             ].join("\n"),
@@ -107,7 +102,7 @@ test("Workers AI and Geoapify HTTP adapters validate a live edition, preserve at
     onEvent: (event) => events.push(event),
   });
 
-  const prepared = await api.prepareSoloFixture({
+  const prepared = await api.prepareProviderEdition({
     aiProvider,
     routeProvider,
     now: () => fixedNow,
@@ -117,22 +112,21 @@ test("Workers AI and Geoapify HTTP adapters validate a live edition, preserve at
   assert.equal(prepared.origin, "live");
   assert.equal(prepared.routeSource, "live");
   assert.equal(prepared.attempts, 1);
-  assert.equal(prepared.fixture.edition.id, "compact-solo-live-kebayoran");
-  assert.equal(prepared.fixture.edition.boardVersion, api.COMPACT_BOARD_VERSION);
-  assert.equal(prepared.fixture.edition.routes?.source, "live");
-  assert.equal(prepared.fixture.edition.routes?.provider, "Geoapify Routing API");
-  assert.match(prepared.fixture.edition.routes?.attribution ?? "", /Geoapify/);
-  assert.match(prepared.fixture.edition.routes?.attribution ?? "", /OpenStreetMap/);
-  assert.match(prepared.fixture.edition.routes?.attribution ?? "", /Transjakarta GTFS/);
-  assert.ok((prepared.fixture.edition.openings?.length ?? 0) >= 2);
+  assert.equal(prepared.edition.id, "compact-claim-live-rehearsal");
+  assert.equal(prepared.edition.boardVersion, catalog.boardVersion);
+  assert.equal(prepared.edition.routes.source, "live");
+  assert.equal(prepared.edition.routes.provider, "Geoapify Routing API");
+  assert.match(prepared.edition.routes.attribution, /Geoapify/);
+  assert.match(prepared.edition.routes.attribution, /OpenStreetMap/);
+  assert.match(prepared.edition.routes.attribution, /Transjakarta GTFS/);
 
   assert.equal(capturedAuthHeaders.length, 1);
   assert.equal(capturedAuthHeaders[0], `Bearer ${SECRET_API_TOKEN}`);
-  assert.equal(routingCalls, api.uniqueWalkingPairs(api.compactWalkingSnapshot).length);
+  assert.equal(routingCalls, api.uniqueWalkingPairs(snapshot).length);
 
   // Prompt boundary: public board catalog only; zero answer keys, player coordinates, or secrets.
   const promptText = capturedBodies[0];
-  assert.doesNotMatch(promptText, /correctChoiceId|tl-3f|bp-2f|mb-2e|ta-8e|sm-6e|ps-7b/);
+  assert.doesNotMatch(promptText, /correctChoiceId|acceptedAnswers/);
   assert.doesNotMatch(promptText, /-6\.2\d+/);
   assert.ok(!promptText.includes(SECRET_ACCOUNT_ID));
   assert.ok(!promptText.includes(SECRET_API_TOKEN));
@@ -154,6 +148,8 @@ test("Workers AI and Geoapify HTTP adapters validate a live edition, preserve at
 });
 
 test("Workers AI malformed JSON triggers one retry inside the 15s budget and accepts valid second attempt (A13)", async (context) => {
+  const { catalog } = api.getDefaultProviderAssets();
+  const pickSix = Object.keys(catalog.checkpoints).slice(0, 6);
   let attemptCount = 0;
   const baseUrl = await startMockServer(context, (_req, res) => {
     attemptCount += 1;
@@ -170,15 +166,8 @@ test("Workers AI malformed JSON triggers one retry inside the 15s budget and acc
             {
               message: {
                 content: JSON.stringify({
-                  id: "compact-solo-retry-ok",
-                  checkpoints: [
-                    "taman-literasi",
-                    "blok-m-plaza",
-                    "m-bloc",
-                    "taman-ayodya",
-                    "stadion-madya",
-                    "plaza-senayan",
-                  ],
+                  id: "compact-claim-retry-ok",
+                  checkpoints: pickSix,
                 }),
               },
             },
@@ -197,18 +186,18 @@ test("Workers AI malformed JSON triggers one retry inside the 15s budget and acc
     onEvent: (event) => events.push(event),
   });
 
-  const prepared = await api.prepareSoloFixture({ aiProvider });
+  const prepared = await api.prepareProviderEdition({ aiProvider });
   assert.equal(prepared.ok, true);
   assert.equal(prepared.origin, "live");
   assert.equal(prepared.attempts, 2);
-  assert.equal(prepared.fixture.edition.id, "compact-solo-retry-ok");
+  assert.equal(prepared.edition.id, "compact-claim-retry-ok");
   assert.deepEqual(
     events.map((e) => e.outcome),
     ["invalid-output", "proposal-received"],
   );
 });
 
-test("provider HTTP 503 outages and malformed Geoapify payloads fall back to labeled prepared edition and snapshot without affecting an active round (A14, A16)", async (context) => {
+test("provider HTTP 503 outages and malformed Geoapify payloads fall back to labeled prepared edition and snapshot without affecting an active rulebook round (A14, A16)", async (context) => {
   let failAll = true;
   let totalCalls = 0;
   const baseUrl = await startMockServer(context, (_req, res, url) => {
@@ -242,15 +231,15 @@ test("provider HTTP 503 outages and malformed Geoapify payloads fall back to lab
     onEvent: (event) => events.push(event),
   });
 
-  const outage = await api.prepareSoloFixture({ aiProvider, routeProvider });
+  const outage = await api.prepareProviderEdition({ aiProvider, routeProvider });
   assert.equal(outage.ok, true);
   assert.equal(outage.origin, "prepared");
   assert.equal(outage.fallbackReason, "ai-unavailable");
   assert.equal(outage.routeSource, "snapshot");
-  assert.equal(outage.fixture.edition.board, "compact");
-  assert.equal(outage.fixture.edition.format, "claim-the-city");
-  assert.equal(outage.fixture.edition.players, 1);
-  assert.equal(outage.fixture.edition.routes?.source, "snapshot");
+  assert.equal(outage.edition.board, "compact");
+  assert.equal(outage.edition.format, "claim-the-city");
+  assert.equal(outage.edition.players, 1);
+  assert.equal(outage.edition.routes.source, "snapshot");
   assert.ok(events.some((e) => e.kind === "ai-edition" && e.outcome === "http-error" && e.httpStatus === 503));
   assert.ok(events.some((e) => e.kind === "walking-route" && e.outcome === "http-error" && e.httpStatus === 503));
 
@@ -263,55 +252,82 @@ test("provider HTTP 503 outages and malformed Geoapify payloads fall back to lab
     mode: "recorded-rehearsal",
     onEvent: (event) => badGeoEvents.push(event),
   });
-  const badGeo = await api.prepareSoloFixture({ routeProvider: badGeoRouteProvider });
+  const badGeo = await api.prepareProviderEdition({ routeProvider: badGeoRouteProvider });
   assert.equal(badGeo.ok, true);
   assert.equal(badGeo.routeSource, "snapshot");
   assert.equal(badGeoEvents[0].outcome, "invalid-response");
 
-  // Active frozen round makes zero external provider calls during play.
+  // Active frozen Rulebook round makes zero external provider calls during play.
   failAll = true;
+  const now = 1_800_000_000_000;
   const server = api.createSoloServer({
     databasePath: ":memory:",
-    aiProvider,
-    routeProvider,
+    now: () => now,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(() => new Promise((resolve) => server.close(resolve)));
   const apiUrl = `http://127.0.0.1:${server.address().port}`;
 
-  const bootstrap = await fetch(`${apiUrl}/api/solo`);
-  assert.equal(bootstrap.status, 200);
-  const cookie = bootstrap.headers.get("set-cookie").split(";")[0];
-  const { session } = await bootstrap.json();
-  assert.equal(session.edition.origin, "prepared");
-  assert.equal(session.edition.fallbackReason, "ai-unavailable");
-
   const callsBeforePlay = totalCalls;
-  const checkIn = await fetch(`${apiUrl}/api/solo`, {
+  const createRes = await fetch(`${apiUrl}/api/rulebooks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      type: "create-free-room",
+      packId: "official-jakarta-compact-claim",
+      version: 1,
+      mode: "solo",
+      hostName: "Pemain",
+    }),
+  });
+  assert.equal(createRes.status, 200);
+  const cookie = createRes.headers.get("set-cookie").split(";")[0];
+  const created = await createRes.json();
+  assert.equal(created.ok, true);
+
+  const roomRes = await fetch(`${apiUrl}/api/rulebooks/rooms/${created.roomCode}`, {
+    headers: { cookie },
+  });
+  assert.equal(roomRes.status, 200);
+  const roomData = await roomRes.json();
+  const sp = roomData.publicBoard.startPoint;
+
+  const checkIn = await fetch(`${apiUrl}/api/rulebooks`, {
     method: "POST",
     headers: { "Content-Type": "application/json", cookie },
     body: JSON.stringify({
-      type: "check-in",
-      actionId: "a1",
-      sessionId: session.id,
-      checkpointId: session.edition.start.id,
-      fix: {
-        latitude: session.edition.start.latitude,
-        longitude: session.edition.start.longitude,
-        accuracy: 5,
-        timestamp: session.now,
+      type: "room-action",
+      roomCode: created.roomCode,
+      action: {
+        type: "check-in-start",
+        actionId: "prov-a1",
+        fix: { latitude: sp.latitude, longitude: sp.longitude, accuracy: 5, timestamp: now },
       },
     }),
   });
   assert.equal(checkIn.status, 200);
-  const start = await fetch(`${apiUrl}/api/solo`, {
+  const ready = await fetch(`${apiUrl}/api/rulebooks`, {
     method: "POST",
     headers: { "Content-Type": "application/json", cookie },
-    body: JSON.stringify({ type: "start", actionId: "a2", sessionId: session.id }),
+    body: JSON.stringify({
+      type: "room-action",
+      roomCode: created.roomCode,
+      action: { type: "ready", actionId: "prov-a2", ready: true },
+    }),
+  });
+  assert.equal(ready.status, 200);
+  const start = await fetch(`${apiUrl}/api/rulebooks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", cookie },
+    body: JSON.stringify({
+      type: "room-action",
+      roomCode: created.roomCode,
+      action: { type: "start", actionId: "prov-a3" },
+    }),
   });
   assert.equal(start.status, 200);
-  assert.equal((await start.json()).session.phase, "active");
-  assert.equal(totalCalls, callsBeforePlay, "Active session makes zero provider calls");
+  assert.equal((await start.json()).room.phase, "active");
+  assert.equal(totalCalls, callsBeforePlay, "Active rulebook session makes zero external provider calls");
 });
 
 test("createProvidersFromEnv stays unconfigured without credentials and activates live adapters when env vars are set", () => {
