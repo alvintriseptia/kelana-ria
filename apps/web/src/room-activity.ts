@@ -37,16 +37,6 @@ export function formatRelativeAge(at: number, now: number, stalePrefix = false):
   return stalePrefix && seconds > 120 ? `Terakhir dilihat ${label}` : label;
 }
 
-export function renderRoomActivity(feed: RoomActivityFeed, now?: number): string {
-  const refNow = now ?? Date.now();
-  return `<section aria-label="Aktivitas terbaru">
-    <h2 tabindex="-1" data-activity-heading>Aktivitas terbaru</h2>
-    ${feed.events.length ? `<ol class="room-activity-list">${feed.events.slice().reverse().map(event =>
-    `<li data-activity-event="${event.sequence}"><span class="room-activity-text">${escapeText(event.text)}</span><time class="room-activity-age" data-activity-at="${event.at}">${escapeText(formatRelativeAge(event.at, refNow))}</time></li>`).join("")}</ol>`
-    : "<p>Belum ada aktivitas.</p>"}
-  </section>`;
-}
-
 export function createRoomActivityUi(
   signal: AbortSignal,
   open: (notice: RoomActivityNotice | "activity") => void,

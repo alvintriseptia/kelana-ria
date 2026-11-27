@@ -1,4 +1,3 @@
-import { escapeText } from "./escape-text";
 import "./photo-capture.css";
 
 export const MAX_RAW_PHOTO_BYTES = 20 * 1024 * 1024;
@@ -147,55 +146,4 @@ export async function preparePhotoFile(file: File): Promise<PreparedPhoto> {
   } finally {
     source.cleanup();
   }
-}
-
-export function renderPhotoCaptureWidget(opts: {
-  inputId?: string;
-  targetAttrName: string;
-  targetId: string;
-  prepared?: PreparedPhoto | null;
-  processing?: boolean;
-  disabled?: boolean;
-  hintText?: string;
-  previewAlt?: string;
-}): string {
-  const idAttr = opts.inputId ? ` id="${escapeText(opts.inputId)}"` : "";
-  const disabledAttr = opts.disabled ? " disabled" : "";
-  const previewAlt = opts.previewAlt ?? "Pratinjau foto siap unggah";
-  const fileInput = `<input${idAttr} class="photo-capture-input" ${opts.targetAttrName}="${escapeText(opts.targetId)}" type="file" accept="image/*" capture="environment"${disabledAttr}>`;
-
-  if (opts.processing) {
-    return `<div class="photo-capture-widget" data-photo-widget="${escapeText(opts.targetId)}">
-      ${opts.hintText ? `<small class="photo-capture-hint">${escapeText(opts.hintText)}</small>` : ""}
-      <div class="photo-capture-status" role="status" data-testid="photo-processing-status">⏳ Memproses foto…</div>
-      <label class="photo-capture-btn photo-capture-btn--muted" aria-disabled="true">
-        <span aria-hidden="true">📷</span> Ambil Foto
-        ${fileInput}
-      </label>
-    </div>`;
-  }
-
-  if (opts.prepared) {
-    return `<div class="photo-capture-widget photo-capture-widget--ready" data-photo-widget="${escapeText(opts.targetId)}">
-      <div class="photo-preview-frame">
-        <img class="photo-preview-img" data-testid="photo-preview-img" src="${escapeText(opts.prepared.dataUrl)}" alt="${escapeText(previewAlt)}">
-        <span class="photo-ready-badge" data-testid="photo-size-badge" role="status">✓ Siap unggah · ${escapeText(formatPhotoSizeKb(opts.prepared.byteLength))}</span>
-      </div>
-      <div class="photo-capture-actions">
-        <label class="photo-capture-btn photo-capture-btn--retake" data-testid="photo-retake-btn">
-          <span aria-hidden="true">📷</span> Ambil Ulang
-          ${fileInput}
-        </label>
-        <button type="button" class="secondary photo-clear-btn" data-photo-clear="${escapeText(opts.targetId)}" data-testid="photo-clear-btn"${disabledAttr}>Hapus</button>
-      </div>
-    </div>`;
-  }
-
-  return `<div class="photo-capture-widget" data-photo-widget="${escapeText(opts.targetId)}">
-    ${opts.hintText ? `<small class="photo-capture-hint">${escapeText(opts.hintText)}</small>` : ""}
-    <label class="photo-capture-btn" data-testid="photo-capture-btn">
-      <span aria-hidden="true">📷</span> Ambil Foto
-      ${fileInput}
-    </label>
-  </div>`;
 }
