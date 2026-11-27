@@ -19,7 +19,6 @@
     "requireStartCheckIn": true,
     "regroupPolicy": "last_play_checkpoint",
     "missedLockPolicy": "void_turn",
-    "endgameFreezeGraceSec": 60,
     "maxPathOffsetMeters": 5
   },
   "timers": {
@@ -53,8 +52,7 @@
         "drawCount": 2,
         "keepCount": 1,
         "availableInPhases": [
-          "seeking",
-          "endgame"
+          "seeking"
         ],
         "allowCustomRadius": false,
         "items": [
@@ -188,8 +186,7 @@
         "drawCount": 1,
         "keepCount": 1,
         "availableInPhases": [
-          "seeking",
-          "endgame"
+          "seeking"
         ],
         "items": [
           {
@@ -214,19 +211,19 @@
             "id": "photo-sky",
             "label": "Langit tegak lurus",
             "prompt": "Arahkan kamera lurus ke atas dari titik persembunyianmu.",
-            "phase": "endgame"
+            "phase": "seeking"
           },
           {
             "id": "photo-tree",
             "label": "Pohon / tanaman terdekat",
             "prompt": "Foto pohon atau pot tanaman terdekat yang terlihat dari tempatmu diam.",
-            "phase": "endgame"
+            "phase": "seeking"
           },
           {
             "id": "photo-ground",
             "label": "Permukaan pijakan",
             "prompt": "Foto permukaan trotoar atau lantai tepat di dekat kakimu.",
-            "phase": "endgame"
+            "phase": "seeking"
           }
         ]
       }

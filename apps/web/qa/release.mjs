@@ -184,7 +184,7 @@ try {
     }
   }
 
-  // 5 & 6: Multiplayer Hide & Seek (Compact & Jakarta Wide) launched from / + invite link join + Endgame Found Code
+  // 5 & 6: Multiplayer Hide & Seek (Compact & Jakarta Wide) launched from / + invite link join + search-phase found code
   for (const board of ["compact", "jakarta-wide"]) {
     const host = await openDevice();
     const guest = await openDevice();
@@ -220,8 +220,14 @@ try {
       await guest.page.locator("[data-map-ready=true]").waitFor();
       await guest.page.screenshot({ path: join(results, `release-${board}-seek-map.png`) });
       await guest.page.locator('button[data-map-point="mrt-blok-m"]').press("Enter");
-      await clickAndWaitPost(guest.page, 'button[data-action="trigger-endgame"]');
+      const guestBoard = guest.page.locator('[data-panel="board"]');
+      if (await guestBoard.getAttribute("aria-pressed") !== "true") await guestBoard.click();
+      await clickAndWaitPost(guest.page, 'button[data-action="seeker-check-in"]');
       await refreshSeekRoom(host.page);
+      for (const page of [host.page, guest.page]) {
+        const boardTab = page.locator('[data-panel="board"]');
+        if (await boardTab.getAttribute("aria-pressed") !== "true") await boardTab.click();
+      }
       const code = (await host.page.locator('[data-testid="hider-found-code"]').textContent()).trim();
       await guest.page.locator("#rb-found-input").fill(code);
       await clickAndWaitPost(guest.page, 'button[data-action="submit-found-code"]');

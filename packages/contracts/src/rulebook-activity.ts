@@ -2,7 +2,7 @@ export type RoomActivityPanel = "board" | "questions" | "clues" | "cards" | "sco
 
 export type RoomActivityKind =
   | "role" | "release" | "question" | "answer" | "question-closed" | "draw" | "card"
-  | "curse" | "endgame" | "turn-complete" | "round-start" | "claim" | "lock" | "steal"
+  | "curse" | "turn-complete" | "round-start" | "claim" | "lock" | "steal"
   | "zone" | "proof" | "vulnerable" | "round-complete";
 
 export type RoomActivityNotice = {

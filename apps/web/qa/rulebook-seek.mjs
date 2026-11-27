@@ -268,10 +268,10 @@ try {
   await hiderSeekCue.waitFor();
   assert.match(await hiderSeekCue.innerText(), /Jawab pertanyaan pencari/);
   await assertCleanUiCopy(pageG2, "seek seeking phase seeker");
-  const seekerBodyBeforeEndgame = await pageG2.textContent("body");
-  assert.equal(seekerBodyBeforeEndgame.includes("hider-found-code"), false);
+  const seekerBodyBeforeSearch = await pageG2.textContent("body");
+  assert.equal(seekerBodyBeforeSearch.includes("hider-found-code"), false);
 
-  // Seeker asks a Radar clue, Hider answers & picks drawn card, Seeker triggers Endgame, enters Found Code -> Regroup!
+  // Seeker asks a Radar clue, Hider answers & picks drawn card, Seeker checks in and enters the found code -> Regroup!
   const radarCard = pageG2.locator('button[data-action="question-family"][data-family="radar"]');
   await radarCard.waitFor();
   await pageG2.locator("[data-map-ready=true]").waitFor();
@@ -310,7 +310,7 @@ try {
       data: {
         type: "room-action",
         roomCode,
-        action: { type: "seeker-check-in", actionId: "qa-sse-radius-tick", offTransit: false, fix: { latitude: spCoord.latitude, longitude: spCoord.longitude, accuracy: 10, timestamp: now } },
+        action: { type: "seeker-check-in", actionId: "qa-sse-radius-tick", fix: { latitude: spCoord.latitude, longitude: spCoord.longitude, accuracy: 10, timestamp: now } },
       },
     });
     await pageG2.waitForTimeout(1150);
@@ -405,7 +405,7 @@ try {
     data: {
       type: "room-action",
       roomCode,
-      action: { type: "seeker-check-in", actionId: "qa-sse-draw-tick", offTransit: false, fix: { latitude: spDraw.latitude, longitude: spDraw.longitude, accuracy: 10, timestamp: now } },
+      action: { type: "seeker-check-in", actionId: "qa-sse-draw-tick", fix: { latitude: spDraw.latitude, longitude: spDraw.longitude, accuracy: 10, timestamp: now } },
     },
   });
   await pageCreator.waitForTimeout(1150);
@@ -517,16 +517,26 @@ try {
   await pageG2.reload();
   await pageG2.locator('[data-action="retry-map"]').waitFor();
   await pageG2.click('button[data-action="select-station"][data-station="mrt-blok-m"]');
-  await clickAndWaitPost(pageG2, 'button[data-action="trigger-endgame"]');
-  await pageG2.waitForFunction(() => document.body.textContent.includes("Endgame"));
-  await pageG2.locator('.sg-role[data-game-motion^="role:"]').waitFor();
-  const endgameBanner = pageG2.getByTestId("game-fx-overlay").locator('[data-fx-kind="banner"]');
-  await endgameBanner.filter({ hasText: "Pencarian Tahap Akhir" }).waitFor({ state: "attached" });
-  assert.equal(await endgameBanner.evaluate(element => getComputedStyle(element).pointerEvents), "none");
-  await assertCleanUiCopy(pageG2, "seek endgame");
+  await clickAndWaitPost(pageG2, 'button[data-action="seeker-check-in"]');
+  const atHider = (await snapshot()).room;
+  assert.equal(atHider.phase, "seeking");
+  assert.equal(atHider.seekerPosition.stationId, "mrt-blok-m");
+  assert.equal(atHider.foundCode, undefined);
+  await pageG2.click('button[data-action="select-station"][data-station="mrt-senayan"]');
+  await clickAndWaitPost(pageG2, 'button[data-action="seeker-check-in"]');
+  const afterLeaving = (await snapshot()).room;
+  assert.equal(afterLeaving.seekerPosition.stationId, "mrt-senayan");
+  assert.equal(afterLeaving.phaseEndsAt, atHider.phaseEndsAt);
+  assert.equal(afterLeaving.phase, "seeking");
+  assert.equal(afterLeaving.ownAnchorStationId, undefined);
+  await assertCleanUiCopy(pageG2, "seek check-in without revealing the hider");
   await refreshSeekRoom(pageCreator);
+  const hiderBoard = pageCreator.locator('[data-panel="board"]');
+  if (await hiderBoard.getAttribute("aria-pressed") !== "true") await hiderBoard.click();
   const foundCode = (await pageCreator.textContent('[data-testid="hider-found-code"]')).trim();
   assert.match(foundCode, /^\d{4}$/);
+  assert.equal(await pageG2.getByTestId("hider-found-code").count(), 0);
+  await pageCreator.screenshot({ path: path.join(results, "rulebook-seek-private-code-search.png") });
 
   await pageG2.unroute("**/api/map/config");
   await pageG2.unroute("**/qa-tiles/style.json");
@@ -560,6 +570,11 @@ try {
     }
     frame = requestAnimationFrame(sample);
   }), cameraBeforeZoom);
+  const wrongCode = foundCode === "0000" ? "0001" : "0000";
+  await pageG2.fill("#rb-found-input", wrongCode);
+  await clickAndWaitPost(pageG2, 'button[data-action="submit-found-code"]');
+  await pageG2.getByText(/Kode temuan tidak cocok/).first().waitFor();
+  assert.equal((await snapshot()).room.phase, "seeking");
   await pageG2.fill("#rb-found-input", foundCode);
   await clickAndWaitPost(pageG2, 'button[data-action="submit-found-code"]');
   await pageG2.waitForFunction(() => document.body.textContent.includes("Berkumpul Kembali"));
@@ -815,11 +830,11 @@ try {
     now = hsView.room.releaseAt + 1_000;
     const seekView = await (await locSeekerCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${locCode}`)).json();
     await locSeekerCtx.request.post(`${baseUrl}/api/rulebooks`, {
-      data: { type: "room-action", roomCode: locCode, action: { type: "seeker-check-in", actionId: "sl-endgame", fix: { latitude: st0.latitude, longitude: st0.longitude, accuracy: 10, timestamp: seekView.room.now }, offTransit: true } },
+      data: { type: "room-action", roomCode: locCode, action: { type: "seeker-check-in", actionId: "sl-check-in", fix: { latitude: st0.latitude, longitude: st0.longitude, accuracy: 10, timestamp: seekView.room.now } } },
     });
-    const endHider = await (await locHiderCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${locCode}`)).json();
+    const searchHider = await (await locHiderCtx.request.get(`${baseUrl}/api/rulebooks/rooms/${locCode}`)).json();
     await locSeekerCtx.request.post(`${baseUrl}/api/rulebooks`, {
-      data: { type: "room-action", roomCode: locCode, action: { type: "submit-found-code", actionId: "sl-found", code: endHider.room.foundCode } },
+      data: { type: "room-action", roomCode: locCode, action: { type: "submit-found-code", actionId: "sl-found", code: searchHider.room.foundCode } },
     });
     await locSeeker.goto(`${baseUrl}/?play=rulebook-seek&room=${locCode}`, { waitUntil: "networkidle" });
     await locSeeker.getByTestId("seek-regroup-card").waitFor();

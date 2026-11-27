@@ -68,7 +68,6 @@ const resumePhaseLabels: Record<ActiveRulebookRoomPhase, string> = {
   active: "Ronde Aktif",
   head_start: "Waktu Sembunyi",
   seeking: "Fase Cari",
-  endgame: "Endgame",
   regroup: "Berkumpul Kembali",
 };
 const recapDate = new Intl.DateTimeFormat("id-ID", { dateStyle: "medium" });

@@ -270,7 +270,7 @@ test("Veto cancels question while keeping 2x repeat cost, and Randomize swaps to
   assert.equal(match.questions.at(-1).itemId, randRes.randomizedItemId);
 });
 
-test("Duplicate, Expand Hand, Discard-Draw, Time Trap trigger, and Move Zone relocation + Endgame block", () => {
+test("Duplicate, Expand Hand, Discard-Draw, Time Trap trigger, and Move Zone relocation remains available during search", () => {
   const { snapshot, match, deck, seekingStart } = buildDeckFixture();
   giveHand(deck, ["p-dup", "b-2m", "p-exp"]);
   let t = seekingStart + 1000;
@@ -330,13 +330,12 @@ test("Duplicate, Expand Hand, Discard-Draw, Time Trap trigger, and Move Zone rel
   );
   assert.equal(match.anchorStationId, "s4");
 
-  // Enter Endgame at s4 -> Move Zone must be rejected!
-  api.applySeekEngineAction(match, "p2", { actionId: "eg", type: "seeker-check-in", fix: fixAt(s4, t + 3 * MINUTE), offTransit: true }, t + 3 * MINUTE);
+  const checkedIn = api.applySeekEngineAction(match, "p2", {
+    actionId: "check-in", type: "seeker-check-in", fix: fixAt(s4, t + 3 * MINUTE),
+  }, t + 3 * MINUTE);
+  assert.equal(checkedIn.room.phase, "seeking");
   giveHand(deck, ["p-move"]);
-  assert.equal(
-    api.playSeekDeckCard(deck, match, { cardInstanceId: deck.hand[0].instanceId }, t + 3 * MINUTE + 1000).error,
-    "move-disabled-in-endgame",
-  );
+  assert.equal(api.playSeekDeckCard(deck, match, { cardInstanceId: deck.hand[0].instanceId }, t + 3 * MINUTE + 1000).ok, true);
 });
 
 test("Composable curses: stacking rules (1 active blocker cap), GPS detour, photo auto-approve, next_n_questions, and buyout penalty", () => {

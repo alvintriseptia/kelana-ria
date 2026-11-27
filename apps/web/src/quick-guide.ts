@@ -162,7 +162,7 @@ function guideSpec(ctx: QuickGuideContext): {
         },
         {
           title: "Bertahan Selama Mungkin",
-          body: "Waktu sembunyi ditambah bonus kartu menentukan kemenangan setelah kedua tim bertukar peran.",
+          body: "Berikan kode temuan saat pencari menemukanmu. Waktu sembunyi dan bonus kartu menentukan hasil setelah bertukar peran.",
         },
       ],
     };
@@ -184,7 +184,7 @@ function guideSpec(ctx: QuickGuideContext): {
         },
         {
           title: "Selidiki & Temukan Penyembunyi",
-          body: "Check-in di stasiun target saat sudah yakin, lalu bertukar peran di giliran berikutnya.",
+          body: "Check-in untuk memperbarui posisimu. Saat menemukan penyembunyi, minta kode 4 digit dan masukkan di panel Titik untuk mengakhiri giliran.",
         },
       ],
     };

@@ -171,7 +171,13 @@ export function deserializeLiveSession(
     ...raw.match,
     pack: pack as HideSeekRulebookPack,
     snapshot,
-    appliedActions: new Map(raw.match.appliedActions),
+    phase: String(raw.match.phase) === "endgame" ? "seeking" : raw.match.phase,
+    usedFoundCodes: raw.match.usedFoundCodes ?? (raw.match.foundCode ? [raw.match.foundCode] : []),
+    foundCodeAttempts: raw.match.foundCodeAttempts ?? [],
+    appliedActions: new Map(raw.match.appliedActions.map(([key, saved]) => {
+      const { endgameTriggered: _oldProximitySignal, ...reply } = saved as typeof saved & { endgameTriggered?: boolean };
+      return [key, reply];
+    })),
     generateFoundCode: defaultFoundCode,
   };
   const deck: SeekDeckEngineState = {

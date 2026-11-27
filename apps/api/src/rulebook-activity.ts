@@ -38,7 +38,7 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
   const feeds = new Map<string, { sequence: number; events: RoomActivityEvent[] }>(
     initial?.feeds.map(([seatId, feed]) => [
       seatId,
-      { sequence: feed.sequence, events: feed.events.map((event) => ({ ...event })) },
+      { sequence: feed.sequence, events: feed.events.filter(event => String(event.kind) !== "endgame").map(event => ({ ...event })) },
     ]) ?? [],
   );
   let claimEventCount = initial?.claimEventCount ?? 0;
@@ -188,7 +188,7 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
     const hiderId = activeHiderSeatId(match);
     const hiders = seats.filter(seat => seat.seatId === hiderId);
     const seekers = seats.filter(seat => seat.seatId !== hiderId);
-    const answering = phase === "seeking" || phase === "endgame";
+    const answering = phase === "seeking";
     const newTurn = phase !== "lobby" && (turn !== seekTurn || seekPhase === "lobby");
 
     function noteQuestion(question: SeekEngineQuestion, questionTurn: number, formerHiderId: string | null, active: boolean) {
@@ -229,9 +229,6 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
     if (phase === "seeking" && seekPhase !== phase) {
       publish(seekers, { kind: "release", text: "Waktu mencari dimulai.", panel: "board", at: match.releaseAt ?? now, turn }, () => true);
     }
-    if (phase === "endgame" && seekPhase !== phase) {
-      publish(seats, { kind: "endgame", text: "Pencarian memasuki tahap akhir.", panel: "board", at: match.endgameTriggeredAt ?? now, turn }, () => true);
-    }
     if (answering) {
       for (const question of match.questions) noteQuestion(question, turn, hiderId, true);
       const currentDraw = deck.activeDraw?.cards[0]?.instanceId ?? "";
@@ -265,7 +262,7 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
     if (room.phase === "head_start" && room.role === "hider" && !room.ownAnchorStationId && room.phaseEndsAt !== null) {
       prompts.push({ id: `hide-${turn}`, kind: "role", text: "Pilih titik sembunyi sebelum pencarian dimulai.", panel: "board", deadline: room.phaseEndsAt });
     }
-    if ((room.phase === "seeking" || room.phase === "endgame") && room.role === "hider") {
+    if (room.phase === "seeking" && room.role === "hider") {
       const pending = room.questions.map((question, index) => ({ question, index }))
         .filter(({ question }) => question.status === "pending")
         .sort((a, b) => a.question.deadline - b.question.deadline);
@@ -284,11 +281,6 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
       if (draw) prompts.push({ id: `draw-${turn}-${draw.deadline}`, kind: "draw",
         text: "Pilih kartu untuk disimpan.", panel: "cards", deadline: draw.deadline });
     }
-    if (room.phase === "endgame") {
-      const deadline = room.role === "hider" ? room.endgameFreezeAt : room.phaseEndsAt;
-      const needsAction = room.role === "hider" ? !room.hiderFrozen : !room.seats.find(seat => seat.seatId === room.seatId)?.confirmedFound;
-      if (needsAction && deadline !== null) prompts.push({ id: `endgame-${turn}`, kind: "endgame", text: "Selesaikan langkah tahap akhir.", panel: "board", deadline });
-    }
     if (room.phase === "regroup" && room.phaseEndsAt !== null && !room.seats.find(seat => seat.seatId === room.seatId)?.regrouped) {
       prompts.push({ id: `regroup-${turn}`, kind: "turn-complete", text: "Buka titik kumpul untuk giliran berikutnya.", panel: "regroup", deadline: room.phaseEndsAt });
     }
@@ -299,7 +291,7 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
     return {
       feeds: [...feeds.entries()].map(([seatId, feed]) => [
         seatId,
-        { sequence: feed.sequence, events: feed.events.map((event) => ({ ...event })) },
+        { sequence: feed.sequence, events: feed.events.map(event => ({ ...event })) },
       ]),
       claimEventCount,
       claimOwners: [...claimOwners.entries()],

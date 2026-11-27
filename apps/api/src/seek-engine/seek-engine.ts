@@ -3,7 +3,6 @@ import type {
   GeoCoordinate,
   GeoSnapshot,
   GeoStation,
-  HideSeekPlayPhase,
   HideSeekQuestionFamily,
   HideSeekRulebookPack,
   SeekBoardPoint,
@@ -49,9 +48,8 @@ export type SeekEngineMatch = {
   hiderLastPosition: GeoCoordinate | null;
   hiderOutOfZone: boolean;
   foundCode: string | null;
-  endgameTriggeredAt: number | null;
-  endgameFreezeAt: number | null;
-  hiderFrozen: boolean;
+  usedFoundCodes: string[];
+  foundCodeAttempts: number[];
   moveZoneUntil: number | null;
   revealedOldAnchorStationId: string | null;
   thermometerStart: GeoCoordinate | null;
@@ -82,6 +80,17 @@ export type SeekEngineMatch = {
 
 function defaultFoundCode(): string {
   return String(randomInt(0, 10_000)).padStart(4, "0");
+}
+
+// A short match-wide retry limit keeps the four-digit code useful as proof of a find.
+const FOUND_CODE_ATTEMPT_WINDOW_MS = 60_000;
+const FOUND_CODE_MAX_FAILURES = 5;
+
+function issueFoundCode(match: SeekEngineMatch): string {
+  let code = match.generateFoundCode();
+  while (match.usedFoundCodes.includes(code)) code = defaultFoundCode();
+  match.usedFoundCodes.push(code);
+  return code;
 }
 
 function questionKey(family: HideSeekQuestionFamily, itemId: string): string {
@@ -126,9 +135,7 @@ function clearTurnState(match: SeekEngineMatch) {
   match.hiderLastPosition = null;
   match.hiderOutOfZone = false;
   match.foundCode = null;
-  match.endgameTriggeredAt = null;
-  match.endgameFreezeAt = null;
-  match.hiderFrozen = false;
+  match.foundCodeAttempts = [];
   match.moveZoneUntil = null;
   match.revealedOldAnchorStationId = null;
   match.thermometerStart = null;
@@ -143,7 +150,6 @@ function clearTurnState(match: SeekEngineMatch) {
   match.extraDrawPerQuestion = 0;
   for (const seat of match.seats) {
     seat.regrouped = false;
-    seat.confirmedFound = false;
   }
 }
 
@@ -184,6 +190,7 @@ function closeMatch(
   match.phaseEndsAt = null;
   match.outcome = { winnerSeatId, reason, at };
   match.foundCode = null;
+  match.foundCodeAttempts = [];
   match.moveZoneUntil = null;
   match.hiderLastPosition = null;
   match.thermometerStart = null;
@@ -326,7 +333,6 @@ export function createSeekEngineMatch(params: {
         startVerifiedUntil: null,
         ready: false,
         regrouped: false,
-        confirmedFound: false,
         credentialHash: params.hostCredentialHash,
       },
     ],
@@ -337,9 +343,8 @@ export function createSeekEngineMatch(params: {
     hiderLastPosition: null,
     hiderOutOfZone: false,
     foundCode: null,
-    endgameTriggeredAt: null,
-    endgameFreezeAt: null,
-    hiderFrozen: false,
+    usedFoundCodes: [],
+    foundCodeAttempts: [],
     moveZoneUntil: null,
     revealedOldAnchorStationId: null,
     thermometerStart: null,
@@ -381,7 +386,6 @@ export function joinSeekEngineMatch(
     startVerifiedUntil: null,
     ready: false,
     regrouped: false,
-    confirmedFound: false,
     credentialHash: params.credentialHash,
   });
   match.turnOrder.push(params.seatId);
@@ -394,7 +398,7 @@ export function expireSeekEngineMatch(match: SeekEngineMatch, now: number): { ch
   const purgedPhotoIds: string[] = [];
 
   const expireIntraPhase = (through: number) => {
-    if (match.phase === "seeking" || match.phase === "endgame") {
+    if (match.phase === "seeking") {
       for (const question of match.questions) {
         if (question.status === "pending" && question.deadline <= through) {
           if (question.family === "photo") {
@@ -412,10 +416,6 @@ export function expireSeekEngineMatch(match: SeekEngineMatch, now: number): { ch
           }
           changed = true;
         }
-      }
-      if (match.phase === "endgame" && !match.hiderFrozen && match.endgameFreezeAt !== null && match.endgameFreezeAt <= through) {
-        match.hiderFrozen = true;
-        changed = true;
       }
       if (match.moveZoneUntil !== null && match.moveZoneUntil <= through) {
         match.moveZoneUntil = null;
@@ -449,7 +449,7 @@ export function expireSeekEngineMatch(match: SeekEngineMatch, now: number): { ch
               match.phase = "seeking";
               match.releaseAt = at;
               match.phaseEndsAt = at + match.pack.timers.searchLimitMs;
-              match.foundCode = match.generateFoundCode();
+              match.foundCode = issueFoundCode(match);
             } else {
               purgedPhotoIds.push(...closeMatch(match, "void", "missed_lock", at));
             }
@@ -462,12 +462,11 @@ export function expireSeekEngineMatch(match: SeekEngineMatch, now: number): { ch
           match.phase = "seeking";
           match.releaseAt = at;
           match.phaseEndsAt = at + match.pack.timers.searchLimitMs;
-          match.foundCode = match.generateFoundCode();
+          match.foundCode = issueFoundCode(match);
         }
         break;
       }
-      case "seeking":
-      case "endgame": {
+      case "seeking": {
         purgedPhotoIds.push(...completeTurn(match, "timeout", at));
         break;
       }
@@ -506,8 +505,7 @@ function buildDrawBatches(
 }
 
 function buildMenu(match: SeekEngineMatch): SeekEngineMenuEntry[] {
-  if (match.phase !== "seeking" && match.phase !== "endgame") return [];
-  const playPhase: HideSeekPlayPhase = match.phase;
+  if (match.phase !== "seeking") return [];
   const entries: SeekEngineMenuEntry[] = [];
   const { families } = match.pack.investigationBook;
   const defaultObjMs = match.pack.timers.objectiveResponseMs;
@@ -520,18 +518,13 @@ function buildMenu(match: SeekEngineMatch): SeekEngineMenuEntry[] {
       drawCount: number;
       keepCount: number;
       responseMs?: number;
-      availableInPhases: HideSeekPlayPhase[];
-      items: { id: string; label: string; prompt?: string; phase?: HideSeekPlayPhase | "both"; radiusMeters?: number; minTravelMeters?: number }[];
+      items: { id: string; label: string; prompt?: string; radiusMeters?: number; minTravelMeters?: number }[];
       allowCustomRadius?: boolean;
     } | undefined,
   ) => {
     if (!cfg?.enabled) return;
     const responseMs = cfg.responseMs ?? (family === "photo" ? defaultPhotoMs : defaultObjMs);
-    const familyAllowedInPhase = cfg.availableInPhases.includes(playPhase);
     for (const item of cfg.items) {
-      const itemAllowedInPhase =
-        familyAllowedInPhase &&
-        (item.phase === undefined || item.phase === "both" || item.phase === playPhase);
       const useCount = match.questionUseCounts[questionKey(family, item.id)] ?? 0;
       const { multiplier, batches, locked } = buildDrawBatches(
         match.pack,
@@ -549,7 +542,7 @@ function buildMenu(match: SeekEngineMatch): SeekEngineMenuEntry[] {
         nextRepeatMultiplier: multiplier,
         drawBatches: batches,
         lockedSingleUse: locked,
-        availableInCurrentPhase: itemAllowedInPhase,
+        availableInCurrentPhase: true,
         responseMs,
         ...(item.radiusMeters !== undefined ? { radiusMeters: item.radiusMeters } : {}),
         ...(item.minTravelMeters !== undefined ? { minTravelMeters: item.minTravelMeters } : {}),
@@ -572,7 +565,7 @@ function buildMenu(match: SeekEngineMatch): SeekEngineMenuEntry[] {
         nextRepeatMultiplier: multiplier,
         drawBatches: batches,
         lockedSingleUse: locked,
-        availableInCurrentPhase: familyAllowedInPhase,
+        availableInCurrentPhase: true,
         responseMs,
         isCustomRadius: true,
       });
@@ -636,7 +629,7 @@ function candidateStations(match: SeekEngineMatch): string[] | undefined {
 }
 
 export function previewSeekEngineQuestion(match: SeekEngineMatch, seatId: string, request: SeekMapPreviewRequest, now: number) {
-  if ((match.phase !== "seeking" && match.phase !== "endgame") || (match.phaseEndsAt !== null && now >= match.phaseEndsAt)) {
+  if (match.phase !== "seeking" || (match.phaseEndsAt !== null && now >= match.phaseEndsAt)) {
     return { error: "room-phase-changed" };
   }
   if (seatId === activeHiderSeatId(match)) return { error: "seeker-only" };
@@ -652,7 +645,7 @@ export function previewSeekEngineQuestion(match: SeekEngineMatch, seatId: string
 export function viewSeekEngineMatch(match: SeekEngineMatch, seatId: string, now: number): SeekEngineRoomView {
   const hiderId = activeHiderSeatId(match);
   const inActiveTurn =
-    match.phase === "head_start" || match.phase === "seeking" || match.phase === "endgame";
+    match.phase === "head_start" || match.phase === "seeking";
   const isHider = inActiveTurn && seatId === hiderId;
   const role: "hider" | "seeker" | "lobby" =
     match.phase === "lobby" ? "lobby" : seatId === hiderId ? "hider" : "seeker";
@@ -666,8 +659,7 @@ export function viewSeekEngineMatch(match: SeekEngineMatch, seatId: string, now:
     return publicQuestion;
   });
 
-  const playPhase: HideSeekPlayPhase | undefined =
-    match.phase === "seeking" || match.phase === "endgame" ? match.phase : undefined;
+  const playPhase = match.phase === "seeking" ? match.phase : undefined;
 
   return {
     code: match.code,
@@ -683,9 +675,6 @@ export function viewSeekEngineMatch(match: SeekEngineMatch, seatId: string, now:
     startedAt: match.startedAt,
     releaseAt: match.releaseAt,
     phaseEndsAt: match.phaseEndsAt,
-    endgameTriggeredAt: match.endgameTriggeredAt,
-    endgameFreezeAt: match.endgameFreezeAt,
-    hiderFrozen: match.hiderFrozen,
     canMoveZone: match.phase === "seeking" && match.moveZoneUntil === null,
     regroupPoint: match.regroupPoint,
     turnStartPoint: match.turnStartPoint ?? match.snapshot.startPoint,
@@ -711,7 +700,7 @@ export function viewSeekEngineMatch(match: SeekEngineMatch, seatId: string, now:
           ...(match.anchorStationId ? { ownAnchorStationId: match.anchorStationId } : {}),
           ownHidingZoneRadiusMeters: match.pack.geography.hidingZoneRadiusMeters,
           hiderOutOfZone: match.hiderOutOfZone,
-          ...(match.phase === "endgame" && match.foundCode ? { foundCode: match.foundCode } : {}),
+          ...(playPhase && match.foundCode ? { foundCode: match.foundCode } : {}),
           pendingDrawBatches: [...match.pendingDrawBatches],
         }
       : {}),
@@ -876,39 +865,19 @@ export function applySeekEngineAction(
       return finish();
     }
 
-    case "confirm-freeze": {
-      if (match.phase !== "endgame") return finish({ error: "room-phase-changed" });
-      if (!isHider) return finish({ error: "hider-only" });
-      match.hiderFrozen = true;
-      return finish();
-    }
-
     case "seeker-check-in": {
-      if (match.phase !== "seeking" && match.phase !== "endgame") {
+      if (match.phase !== "seeking") {
         return finish({ error: "room-phase-changed" });
       }
       if (isHider) return finish({ error: "seeker-only" });
       const fresh = verifyGpsFreshAndAccurate(action.fix, now, match.pack.geography);
       if (!fresh.ok) return finish({ error: fresh.error });
       recordSeekerPosition(match, seatId, action.fix, now);
-      if (match.phase === "seeking" && action.offTransit && match.anchorStationId && match.moveZoneUntil === null) {
-        const anchor = findAnchorStation(match, match.anchorStationId);
-        if (anchor) {
-          const zoneCheck = isInsideHidingZone(anchor, action.fix, match.pack.geography.hidingZoneRadiusMeters);
-          if (zoneCheck.inside) {
-            match.phase = "endgame";
-            match.endgameTriggeredAt = now;
-            match.endgameFreezeAt = now + match.pack.session.endgameFreezeGraceSec * 1000;
-            match.hiderFrozen = match.pack.session.endgameFreezeGraceSec === 0;
-            return finish({ endgameTriggered: true });
-          }
-        }
-      }
-      return finish({ endgameTriggered: false });
+      return finish();
     }
 
     case "start-thermometer": {
-      if (match.phase !== "seeking" && match.phase !== "endgame") {
+      if (match.phase !== "seeking") {
         return finish({ error: "room-phase-changed" });
       }
       if (isHider) return finish({ error: "seeker-only" });
@@ -920,7 +889,7 @@ export function applySeekEngineAction(
     }
 
     case "ask": {
-      if (match.phase !== "seeking" && match.phase !== "endgame") {
+      if (match.phase !== "seeking") {
         return finish({ error: "room-phase-changed" });
       }
       if (isHider) return finish({ error: "seeker-only" });
@@ -1006,7 +975,7 @@ export function applySeekEngineAction(
     }
 
     case "answer-question": {
-      if (match.phase !== "seeking" && match.phase !== "endgame") {
+      if (match.phase !== "seeking") {
         return finish({ error: "room-phase-changed" });
       }
       if (!isHider) return finish({ error: "hider-only" });
@@ -1034,39 +1003,22 @@ export function applySeekEngineAction(
       return finish({ earnedDrawBatches: question.drawBatches });
     }
 
-    case "cannot-answer-endgame": {
-      if (match.phase !== "endgame") return finish({ error: "endgame-only" });
-      if (!isHider) return finish({ error: "hider-only" });
-      const question = match.questions.find((q) => q.id === action.questionId && q.status === "pending");
-      if (!question) return finish({ error: "question-closed" });
-      delete question.privateComputedAnswer;
-      question.status = "cannot_answer_endgame";
-      question.answerCode = "cannot_answer_endgame";
-      question.answerLabel = "Cannot answer (Endgame)";
-      match.pendingDrawBatches.push(...question.drawBatches);
-      return finish({ earnedDrawBatches: question.drawBatches });
-    }
-
     case "submit-found-code": {
-      if (match.phase !== "endgame") return finish({ error: "endgame-only" });
+      if (match.phase !== "seeking") return finish({ error: "room-phase-changed" });
       if (isHider) return finish({ error: "seeker-only" });
-      if (!match.foundCode || action.code.trim() !== match.foundCode) {
+      if (typeof action.code !== "string" || !/^\d{4}$/.test(action.code.trim())) {
+        return finish({ error: "invalid-found-code" });
+      }
+      match.foundCodeAttempts = match.foundCodeAttempts.filter(at => now - at < FOUND_CODE_ATTEMPT_WINDOW_MS);
+      if (match.foundCodeAttempts.length >= FOUND_CODE_MAX_FAILURES) {
+        return finish({ error: "found-code-rate-limited" });
+      }
+      if (action.code.trim() !== match.foundCode) {
+        match.foundCodeAttempts.push(now);
         return finish({ error: "invalid-found-code" });
       }
       const purged = completeTurn(match, "found", now);
       return finish({ purgedPhotoIds: purged });
-    }
-
-    case "confirm-found": {
-      if (match.phase !== "endgame") return finish({ error: "endgame-only" });
-      seat.confirmedFound = true;
-      const hiderSeat = hiderId ? findSeat(match, hiderId) : undefined;
-      const anySeekerConfirmed = match.seats.some((s) => s.seatId !== hiderId && s.confirmedFound);
-      if (hiderSeat?.confirmedFound && anySeekerConfirmed) {
-        const purged = completeTurn(match, "found", now);
-        return finish({ purgedPhotoIds: purged });
-      }
-      return finish();
     }
 
     case "regroup-check-in": {
@@ -1093,6 +1045,8 @@ export function applySeekEngineAction(
       }
       return finish();
     }
+    default:
+      return finish({ error: "unknown-action" });
   }
 }
 
@@ -1166,7 +1120,6 @@ export function startMoveZoneRelocation(
   revealOldStation: boolean,
 ): { ok: true; revealedOldAnchorStationId: string | null; moveZoneUntil: number } | { ok: false; error: string } {
   expireSeekEngineMatch(match, now);
-  if (match.phase === "endgame") return { ok: false, error: "move-disabled-in-endgame" };
   if (match.phase !== "seeking") return { ok: false, error: "room-phase-changed" };
   if (match.moveZoneUntil !== null) return { ok: false, error: "already-relocating" };
   const oldId = revealOldStation ? match.anchorStationId : null;

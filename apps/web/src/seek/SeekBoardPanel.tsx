@@ -25,8 +25,6 @@ export function SeekBoardPanel({
   onSelectStation,
   onLockAnchor,
   onSeekerCheckIn,
-  onTriggerEndgame,
-  onConfirmFreeze,
   onSubmitFoundCode,
   onClearCurseGps,
   onSubmitCursePhoto,
@@ -48,8 +46,6 @@ export function SeekBoardPanel({
   onSelectStation: (stationId: string) => void;
   onLockAnchor: (stationId: string) => void;
   onSeekerCheckIn: () => void;
-  onTriggerEndgame: (stationId: string) => void;
-  onConfirmFreeze: () => void;
   onSubmitFoundCode: () => void;
   onClearCurseGps: (curseId: string) => void;
   onSubmitCursePhoto: (curseId: string) => void;
@@ -185,42 +181,16 @@ export function SeekBoardPanel({
         </button>
       )}
 
-      {!isHider && room.phase !== "head_start" && (
-        <button
-          type="button"
-          class={`sg-main${readyClass}`}
-          data-action="trigger-endgame"
-          data-station={selected?.id ?? ""}
-          disabled={busy}
-          onClick={() => onTriggerEndgame(selected?.id ?? "")}
-        >
-          Check-in turun dari transit
-        </button>
-      )}
-
-      {isHider && room.phase === "endgame" && room.foundCode && (
+      {isHider && room.phase === "seeking" && room.foundCode && (
         <>
           <p>Berikan kode saat pencari menemukanmu.</p>
           <div class="rb-found-code" data-testid="hider-found-code">
             {room.foundCode}
           </div>
-          {room.hiderFrozen ? (
-            <p>Posisi terkunci</p>
-          ) : (
-            <button
-              type="button"
-              class="sg-main"
-              data-action="confirm-freeze"
-              disabled={busy}
-              onClick={onConfirmFreeze}
-            >
-              Kunci posisi sekarang
-            </button>
-          )}
         </>
       )}
 
-      {!isHider && room.phase === "endgame" && (
+      {!isHider && room.phase === "seeking" && (
         <div class="rb-field">
           <label for="rb-found-input">Kode temuan 4 digit</label>
           <input

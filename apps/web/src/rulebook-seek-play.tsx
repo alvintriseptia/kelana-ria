@@ -376,7 +376,7 @@ class SeekController {
     } else if (kind === "lock-anchor" && pendingStation) {
       resolvedOnServer = room.ownAnchorStationId === pendingStation;
     } else if (
-      (kind === "answer-question" || kind === "answer-photo" || kind === "cannot-answer-endgame") &&
+      (kind === "answer-question" || kind === "answer-photo") &&
       questionId
     ) {
       resolvedOnServer = !room.questions.some(
@@ -394,10 +394,8 @@ class SeekController {
       resolvedOnServer = room.seats.some(
         (seat) => seat.seatId === room.seatId && seat.startVerifiedUntil !== null,
       );
-    } else if (kind === "confirm-freeze") {
-      resolvedOnServer = room.hiderFrozen;
     } else if (kind === "submit-found-code") {
-      resolvedOnServer = room.phase !== "endgame";
+      resolvedOnServer = room.phase !== "seeking";
     }
     if (resolvedOnServer) {
       this.pendingAction = null;
@@ -733,9 +731,10 @@ class SeekController {
 
       if (this.renderedTurn !== turn) {
         this.renderedTurn = turn;
+        this.foundCodeDraftSig.value = "";
         this.statusMsgSig.value = "";
         this.panelSig.value =
-          room.phase === "head_start" || room.phase === "endgame"
+          room.phase === "head_start"
             ? "board"
             : isHider
               ? "hand"
@@ -946,7 +945,6 @@ class SeekController {
         (payload.room.phase === "lobby" ||
           payload.room.phase === "head_start" ||
           payload.room.phase === "seeking" ||
-          payload.room.phase === "endgame" ||
           payload.room.phase === "regroup") &&
         !payload.room.outcome
       ) {
@@ -1059,7 +1057,6 @@ class SeekController {
       itemId,
       action.answerCode,
       action.code,
-      action.offTransit,
       action.name,
       action.ready,
       action.turnOrder,
@@ -1125,10 +1122,9 @@ class SeekController {
     const key = `${room.code}/${room.turnNumber}`;
     const roleChanged = before.role !== room.role && (room.role === "hider" || room.role === "seeker");
     const release = before.phase === "head_start" && room.phase === "seeking";
-    const endgame = before.phase !== "endgame" && room.phase === "endgame";
-    if (roleChanged || release || endgame) {
+    if (roleChanged || release) {
       const title = roleChanged ? (room.role === "hider" ? "Giliranmu Bersembunyi" : "Giliranmu Mencari")
-        : endgame ? "Pencarian Tahap Akhir" : "Waktu Mencari Dimulai";
+        : "Waktu Mencari Dimulai";
       this.fx.emitBanner(`${key}/${roleChanged ? room.role : room.phase}`, { title });
       this.pendingRoleMotion = next.stateRev ?? next.activity.sequence;
     }
@@ -2393,7 +2389,7 @@ class SeekController {
     void this.runGuardedAction("mark-thermometer-end", "ask-field", undefined, async () => {
       const fix = await this.locationFix(this.seekerPoint());
       this.thermometerEndSig.value = fix;
-      if (!(await this.postRoomAction({ type: "seeker-check-in", offTransit: false, fix }))) {
+      if (!(await this.postRoomAction({ type: "seeker-check-in", fix }))) {
         this.thermometerEndSig.value = undefined;
       }
     });
@@ -2505,7 +2501,7 @@ function SeekActiveGame({
       ? isHider
         ? "seek-head-start-hider"
         : "seek-head-start-seeker"
-      : room.phase === "seeking" || room.phase === "endgame"
+      : room.phase === "seeking"
         ? isHider
           ? "seek-seeking-hider"
           : "seek-seeking-seeker"
@@ -2568,7 +2564,7 @@ function SeekActiveGame({
     }
     if (!isHider) stopFlights.current?.();
     const roleEffect = effects
-      .filter((event) => event.kind === "role" || event.kind === "endgame")
+      .filter((event) => event.kind === "role")
       .at(-1);
     const cardEffect = effects
       .filter((event) => event.kind === "card" || event.kind === "curse")
@@ -2735,23 +2731,8 @@ function SeekActiveGame({
                     void ctrl.runGuardedAction("seeker-check-in", "board-checkin", undefined, async () => {
                       await ctrl.postRoomAction({
                         type: "seeker-check-in",
-                        offTransit: false,
                         fix: await ctrl.locationFix(ctrl.seekerPoint()),
                       });
-                    });
-                  }}
-                  onTriggerEndgame={(stId) => {
-                    void ctrl.runGuardedAction("trigger-endgame", "board-checkin", stId, async () => {
-                      await ctrl.postRoomAction({
-                        type: "seeker-check-in",
-                        offTransit: true,
-                        fix: await ctrl.locationFix(ctrl.pointById(stId) ?? ctrl.seekerPoint()),
-                      });
-                    });
-                  }}
-                  onConfirmFreeze={() => {
-                    void ctrl.runGuardedAction("confirm-freeze", "board-checkin", undefined, async () => {
-                      await ctrl.postRoomAction({ type: "confirm-freeze" });
                     });
                   }}
                   onSubmitFoundCode={ctrl.handleSubmitFoundCode}
@@ -2870,14 +2851,6 @@ function SeekActiveGame({
                   onClearPhoto={ctrl.handleClearPhoto}
                   onSubmitPhoto={ctrl.handleSubmitPhoto}
                   onPlayCard={ctrl.handlePlayCard}
-                  onCannotAnswerEndgame={(qId) => {
-                    void ctrl.runGuardedAction("cannot-answer", "board-checkin", qId, async () => {
-                      await ctrl.postRoomAction({
-                        type: "cannot-answer-endgame",
-                        questionId: qId,
-                      });
-                    });
-                  }}
                 />
               )}
           </SeekDockSheet>

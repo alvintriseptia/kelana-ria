@@ -105,7 +105,6 @@ export type HideSeekSessionRules = {
   requireStartCheckIn: boolean;
   regroupPolicy: HideSeekRegroupPolicy;
   missedLockPolicy: HideSeekMissedLockPolicy;
-  endgameFreezeGraceSec: number;
   maxPathOffsetMeters: number;
 };
 
@@ -296,7 +295,6 @@ export type ActiveRulebookRoomPhase =
   | "active"
   | "head_start"
   | "seeking"
-  | "endgame"
   | "regroup";
 
 export type ActiveRulebookRoomSummary = {
