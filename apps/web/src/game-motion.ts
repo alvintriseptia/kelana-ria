@@ -114,6 +114,49 @@ const gameMotionSpecs: Record<
   },
 };
 
+const markerMotionSpecs: Record<
+  GameMotionKind,
+  {
+    keyframes: Record<string, string[] | number[]>;
+    duration: number;
+  }
+> = {
+  claim: {
+    keyframes: {
+      boxShadow: ["0 0 0 2px #087866", "0 0 0 13px rgba(8, 120, 102, 0)"],
+      filter: ["brightness(1.22)", "brightness(1)"],
+    },
+    duration: 0.46,
+  },
+  lock: {
+    keyframes: {
+      boxShadow: ["0 0 0 3px #31552b", "0 0 0 15px rgba(49, 85, 43, 0)"],
+      filter: ["brightness(1.26)", "brightness(1)"],
+    },
+    duration: 0.5,
+  },
+  steal: {
+    keyframes: {
+      boxShadow: ["0 0 0 3px #a04a18", "0 0 0 16px rgba(160, 74, 24, 0)"],
+      filter: ["brightness(1.3)", "brightness(1)"],
+    },
+    duration: 0.52,
+  },
+  update: {
+    keyframes: {
+      boxShadow: ["0 0 0 2px #8fb543", "0 0 0 12px rgba(143, 181, 67, 0)"],
+    },
+    duration: 0.46,
+  },
+  role: {
+    keyframes: {
+      boxShadow: ["0 0 0 2px #075c54", "0 0 0 13px rgba(7, 92, 84, 0)"],
+      filter: ["brightness(1.2)", "brightness(1)"],
+    },
+    duration: 0.48,
+  },
+};
+
 /**
  * Sequence-deduped committed-event feedback for pins, badges, and status panels.
  * Writes `data-game-motion="${kind}:${sequence}"` only when motion is allowed so
@@ -128,7 +171,10 @@ export function playGameMotion(
   const key = `${kind}:${sequence}`;
   if (element.dataset.gameMotion === key) return;
   element.dataset.gameMotion = key;
-  const spec = gameMotionSpecs[kind];
+  // MapLibre owns `style.transform` on `.maplibregl-marker`; avoid clobbering marker coordinates.
+  const spec = element.classList.contains("maplibregl-marker")
+    ? markerMotionSpecs[kind]
+    : gameMotionSpecs[kind];
   const control = animate(element, spec.keyframes, {
     duration: spec.duration,
     ease: motionEaseOut,

@@ -5,6 +5,7 @@ export type MapHostProps = {
   className?: string;
   ariaLabel?: string;
   testId?: string;
+  hidden?: boolean;
   onMount: (container: HTMLElement) => (() => void) | void;
 };
 
@@ -13,7 +14,7 @@ export type MapHostProps = {
  * The host mounts once and stays attached across Preact/signal re-renders so
  * map layers and markers update strictly in-place without recreating the canvas.
  */
-export function MapHost({ id, className, ariaLabel, testId, onMount }: MapHostProps) {
+export function MapHost({ id, className, ariaLabel, testId, hidden, onMount }: MapHostProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const onMountRef = useRef(onMount);
   onMountRef.current = onMount;
@@ -34,6 +35,7 @@ export function MapHost({ id, className, ariaLabel, testId, onMount }: MapHostPr
       class={className}
       aria-label={ariaLabel}
       data-testid={testId}
+      hidden={hidden}
     />
   );
 }
