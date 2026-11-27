@@ -20,16 +20,41 @@ export async function startDraft(page, format) {
   await page.locator(`button[data-format="${format}"]`).click();
 }
 
+async function goToStudioHome(page) {
+  const backToStudio = page.locator('#st-header-slot button[data-studio-view="home"]');
+  if (await backToStudio.isVisible()) await backToStudio.click();
+}
+
 export async function openDraft(page, packId, version = 1) {
-  await page.locator('button[data-studio-view="home"]').click();
+  await goToStudioHome(page);
   await page.locator(`button[data-draft="${packId}@${version}"]`).click();
   await page.locator("#ed-meta-title").waitFor();
 }
 
-export async function openReview(page) {
-  await page.locator('button[data-studio-view="home"]').click();
-  await page.locator('button[data-studio-view="review"]').click();
-  await page.getByRole("region", { name: "Paket untuk tinjauan" }).waitFor();
+export async function openAdminPanel(page) {
+  await goToStudioHome(page);
+  await page.getByRole("button", { name: /^Panel Admin/ }).click();
+  await page.getByRole("heading", { name: "Panel Admin", exact: true }).waitFor();
+  await page.locator('button[data-admin-status="submitted"]').waitFor();
+}
+
+export function adminPack(page, packId, version = 1) {
+  return page.locator(`article[data-admin-pack="${packId}"][data-version="${version}"]`);
+}
+
+export async function openAdminAction(page, trigger) {
+  await trigger.click();
+  const dialog = page.locator("dialog[data-admin-dialog][open]");
+  await dialog.waitFor();
+  return dialog;
+}
+
+export async function moderateAdminPack(page, packId, action, note) {
+  const trigger = adminPack(page, packId).getByRole("button", { name: action, exact: true });
+  const dialog = await openAdminAction(page, trigger);
+  if (note) await dialog.getByRole("textbox").fill(note);
+  await dialog.getByRole("button", { name: action, exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
 }
 
 export async function buyPublishedDraft(page, packId, version = 1) {

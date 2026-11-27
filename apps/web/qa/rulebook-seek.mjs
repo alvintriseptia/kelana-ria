@@ -7,7 +7,7 @@ import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/
 import { catalogUrl, openEdition } from "./catalog.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
-import { buyPublishedDraft, openDraft, openReview, signInQaContext, startDraft } from "./studio-navigation.mjs";
+import { buyPublishedDraft, moderateAdminPack, openAdminPanel, openDraft, signInQaContext, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -95,19 +95,20 @@ try {
   await pageCreator.click('button[data-s3-action="add-seek-card"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Kutukan Barista Buyout"));
 
-  // Step 4: run dry-run, submit -> Reviewer requests changes -> verify revision banner -> re-submit -> publish
+  // Step 4: submit, request a revision in Panel Admin, then resubmit and publish
   await pageCreator.click('button[data-step="4"]');
   await pageCreator.click('button[data-action="dry-run"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Uji coba lolos"));
   await pageCreator.click('button[data-action="submit-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
 
-  await openReview(pageCreator);
-  await pageCreator.click('button[data-action="request-changes"]');
+  await openAdminPanel(pageCreator);
+  const revisionNote = "Perjelas catatan akses stasiun.";
+  await moderateAdminPack(pageCreator, "pack-senopati-seek", "Minta Revisi", revisionNote);
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Permintaan revisi dikirim"));
 
   await openDraft(pageCreator, "pack-senopati-seek");
-  await pageCreator.waitForSelector('[data-testid="revision-note-banner"]');
+  await pageCreator.getByTestId("revision-note-banner").getByText(revisionNote, { exact: true }).waitFor();
 
   // Verify JSON export + malformed JSON guard + valid JSON import round-trip via quiet header overflow menu
   await pageCreator.click('[data-testid="studio-more-menu"] summary');
@@ -131,8 +132,8 @@ try {
   await pageCreator.click('button[data-step="4"]');
   await pageCreator.click('button[data-action="submit-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
-  await openReview(pageCreator);
-  await pageCreator.click('button[data-action="publish"]');
+  await openAdminPanel(pageCreator);
+  await moderateAdminPack(pageCreator, "pack-senopati-seek", "Terbitkan ke Katalog");
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Paket diterbitkan ke katalog"));
 
   // Verify v2 clone from published pack works without mutating v1

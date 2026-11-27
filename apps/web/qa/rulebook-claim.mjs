@@ -7,7 +7,7 @@ import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/
 import { catalogUrl, openEdition } from "./catalog.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
-import { openReview, signInQaContext, startDraft } from "./studio-navigation.mjs";
+import { moderateAdminPack, openAdminPanel, signInQaContext, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -199,7 +199,7 @@ try {
   await pageSolo.getByRole("list", { name: "Daftar Landmark" }).getByRole("button", { name: /Blok M Plaza/i }).click();
   assert.match(await pageSolo.locator(".cg-selected").innerText(), /hangus/);
   await pageSolo.unroute("**/api/map/config");
-  await pageSolo.getByRole("button", { name: "Coba Lagi" }).click();
+  await pageSolo.getByRole("button", { name: "Coba Lagi", exact: true }).click();
   await pageSolo.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
   assert.equal(await pageSolo.getByRole("list", { name: "Daftar Landmark" }).count(), 0);
 
@@ -549,14 +549,14 @@ try {
   await clickAndWaitPost(pageCreator, 'button[data-c3-action="add-claim-card"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Sabotase Macet Senopati"));
 
-  // Step 4: dry-run & submit -> Reviewer publish
+  // Step 4: dry-run & submit, then confirm publication in Panel Admin
   await pageCreator.click('button[data-step="4"]');
   await pageCreator.click('button[data-action="dry-run"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Uji coba lolos"));
   await clickAndWaitPost(pageCreator, 'button[data-action="submit-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
-  await openReview(pageCreator);
-  await clickAndWaitPost(pageCreator, 'button[data-action="publish"]');
+  await openAdminPanel(pageCreator);
+  await moderateAdminPack(pageCreator, "pack-senopati-claim", "Terbitkan ke Katalog");
   await pageCreator.waitForFunction(() => document.body.textContent.includes("Paket diterbitkan ke katalog"));
 
   // Confirm private answer keys NEVER leak on public /api/rulebooks listing

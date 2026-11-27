@@ -177,10 +177,6 @@ export function isQaRoom(payload: ClaimRoomPayload | null): boolean {
   return Boolean(payload?.qa || isDraftPlaytest(payload));
 }
 
-export function draftStudioUrl(pass: ClaimRoomPayload["pass"]): string {
-  return `/?play=rulebook-studio&studio=editor&format=claim-the-city&draft=${encodeURIComponent(pass.packId)}&version=${pass.version}`;
-}
-
 export function resolveQaCoord(payload: ClaimRoomPayload, qaLocationId: string): GeoCoordinate | null {
   if (!qaLocationId) return null;
   if (payload.publicBoard.startPoint.id === qaLocationId) return payload.publicBoard.startPoint;

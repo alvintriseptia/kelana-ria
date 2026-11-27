@@ -440,6 +440,7 @@ class SeekController {
 
   syncRoomUrl(code: string): void {
     const url = new URL(location.href);
+    if (url.searchParams.get("room") !== code) url.searchParams.delete("adminPlaytest");
     url.searchParams.set("play", "rulebook-seek");
     url.searchParams.delete("pack");
     url.searchParams.delete("launch");
@@ -1566,6 +1567,7 @@ class SeekController {
     const url = new URL(location.href);
     url.searchParams.set("play", "rulebook-studio");
     url.searchParams.delete("room");
+    url.searchParams.delete("adminPlaytest");
     history.pushState({ fromChooser: true }, "", url);
     window.dispatchEvent(new PopStateEvent("popstate"));
   };
@@ -1704,6 +1706,7 @@ class SeekController {
           url.searchParams.set("room", nextCode);
           url.searchParams.delete("pack");
           url.searchParams.delete("launch");
+          url.searchParams.delete("adminPlaytest");
           history.pushState({ fromChooser: true }, "", url);
           window.dispatchEvent(new PopStateEvent("popstate"));
         }

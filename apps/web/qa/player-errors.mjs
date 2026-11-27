@@ -21,7 +21,7 @@ const server = createSoloServer({
   allowSimulatedLocation: false,
   allowRulebookSandboxCheckout: true,
   allowSandboxAuthOtp: true,
-  adminEmails: ["errors-buyer@kelana.test"],
+  adminEmails: ["errors-admin@kelana.test"],
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -136,13 +136,21 @@ try {
     },
   });
   assert.equal(cloneRes.status(), 200);
-  await ctxCat.request.post(`${baseUrl}/api/rulebooks`, {
+  const submitRes = await ctxCat.request.post(`${baseUrl}/api/rulebooks`, {
     data: { type: "submit-draft", packId: "qa-paid-errors-claim", version: 1 },
   });
-  const pubRes = await ctxCat.request.post(`${baseUrl}/api/rulebooks`, {
-    data: { type: "publish-version", packId: "qa-paid-errors-claim", version: 1 },
-  });
-  assert.equal(pubRes.status(), 200);
+  assert.equal(submitRes.status(), 200);
+  const ctxAdmin = await browser.newContext();
+  try {
+    const { user } = await signInQaContext(ctxAdmin, baseUrl, "errors-admin@kelana.test", "Admin QA");
+    assert.equal(user.role, "admin");
+    const pubRes = await ctxAdmin.request.post(`${baseUrl}/api/rulebooks`, {
+      data: { type: "publish-version", packId: "qa-paid-errors-claim", version: 1 },
+    });
+    assert.equal(pubRes.status(), 200);
+  } finally {
+    await ctxAdmin.close();
+  }
 
   // 1a. Uncertain free room creation: first POST reaches server and creates room, then network drops before client receives reply
   await pageCat.goto(catalogUrl(baseUrl), { waitUntil: "networkidle" });

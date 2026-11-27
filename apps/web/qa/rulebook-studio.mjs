@@ -5,12 +5,18 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
-import { buyPublishedDraft, openDraft, openReview, startDraft } from "./studio-navigation.mjs";
+import {
+  adminPack, buyPublishedDraft, moderateAdminPack, openAdminAction, openAdminPanel, openDraft, signInQaContext, startDraft,
+} from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
 const results = path.join(root, "qa-results");
 await mkdir(results, { recursive: true });
+const adminEmail = "studio-admin@kelana.test";
+const creatorEmail = "studio-creator@kelana.test";
+const studioUrl = "/?play=rulebook-studio";
+const reviewUrl = `${studioUrl}&studio=review`;
 
 const server = createSoloServer({
   databasePath: ":memory:",
@@ -19,7 +25,7 @@ const server = createSoloServer({
   allowSimulatedLocation: true,
   allowRulebookSandboxCheckout: true,
   allowSandboxAuthOtp: true,
-  adminEmails: ["studio-creator@kelana.test"],
+  adminEmails: [adminEmail],
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -132,6 +138,241 @@ async function checkValidationSpacing(page, format) {
   }
 }
 
+async function checkAdminPhoneLayout(page, scope, label) {
+  const originalViewport = page.viewportSize();
+  try {
+    for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 640 }]) {
+      await page.setViewportSize(viewport);
+      const phoneLabel = `${label} at ${viewport.width}×${viewport.height}`;
+      await assertNoHorizontalOverflow(page, phoneLabel);
+      await assertCleanUiCopy(page, phoneLabel);
+      const smallTargets = await scope.locator('button, summary, input, textarea, a[href]').evaluateAll(controls =>
+        controls.filter(control => {
+          const { width, height } = control.getBoundingClientRect();
+          return width > 0 && height > 0 && (width < 44 || height < 44);
+        }).map(control => control.getAttribute("aria-label") || control.innerText || control.outerHTML));
+      assert.deepEqual(smallTargets, [], `Expected 44×44 touch targets on ${phoneLabel}`);
+    }
+  } finally {
+    await page.setViewportSize(originalViewport);
+  }
+}
+
+async function checkCreatorReviewAccess(page) {
+  await page.goto(`${baseUrl}${studioUrl}`);
+  await page.getByTestId("auth-chip-account").click();
+  const account = page.getByRole("dialog", { name: "Akun Kelana Ria" });
+  await account.getByText(creatorEmail, { exact: true }).waitFor();
+  assert.equal(await account.getByTestId("auth-admin-badge").count(), 0);
+  await page.keyboard.press("Escape");
+  await account.waitFor({ state: "hidden" });
+  assert.equal(await page.getByRole("button", { name: /^(Panel Admin|Peninjau)\b/ }).count(), 0);
+
+  await page.goto(`${baseUrl}${reviewUrl}`);
+  await page.getByText("Akses khusus admin peninjau", { exact: true }).waitFor();
+  assert.equal(await page.locator("[data-admin-pack]").count(), 0);
+  await checkAdminPhoneLayout(page, page.locator("#st-body-slot"), "Admin access denied");
+  await page.locator("#st-body-slot").getByRole("button", { name: /Kembali ke Studio/ }).click();
+  await page.getByRole("heading", { name: "Studio Kreator", exact: true }).waitFor();
+}
+
+async function exerciseAdminConsole(creator, creatorContext) {
+  const claimId = "pack-claim-studio-qa";
+  const seekId = "pack-seek-admin-qa";
+  const revisionNote = "Perjelas jalur masuk untuk pengunjung.";
+  const pauseReason = "Lokasi ditutup sementara untuk pemeliharaan.";
+  await checkCreatorReviewAccess(creator);
+
+  const clone = await creatorContext.request.post(`${baseUrl}/api/rulebooks`, {
+    data: {
+      type: "clone-official", templatePackId: "official-jakarta-compact-seek",
+      packId: seekId, title: "Rute Stasiun untuk Tinjauan", byline: "Kreator Studio", priceIdr: 0,
+    },
+  });
+  assert.equal(clone.status(), 200, await clone.text());
+  const submit = await creatorContext.request.post(`${baseUrl}/api/rulebooks`, {
+    data: { type: "submit-draft", packId: seekId, version: 1 },
+  });
+  assert.equal(submit.status(), 200, await submit.text());
+
+  const adminContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  try {
+    const admin = await adminContext.newPage();
+    await admin.goto(`${baseUrl}${reviewUrl}`);
+    await admin.getByText("Akses khusus admin peninjau", { exact: true }).waitFor();
+    await admin.locator("#st-body-slot").getByRole("button", { name: "Masuk dengan Email", exact: true }).waitFor();
+    const { user } = await signInQaContext(adminContext, baseUrl, adminEmail, "Admin Studio");
+    assert.equal(user.role, "admin");
+    await admin.goto(`${baseUrl}${studioUrl}`);
+    const accountChip = admin.getByTestId("auth-chip-account");
+    await accountChip.click();
+    const account = admin.getByRole("dialog", { name: "Akun Kelana Ria" });
+    assert.equal(await account.getByTestId("auth-admin-badge").innerText(), "Admin");
+    await admin.keyboard.press("Escape");
+    await account.waitFor({ state: "hidden" });
+    await openAdminPanel(admin);
+    assert.equal(await admin.locator('input[type="password"]').count(), 0);
+    assert.equal(await admin.getByTestId("auth-modal").count(), 0);
+
+    const console = admin.locator("#st-body-slot");
+    const status = key => console.locator(`button[data-admin-status="${key}"]`);
+    const format = key => console.locator(`button[data-admin-format="${key}"]`);
+    const selectStatus = async key => {
+      await status(key).tap();
+      assert.equal(await status(key).getAttribute("aria-pressed"), "true");
+      assert.equal(await console.locator('button[data-admin-status][aria-pressed="true"]').count(), 1);
+    };
+    const claim = adminPack(admin, claimId);
+    const seek = adminPack(admin, seekId);
+    await claim.waitFor();
+    await seek.waitFor();
+    assert.equal(await status("submitted").getAttribute("aria-pressed"), "true");
+    assert.match(await status("submitted").innerText(), /Menunggu Tinjauan\D+2\b/s);
+    assert.match(await status("published").innerText(), /Terbit\D+0\b/s);
+    assert.match(await status("paused").innerText(), /Dijeda\D+0\b/s);
+    assert.match(await status("all").innerText(), /Semua\D+2\b/s);
+    const claimSummary = await claim.innerText();
+    for (const pattern of [/Studio QA Claim Pack/, /Kreator Studio/, /Claim the City/, /Rp\s*25\.000/, /v1/, /Menunggu Tinjauan/, /\bValid\b/, /zona/i, /landmark/i, /tantangan/i]) {
+      assert.match(claimSummary, pattern);
+    }
+    assert.match(await seek.innerText(), /Gratis/);
+    await checkAdminPhoneLayout(admin, console, "Admin queue");
+    await admin.setViewportSize({ width: 320, height: 640 });
+    await admin.evaluate(() => window.scrollTo(0, 0));
+    await admin.screenshot({ path: path.join(results, "studio-panel-admin-320.png") });
+    await admin.setViewportSize({ width: 390, height: 844 });
+
+    await format("hide-and-seek").tap();
+    assert.equal(await format("hide-and-seek").getAttribute("aria-pressed"), "true");
+    await claim.waitFor({ state: "hidden" });
+    await seek.waitFor();
+    const seekInspect = seek.locator("details[data-admin-inspect] > summary");
+    await seekInspect.tap();
+    await seek.getByRole("heading", { name: "Lokasi", exact: true }).waitFor();
+    await checkAdminPhoneLayout(admin, console, "Hide & Seek inspection");
+    await seek.getByRole("button", { name: "Uji Coba (Admin QA)", exact: true }).tap();
+    assert.match(await admin.getByTestId("draft-playtest-badge").innerText(), /Uji Draf/);
+    await admin.locator("#sg-qa-location").waitFor();
+    await admin.getByRole("link", { name: "← Kembali ke Panel Admin", exact: true }).tap();
+    await admin.getByRole("heading", { name: "Panel Admin", exact: true }).waitFor();
+
+    await format("claim-the-city").tap();
+    assert.equal(await format("claim-the-city").getAttribute("aria-pressed"), "true");
+    await seek.waitFor({ state: "hidden" });
+    const inspectionDrawer = claim.locator("details[data-admin-inspect]");
+    const inspect = inspectionDrawer.locator("summary");
+    const openClaimInspection = async () => {
+      await inspect.waitFor();
+      if (!(await inspectionDrawer.evaluate(details => details.open))) await inspect.tap();
+    };
+    await openClaimInspection();
+    await claim.getByRole("heading", { name: "Lokasi", exact: true }).waitFor();
+    const inspection = await claim.innerText();
+    for (const pattern of [/Taman Literasi/, /Jam Buka Umum/, /Catatan Akses/, /Koordinat/, /Lihat dari sisi undakan/, /Posisi yang lebih tinggi membantu penonton/, /Sabotase Kemang/]) {
+      assert.match(inspection, pattern);
+    }
+    await claim.locator('dt:text-is("Kunci Jawaban") + dd').filter({ hasText: /^baris belakang · belakang$/ }).waitFor();
+    await claim.locator('dt:text-is("Catatan Verifikasi Kreator") + dd').filter({ hasText: /Sumber Plaza Kabaresi/ }).waitFor();
+    await checkAdminPhoneLayout(admin, console, "Claim inspection");
+    await admin.setViewportSize({ width: 320, height: 640 });
+    await claim.getByRole("button", { name: "Uji Coba (Admin QA)", exact: true }).tap();
+    assert.match(await admin.getByTestId("draft-playtest-badge").innerText(), /Uji Draf/);
+    await admin.getByTestId("claim-qa-location").waitFor();
+    await assertNoHorizontalOverflow(admin, "Claim admin playtest at 320×640");
+    await admin.getByRole("link", { name: "← Kembali ke Panel Admin", exact: true }).tap();
+    await admin.getByRole("heading", { name: "Panel Admin", exact: true }).waitFor();
+    await openClaimInspection();
+
+    const revise = claim.getByRole("button", { name: "Minta Revisi", exact: true });
+    const reviseDialog = await openAdminAction(admin, revise);
+    const note = reviseDialog.getByRole("textbox", { name: "Catatan Revisi" });
+    await note.fill("   ");
+    const confirmRevision = reviseDialog.getByRole("button", { name: "Minta Revisi", exact: true });
+    await confirmRevision.tap();
+    assert.equal(await note.evaluate(input => input.validity.valid), false, "Revision requires a nonblank note");
+    await note.fill(revisionNote);
+    await checkAdminPhoneLayout(admin, reviseDialog, "Revision dialog");
+    await confirmRevision.tap();
+    await admin.getByText("Permintaan revisi dikirim ke kreator.", { exact: true }).waitFor();
+    await claim.waitFor({ state: "hidden" });
+    await creator.goto(`${baseUrl}${studioUrl}`);
+    await openDraft(creator, claimId);
+    await creator.getByTestId("revision-note-banner").getByText(revisionNote, { exact: true }).waitFor();
+    await creator.locator('button[data-step="4"]').click();
+    await clickAndWaitPost(creator, 'button[data-action="submit-draft"]');
+    await creator.getByText("Draf diajukan ke peninjau editorial.", { exact: true }).waitFor();
+
+    await admin.reload();
+    await openClaimInspection();
+    const publish = claim.getByRole("button", { name: "Terbitkan ke Katalog", exact: true });
+    const publishDialog = await openAdminAction(admin, publish);
+    await admin.keyboard.press("Escape");
+    await publishDialog.waitFor({ state: "hidden" });
+    assert.ok(await publish.evaluate(button => button === document.activeElement), "Escape should restore focus to Publish");
+    await checkAdminPhoneLayout(admin, console, "Resubmitted queue");
+    await moderateAdminPack(admin, claimId, "Terbitkan ke Katalog");
+    await admin.getByText("Paket diterbitkan ke katalog.", { exact: true }).waitFor();
+    await selectStatus("published");
+    await openClaimInspection();
+    assert.match(await status("published").innerText(), /Terbit\D+1\b/s);
+
+    const pause = claim.getByRole("button", { name: "Jeda Penjualan", exact: true });
+    const pauseDialog = await openAdminAction(admin, pause);
+    const confirmPause = pauseDialog.getByRole("button", { name: "Jeda Penjualan", exact: true });
+    const reason = pauseDialog.getByRole("textbox", { name: "Alasan Jeda" });
+    await confirmPause.tap();
+    assert.equal(await reason.evaluate(input => input.validity.valueMissing), true, "Pause requires a reason");
+    await reason.fill(pauseReason);
+    await confirmPause.tap();
+    await admin.getByText("Penjualan paket dijeda.", { exact: true }).waitFor();
+    await selectStatus("paused");
+    await openClaimInspection();
+    assert.match(await status("paused").innerText(), /Dijeda\D+1\b/s);
+    await moderateAdminPack(admin, claimId, "Aktifkan Kembali");
+    await admin.getByText("Paket kembali tersedia di katalog.", { exact: true }).waitFor();
+    await selectStatus("published");
+    await openClaimInspection();
+
+    const audit = claim.getByRole("region", { name: "Riwayat Tinjauan" });
+    const rows = await audit.getByRole("listitem").allTextContents();
+    assert.equal(rows.length, 4);
+    for (const [index, label] of ["Minta Revisi", "Terbit", "Dijeda", "Aktifkan Kembali"].entries()) {
+      assert.ok(rows[index].includes(label), `Expected audit entry ${index + 1} to record ${label}`);
+      assert.ok(rows[index].includes("Admin Studio") && rows[index].includes(adminEmail));
+    }
+    assert.ok(rows[0].includes(revisionNote));
+    assert.ok(rows[2].includes(pauseReason));
+    const dates = await audit.locator("time").evaluateAll(times => times.map(time => Date.parse(time.dateTime)));
+    assert.equal(dates.length, 4);
+    assert.ok(dates.every((date, index) => Number.isFinite(date) && (index === 0 || date >= dates[index - 1])));
+    await checkAdminPhoneLayout(admin, console, "Published audit trail");
+    await admin.setViewportSize({ width: 390, height: 844 });
+    await audit.screenshot({ path: path.join(results, "studio-admin-audit-390.png") });
+
+    await console.getByRole("button", { name: "Kelola Admin", exact: true }).tap();
+    const grantForm = console.locator("form[data-admin-grant]");
+    const bootstrapped = console.locator(`li[data-admin-email="${adminEmail}"]`);
+    await bootstrapped.getByText("Bawaan Server", { exact: true }).waitFor();
+    assert.equal(await bootstrapped.getByRole("button", { name: "Cabut Akses", exact: true }).isDisabled(), true);
+    await grantForm.getByRole("textbox", { name: "Email Akun" }).fill(creatorEmail);
+    await grantForm.getByRole("button", { name: "Tambah Admin", exact: true }).tap();
+    const promoted = console.locator(`li[data-admin-email="${creatorEmail}"]`);
+    await promoted.getByText("Kreator Studio", { exact: true }).waitFor();
+    await checkAdminPhoneLayout(admin, console, "Admin accounts");
+
+    await creator.goto(`${baseUrl}${studioUrl}`);
+    await openAdminPanel(creator);
+    const revoke = promoted.getByRole("button", { name: "Cabut Akses", exact: true });
+    const revokeDialog = await openAdminAction(admin, revoke);
+    await checkAdminPhoneLayout(admin, revokeDialog, "Revoke admin dialog");
+    await revokeDialog.getByRole("button", { name: "Cabut Akses", exact: true }).tap();
+    await promoted.waitFor({ state: "hidden" });
+    await checkCreatorReviewAccess(creator);
+  } finally {
+    await adminContext.close();
+  }
+}
+
 try {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const page = await ctx.newPage();
@@ -154,7 +395,7 @@ try {
   await page.click("#chooser-studio");
   const studioAuthModal = page.getByTestId("auth-modal");
   await studioAuthModal.waitFor();
-  await page.fill("#auth-email-input", "studio-creator@kelana.test");
+  await page.fill("#auth-email-input", creatorEmail);
   await page.getByTestId("auth-send-otp").click();
   const studioOtpCode = (await page.getByTestId("auth-sandbox-code").innerText()).trim();
   await page.fill("#auth-otp-input", studioOtpCode);
@@ -893,16 +1134,12 @@ try {
   await page.locator("#ed-meta-title").waitFor();
   await page.click('button[data-step="4"]');
 
-  // Submit -> Reviewer Publish -> Public Catalog -> Midtrans settlement -> Live Room
+  // Submit -> full Admin review lifecycle -> Public Catalog -> Midtrans settlement -> Live Room
   await clickAndWaitPost(page, 'button[data-action="submit-draft"]');
   await page.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
-  await openReview(page);
-  await assertNoHorizontalOverflow(page, "Reviewer queue tab");
-  await assertCleanUiCopy(page, "Reviewer queue tab");
-  await clickAndWaitPost(page, 'button[data-action="publish"]');
-  await page.waitForFunction(() => document.body.textContent.includes("Paket diterbitkan ke katalog"));
+  await exerciseAdminConsole(page, ctx);
 
-  await page.click('button[data-nav="catalog"]');
+  await page.click('button[data-nav="back"]');
   await buyPublishedDraft(page, "pack-claim-studio-qa");
   await page.waitForFunction(
     () => document.body.textContent.includes("Ruang Tunggu") && document.body.textContent.includes("Pass Berbayar"),
@@ -916,7 +1153,7 @@ try {
   assert.match(await homeEarnings.innerText(), /Rp\s*25\.000/);
 
   await ctx.close();
-  console.log("qa:rulebook-studio passed (Full visual Studio lifecycle + validator jump + interactive dry-run + draft playtest + publish + Midtrans)");
+  console.log("qa:rulebook-studio passed (Studio lifecycle, private playtests, mobile Admin moderation and access, Midtrans)");
 } finally {
   await browser.close();
   await new Promise((resolve) => server.close(resolve));

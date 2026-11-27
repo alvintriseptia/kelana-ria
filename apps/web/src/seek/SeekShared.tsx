@@ -2,6 +2,7 @@ import type { HideSeekQuestionFamily, SeekCardInstance } from "@kelana-ria/contr
 import type { Signal } from "@preact/signals";
 import { useEffect, useRef } from "preact/hooks";
 import { formatRelativeAge, freshnessBucket } from "../room-activity";
+import { DraftStudioLink } from "../ui/DraftStudioLink";
 import { InlineAlert } from "../ui/InlineAlert";
 import {
   cardCategoryLabels,
@@ -9,7 +10,6 @@ import {
   curseBlockerLabel,
   curseClearLabel,
   destructiveExitSpec,
-  draftStudioUrl,
   isBoardPhase,
   isDraftPlaytest,
   qaPoint,
@@ -209,13 +209,7 @@ export function SeekRoomMenu({
       </summary>
       <div class="sg-room-menu-actions">
         {isDraft && (
-          <a
-            class="cg-menu-link"
-            data-testid="menu-back-to-studio"
-            href={draftStudioUrl(payload.pass)}
-          >
-            ← Kembali ke Studio
-          </a>
+          <DraftStudioLink format="hide-and-seek" pass={payload.pass} menu />
         )}
         <button
           type="button"
