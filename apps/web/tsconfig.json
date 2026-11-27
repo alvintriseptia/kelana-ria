@@ -11,6 +11,8 @@
     "tsBuildInfoFile": ".types/build.tsbuildinfo",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "resolveJsonModule": true,
     "allowUmdGlobalAccess": true,
     "types": [
