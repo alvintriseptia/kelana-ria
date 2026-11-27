@@ -1,9 +1,11 @@
+import { effect } from "@preact/signals";
 import type {
   AuthAdminsReply,
   AuthMeReply,
   ClaimCardEffect,
   ClaimChallengePrimitive,
   CurseClearCondition,
+  GeoAttribution,
   GeoCoordinate,
   GeoSnapshot,
   HideSeekCardEffect,
@@ -13,6 +15,7 @@ import type {
   MapConfig,
   RulebookFormat,
   RulebookValidationIssue,
+  StudioPoiCandidate,
 } from "@kelana-ria/contracts";
 import {
   fetchAuthMe,
@@ -52,6 +55,7 @@ import {
   type SeekStep3State,
 } from "./studio-seek-builder";
 import { formatHeroCardSvg, stepIconSvg } from "./studio-assets";
+import { mountStudioPoiDrawer, studioPoiAlreadyAdded } from "./studio-poi-drawer";
 import {
   evaluateClaimDryRunAnswer,
   evaluateSeekDryRunClue,
@@ -66,6 +70,7 @@ import {
   createNewStation,
   createNewZone,
   ensureStep2Selection,
+  pointInBoundary,
   renderStep2Bottom,
   renderStep2Top,
   renderStep2View,
@@ -198,6 +203,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let studioMapHandle: StudioMapEditorHandle | undefined;
   let studioMapKey = "";
   let studioMapReq = 0;
+  let poiDrawer: ReturnType<typeof mountStudioPoiDrawer> | undefined;
+  let stopPoiPreview: (() => void) | undefined;
   let mapCfgPromise: Promise<MapConfig> | null = null;
   let transitCatalogPromise: Promise<JakartaTransitCatalog | null> | null = null;
   let savingMap = false;
@@ -500,6 +507,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     )) {
       fields.disabled = savingMap;
     }
+    const draft = currentDraft();
+    if (draft) poiDrawer?.update(draft, savingMap);
     updateEditorSavePill();
   }
 
@@ -516,6 +525,96 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     studioMapHandle?.destroy();
     studioMapHandle = undefined;
     studioMapKey = "";
+  }
+
+  function destroyPoiDrawer() {
+    stopPoiPreview?.();
+    stopPoiPreview = undefined;
+    poiDrawer?.destroy();
+    poiDrawer = undefined;
+    studioMapHandle?.setPoiCandidates([], null);
+  }
+
+  function syncPoiDrawer(active: StudioVersionRecord) {
+    const host = root.querySelector<HTMLElement>("#st-poi-drawer");
+    if (!host) return;
+    host.hidden = step2.drawer !== "osm-pois" || !isEditable(active);
+    if (host.hidden) {
+      if (poiDrawer) destroyPoiDrawer();
+      return;
+    }
+    if (!poiDrawer) {
+      const drawer = mountStudioPoiDrawer(host, active, {
+        search: request => apiJson("/api/rulebooks/studio/curate-pois", request),
+        add: importStudioPoi,
+        close: () => {
+          step2.drawer = null;
+          render();
+          root.querySelector<HTMLButtonElement>('[data-map-drawer="osm-pois"]')?.focus({ preventScroll: true });
+        },
+      });
+      poiDrawer = drawer;
+      stopPoiPreview = effect(() => {
+        const candidates = drawer.candidates.value;
+        const selected = drawer.selected.value;
+        studioMapHandle?.setPoiCandidates(candidates, selected);
+      });
+    }
+    poiDrawer.update(active, savingMap);
+  }
+
+  async function importStudioPoi(candidate: StudioPoiCandidate, attribution: GeoAttribution, zoneId?: string) {
+    const active = currentDraft();
+    if (signal.aborted || step !== 2 || savingMap || !active || !isEditable(active) ||
+        !pointInBoundary(candidate, active.snapshot.boundaryPolygon) || studioPoiAlreadyAdded(active, candidate)) return false;
+
+    const pack = structuredClone(active.pack);
+    const snapshot = structuredClone(active.snapshot);
+    const provenance = {
+      source: candidate.source,
+      osmId: candidate.osmId,
+      fieldVerified: false,
+      fieldVerificationNote: "",
+    };
+    let target: Step2Target;
+    if (zoneId) {
+      if (!isClaimStudioPack(pack) || !pack.geography.zones.some(zone => zone.id === zoneId)) return false;
+      const landmark = {
+        ...createNewLandmark(candidate, zoneId, pack.geography.landmarks.length),
+        ...provenance,
+        name: candidate.name,
+        transitSummary: "",
+        accessNotes: candidate.publicAccessHint ? "Periksa akses di lokasi." : "",
+        publicHours: candidate.openingHours ?? "",
+      };
+      pack.geography.landmarks.push(landmark);
+      target = { kind: "landmark", id: landmark.id };
+    } else {
+      const point = {
+        ...createNewPoi(candidate, snapshot.pois.length),
+        ...provenance,
+        name: candidate.name,
+        category: candidate.category,
+        attributes: candidate.tags,
+      };
+      snapshot.pois.push(point);
+      target = { kind: "poi", id: point.id };
+    }
+    if (!snapshot.attributions.some(entry => entry.source === attribution.source)) {
+      snapshot.attributions.push(attribution);
+    }
+    const undoEntry = snapshotStep2Undo(active, "Impor POI");
+    const ok = await persistStep2WithUndo(pack, snapshot, undoEntry, `${candidate.name} ditambahkan. Perlu cek lapangan.`);
+    const latest = currentDraft();
+    if (ok && !signal.aborted && view === "editor" && step === 2 &&
+        latest?.packId === active.packId && latest.version === active.version) {
+      step2.selected = target;
+      step2.subTab = target.kind === "landmark" ? "primary" : isClaimStudioPack(pack) ? "pois" : "secondary";
+      step2.editingChallenges = false;
+      openAccordions.delete("coord-inspector");
+      render();
+    }
+    return ok;
   }
 
   function ensureTransitCatalog() {
@@ -546,7 +645,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       label,
     };
     step2.undoStack.push(entry);
-    if (step2.undoStack.length > MAX_STEP2_UNDO) step2.undoStack.shift();
     return entry;
   }
 
@@ -558,9 +656,15 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     savedMapKey?: string,
   ): Promise<boolean> {
     const ok = await persistDraft(pack, snap, successMessage, savedMapKey);
-    if (!ok) {
+    if (ok && step2.undoStack.length > MAX_STEP2_UNDO) {
+      step2.undoStack.shift();
+      render();
+    } else if (!ok) {
       const idx = step2.undoStack.lastIndexOf(undoEntry);
-      if (idx >= 0) step2.undoStack.splice(idx, 1);
+      if (idx >= 0) {
+        step2.undoStack.splice(idx, 1);
+        render();
+      }
     }
     return ok;
   }
@@ -606,6 +710,12 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     coord: GeoCoordinate,
     sourceLabel: string,
   ): string {
+    if (step2.subTab === "pois" || (step2.subTab === "secondary" && !isClaimStudioPack(pack))) {
+      const poi = createNewPoi(coord, snap.pois.length);
+      snap.pois.push(poi);
+      step2.selected = { kind: "poi", id: poi.id };
+      return `POI ${poi.name} ditambahkan ${sourceLabel}.`;
+    }
     if (isClaimStudioPack(pack)) {
       const emptyZone = pack.geography.zones.find(
         (z) => !pack.geography.landmarks.some((l) => l.zoneId === z.id),
@@ -632,12 +742,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       step2.subTab = "primary";
       claimStep3.challengeTarget = lm.id;
       return `Landmark ${lm.name} ditambahkan ${sourceLabel}.`;
-    }
-    if (step2.subTab === "secondary") {
-      const poi = createNewPoi(coord, snap.pois.length);
-      snap.pois.push(poi);
-      step2.selected = { kind: "poi", id: poi.id };
-      return `POI ${poi.name} ditambahkan ${sourceLabel}.`;
     }
     const st = createNewStation(coord, snap.stations.length);
     snap.stations.push(st);
@@ -720,7 +824,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     step2.editingChallenges = false;
     if (changed) openAccordions.delete("coord-inspector");
     if (target.kind === "landmark") claimStep3.challengeTarget = target.id;
-    step2.subTab = target.kind === "start" ? "start" : target.kind === "poi" ? "secondary" : "primary";
+    step2.subTab = target.kind === "start" ? "start" : target.kind === "poi" ? (format === "claim-the-city" ? "pois" : "secondary") : "primary";
     step2.drawer = null;
     render();
     root.querySelector<HTMLElement>("[data-studio-point-heading]")?.focus();
@@ -791,6 +895,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     const reqId = ++studioMapReq;
     studioMapKey = draftKey;
     ensureTransitCatalog();
+    function mapFailed() {
+      if (reqId !== studioMapReq) return;
+      step2.mapFailed = true;
+      if (step2.drawer !== "osm-pois") step2.drawer = "points";
+      destroyStep2Map();
+      studioMapKey = draftKey;
+      render();
+    }
     try {
       if (!mapCfgPromise) mapCfgPromise = apiJson<MapConfig>("/api/map/config");
       const [{ mountStudioMapEditor }, cfg] = await Promise.all([
@@ -800,7 +912,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       if (reqId !== studioMapReq || !host.isConnected) return;
       const latest = currentDraft() ?? active;
       const selected = ensureStep2Selection(latest, step2);
-      studioMapHandle = mountStudioMapEditor({
+      const handle = mountStudioMapEditor({
         container: host,
         config: cfg,
         record: latest,
@@ -814,19 +926,17 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         onSelectTarget: handleStep2SelectTarget,
         onMoveTarget: handleStep2MoveTarget,
         onMapClick: handleStep2MapClick,
-        onError: () => {
-          step2.mapFailed = true;
-          step2.drawer = "points";
-          destroyStep2Map();
-          render();
-        },
+        onSelectPoiCandidate: id => poiDrawer?.focusCandidate(id),
+        onError: mapFailed,
       });
+      if (reqId !== studioMapReq) {
+        handle.destroy();
+        return;
+      }
+      studioMapHandle = handle;
+      if (poiDrawer) handle.setPoiCandidates(poiDrawer.candidates.value, poiDrawer.selected.value);
     } catch {
-      if (reqId !== studioMapReq) return;
-      step2.mapFailed = true;
-      step2.drawer = "points";
-      destroyStep2Map();
-      render();
+      mapFailed();
     }
   }
 
@@ -1439,6 +1549,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
     if (authRequired && view !== "review") {
       stepperSlot.innerHTML = "";
+      destroyPoiDrawer();
       destroyStep2Map();
       bodySlot.innerHTML = `<div class="rb-card" data-testid="studio-auth-gate">
         <h3>Masuk untuk membuka Studio Kreator</h3>
@@ -1453,6 +1564,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
     stepperSlot.innerHTML = active ? renderStepper() : "";
     if (view !== "editor" || !active) {
+      destroyPoiDrawer();
       destroyStep2Map();
       bodySlot.innerHTML = view === "review" ? renderReview() : view !== "editor" ? renderEntry()
         : loading ? '<p role="status">Memuat draf…</p>' : '<p role="status">Versi draf ini tidak tersedia. Buka Draf Saya untuk memilih versi lain.</p>';
@@ -1475,9 +1587,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         restoreMapFields();
         mapHost.hidden = step2.mapFailed;
         fallbackEl.hidden = !step2.mapFailed;
-        if (step2.mapFailed) {
-          destroyStep2Map();
-        } else {
+        syncPoiDrawer(active);
+        if (!step2.mapFailed) {
           studioMapHandle?.update({
             record: active,
             mode: step2.mapMode,
@@ -1495,10 +1606,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         return;
       }
 
+      destroyPoiDrawer();
       destroyStep2Map();
+      studioMapKey = draftKey;
       bodySlot.innerHTML = renderStep2View(active, step2, editable, claimStep3);
       restoreOpenAccordions(bodySlot);
       restoreMapFields();
+      syncPoiDrawer(active);
       if (!step2.mapFailed) {
         const freshHost = bodySlot.querySelector<HTMLElement>("#st-map-host");
         if (freshHost) void mountStep2Map(freshHost, active, draftKey);
@@ -1506,6 +1620,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       return;
     }
 
+    destroyPoiDrawer();
     destroyStep2Map();
     bodySlot.innerHTML =
       step === 1
@@ -2019,8 +2134,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       openAccordions.delete("coord-inspector");
       const active = currentDraft();
       if (active && step2.subTab === "start") step2.selected = { kind: "start", id: active.snapshot.startPoint.id };
-      if (active && step2.subTab === "secondary" && format === "hide-and-seek" && active.snapshot.pois[0]) {
-        step2.selected = { kind: "poi", id: active.snapshot.pois[0].id };
+      if (active && (step2.subTab === "pois" || (step2.subTab === "secondary" && format === "hide-and-seek"))) {
+        const first = active.snapshot.pois[0];
+        step2.selected = first ? { kind: "poi", id: first.id } : null;
       }
       if (step2.subTab === "primary" && step2.selected?.kind !== (format === "claim-the-city" ? "landmark" : "station")) step2.selected = null;
       render();
@@ -2028,11 +2144,15 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       return;
     }
     if (btn.dataset.mapDrawer) {
-      const drawer = btn.dataset.mapDrawer as "points" | "transit";
+      const drawer = btn.dataset.mapDrawer as NonNullable<Step2State["drawer"]>;
       step2.drawer = step2.drawer === drawer ? null : drawer;
+      if (step2.drawer === "osm-pois") step2.mapMode = "select";
       step2.pointPage = 0;
       render();
-      root.querySelector<HTMLInputElement>(drawer === "points" ? "#st-point-search" : "#st-transit-search")?.focus();
+      const focus = !step2.drawer ? `[data-map-drawer="${drawer}"]`
+        : drawer === "osm-pois" ? "#st-osm-heading"
+          : drawer === "points" ? "#st-point-search" : "#st-transit-search";
+      root.querySelector<HTMLElement>(focus)?.focus();
       return;
     }
     if (btn.dataset.pointPage !== undefined) {
@@ -2501,6 +2621,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         step2.mapFailed = false;
         mapCfgPromise = null;
         render();
+        const active = currentDraft();
+        const host = root.querySelector<HTMLElement>("#st-map-host");
+        if (active && host) void mountStep2Map(host, active, `${active.packId}@${active.version}`);
         return;
       }
       if (mapAction === "recenter") {
@@ -3140,6 +3263,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     lifetime.abort();
     closeReviewDialog();
     window.clearInterval(dryClock);
+    destroyPoiDrawer();
     destroyStep2Map();
   };
 }

@@ -1,5 +1,5 @@
 import * as maplibregl from "maplibre-gl";
-import type { GeoCoordinate, MapConfig } from "@kelana-ria/contracts";
+import type { GeoCoordinate, MapConfig, StudioPoiCandidate } from "@kelana-ria/contracts";
 import { absolutizeMapUrl, absolutizeStyleSpec, circlePolygon } from "./board-map";
 import type { StudioVersionRecord } from "./studio-types";
 import { isClaimStudioPack } from "./studio-types";
@@ -31,6 +31,7 @@ export type StudioMapEditorOptions = {
   onMapClick: (coord: GeoCoordinate) => void;
   onSelectTarget: (target: { kind: "start" | "station" | "poi" | "landmark"; id: string }) => void;
   onMoveTarget?: (target: { kind: "start" | "station" | "poi" | "landmark"; id: string }, coord: GeoCoordinate) => void;
+  onSelectPoiCandidate: (id: string) => void;
   onError: () => void;
 };
 
@@ -49,6 +50,7 @@ export type StudioMapUpdate = Pick<
 
 export type StudioMapEditorHandle = {
   update: (next: StudioMapUpdate) => void;
+  setPoiCandidates: (candidates: readonly StudioPoiCandidate[], selectedId: string | null) => void;
   recenter: () => void;
   panTo: (coord: GeoCoordinate, zoom?: number) => void;
   destroy: () => void;
@@ -248,7 +250,7 @@ function computeStudioBounds(record: StudioVersionRecord): maplibregl.LngLatBoun
 }
 
 export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMapEditorHandle {
-  const { container, config, onError } = options;
+  const { container, config, onError, onSelectPoiCandidate } = options;
   let current: StudioMapUpdate = {
     record: options.record,
     mode: options.mode,
@@ -281,6 +283,21 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
     if (!radiusSrc) return;
     const features = buildRadiusFeatures(current.record, target, coord);
     radiusSrc.setData({ type: "FeatureCollection", features: features as never });
+  }
+
+  let poiCandidates: readonly StudioPoiCandidate[] = [];
+  let selectedPoiId: string | null = null;
+
+  function syncPoiCandidates() {
+    const source = map?.getSource<maplibregl.GeoJSONSource>("osm-poi-candidates");
+    source?.setData({
+      type: "FeatureCollection",
+      features: poiCandidates.map(candidate => ({
+        type: "Feature",
+        geometry: { type: "Point", coordinates: [candidate.longitude, candidate.latitude] },
+        properties: { id: candidate.osmId, selected: candidate.osmId === selectedPoiId },
+      })),
+    });
   }
 
   function syncSources() {
@@ -344,16 +361,16 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
           target: { kind: "station", id: st.id },
         });
       });
-      current.record.snapshot.pois.forEach((poi) => {
-        desired.push({
-          key: `poi:${poi.id}`,
-          coord: poi,
-          label: `★ ${poi.name}`,
-          classes: ["board-map-pin-claimed"],
-          target: { kind: "poi", id: poi.id },
-        });
-      });
     }
+    current.record.snapshot.pois.forEach((poi) => {
+      desired.push({
+        key: `poi:${poi.id}`,
+        coord: poi,
+        label: `★ ${poi.name}`,
+        classes: ["board-map-pin-claimed"],
+        target: { kind: "poi", id: poi.id },
+      });
+    });
 
     const seenKeys = new Set<string>();
     for (const item of desired) {
@@ -462,12 +479,38 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
           current.transitStations,
         );
         ensureOverlayLayers(map, latestGeo);
+        map.addSource("osm-poi-candidates", {
+          type: "geojson",
+          data: { type: "FeatureCollection", features: [] },
+        });
+        map.addLayer({
+          id: "osm-poi-candidates",
+          type: "circle",
+          source: "osm-poi-candidates",
+          paint: {
+            "circle-radius": ["case", ["boolean", ["get", "selected"], false], 10, 7],
+            "circle-color": "#fff",
+            "circle-opacity": 0.25,
+            "circle-stroke-width": 3,
+            "circle-stroke-color": "#8b4c05",
+          },
+        });
+        syncPoiCandidates();
         syncSources();
         syncMarkers();
         map.fitBounds(computeStudioBounds(current.record), { padding: 36, maxZoom: 14.5, duration: 0 });
       });
 
       map.on("click", (ev) => {
+        if (map?.getLayer("osm-poi-candidates")) {
+          const padding = new maplibregl.Point(10, 10);
+          const bounds: [maplibregl.Point, maplibregl.Point] = [ev.point.sub(padding), ev.point.add(padding)];
+          const id = map.queryRenderedFeatures(bounds, { layers: ["osm-poi-candidates"] })[0]?.properties?.id;
+          if (typeof id === "string") {
+            onSelectPoiCandidate(id);
+            return;
+          }
+        }
         if (current.mode === "select" && current.onToggleTransitStation && map?.getLayer("studio-transit-circles")) {
           const hits = map.queryRenderedFeatures(ev.point, { layers: ["studio-transit-circles"] });
           const hitId = hits[0]?.properties?.id;
@@ -512,6 +555,12 @@ export function mountStudioMapEditor(options: StudioMapEditorOptions): StudioMap
       current = next;
       syncSources();
       syncMarkers();
+    },
+    setPoiCandidates(candidates, selectedId) {
+      if (poiCandidates === candidates && selectedPoiId === selectedId) return;
+      poiCandidates = candidates;
+      selectedPoiId = selectedId;
+      syncPoiCandidates();
     },
     recenter() {
       if (destroyed || !map) return;

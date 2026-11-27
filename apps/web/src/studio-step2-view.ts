@@ -5,6 +5,7 @@ import type {
   GeoPoi,
   GeoSnapshot,
   GeoStation,
+  StudioPointProvenance,
   TransitMode,
 } from "@kelana-ria/contracts";
 import { escapeText } from "./escape-text";
@@ -35,7 +36,7 @@ export type JakartaTransitCatalog = {
 };
 
 export type Step2Target = { kind: "start" | "station" | "poi" | "landmark"; id: string };
-export type Step2Tab = "primary" | "secondary" | "start" | "boundary";
+export type Step2Tab = "primary" | "secondary" | "pois" | "start" | "boundary";
 
 export type Step2UndoEntry = {
   pack: StudioPack;
@@ -58,7 +59,7 @@ export type Step2State = {
   excludedTransitIds: Set<string>;
   transitQuery: string;
   transitFilter: StudioTransitMode | "all";
-  drawer: "points" | "transit" | null;
+  drawer: "points" | "transit" | "osm-pois" | null;
   pointQuery: string;
   pointPage: number;
   zoneId: string | null;
@@ -392,7 +393,7 @@ function renderInspector(
     const poi = record.snapshot.pois.find((p) => p.id === selected.id);
     if (!poi) return "";
     return `<details class="rb-accordion" open data-testid="step2-inspector">
-      <summary data-studio-point-heading>${escapeText(poi.name)} (POI)</summary>
+      <summary data-studio-point-heading>${escapeText(poi.name)} (POI) ${fieldVerificationBadge(poi)}</summary>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama POI</span><input id="ed-poi-name" value="${escapeText(poi.name)}" ${dis}></label>
         <label class="rb-field"><span>Kategori POI</span><input id="ed-poi-cat" value="${escapeText(poi.category)}" ${dis}></label>
@@ -416,7 +417,7 @@ function renderInspector(
     if (!lm) return "";
     const nameInputId = idx === 0 ? "ed-claim-landmark-name" : "ed-point-name";
     return `<details class="rb-accordion" open data-testid="step2-inspector">
-      <summary data-studio-point-heading>${escapeText(lm.name)}</summary>
+      <summary data-studio-point-heading>${escapeText(lm.name)} ${fieldVerificationBadge(lm)}</summary>
       <button type="button" class="studio-tool" data-map-action="edit-challenges">Sunting tantangan landmark</button>
       <div class="rb-grid-2">
         <label class="rb-field"><span>Nama Landmark</span><input id="${nameInputId}" data-field="name" value="${escapeText(lm.name)}" ${dis}></label>
@@ -449,6 +450,12 @@ function renderInspector(
   return "";
 }
 
+function fieldVerificationBadge(point?: StudioPointProvenance) {
+  return point?.source === "osm-curated"
+    ? `<span class="rb-badge">${point.fieldVerified ? "Terverifikasi ✓" : "Perlu Cek Lapangan"}</span>`
+    : "";
+}
+
 export function renderStep2Top(state: Step2State, editable: boolean): string {
   const mapAction = state.mapMode === "add" ? "Ketuk peta untuk menambah titik."
     : state.mapMode === "move" ? "Ketuk lokasi baru untuk titik terpilih."
@@ -463,6 +470,7 @@ export function renderStep2Top(state: Step2State, editable: boolean): string {
     <div class="studio-map-tools" role="group" aria-label="Cari lokasi dan atur tampilan peta">
       <button type="button" class="studio-tool studio-find-location" data-map-drawer="points" aria-expanded="${state.drawer === "points"}">Cari lokasi</button>
       <button type="button" class="studio-tool" data-map-drawer="transit" aria-expanded="${state.drawer === "transit"}">Transit Jakarta</button>
+      ${editable ? `<button type="button" class="studio-tool" data-map-drawer="osm-pois" aria-controls="st-poi-drawer" aria-expanded="${state.drawer === "osm-pois"}">Kurasi POI</button>` : ""}
       ${state.mapFailed ? "" : '<button type="button" class="studio-tool" data-map-action="recenter">Pusatkan</button>'}
       ${editable ? `<button type="button" class="studio-tool" data-map-action="gps-add" data-testid="studio-gps-add" ${state.locatingGps ? "disabled" : ""}>${state.locatingGps ? "Mencari lokasi…" : "Pakai Lokasi Saya"}</button>` : ""}
       ${editable ? `<button type="button" class="studio-tool" data-map-action="undo-map" data-testid="studio-map-undo" ${state.undoStack.length === 0 ? "disabled" : ""} aria-label="${lastUndo ? escapeText(`Urungkan: ${lastUndo.label}`) : "Urungkan"}">Urungkan${state.undoStack.length > 0 ? ` (${state.undoStack.length})` : ""}</button>` : ""}
@@ -562,13 +570,14 @@ function renderListControls(page: number, count: number) {
 
 function renderPointList(record: StudioVersionRecord, state: Step2State) {
   const pack = isClaimStudioPack(record.pack) ? record.pack : null;
-  const rows = state.subTab === "boundary"
+  const rows: { kind: string; id: string; name: string; detail: string; point?: StudioPointProvenance }[] = state.subTab === "boundary"
     ? record.snapshot.boundaryPolygon.map((point, index) => ({ kind: "vertex", id: String(index), name: `Sudut ${index + 1}`, detail: `${point.latitude}, ${point.longitude}` }))
     : state.subTab === "start" ? [{ kind: "start", id: record.snapshot.startPoint.id, name: record.snapshot.startPoint.name, detail: "" }]
-    : state.subTab === "secondary"
-      ? pack ? pack.geography.zones.map(zone => ({ kind: "zone", id: zone.id, name: zone.name, detail: zone.label }))
-        : record.snapshot.pois.map(poi => ({ kind: "poi", id: poi.id, name: poi.name, detail: poi.category }))
-      : pack ? pack.geography.landmarks.map(point => ({ kind: "landmark", id: point.id, name: point.name, detail: point.zoneId }))
+    : state.subTab === "pois" || (state.subTab === "secondary" && !pack)
+      ? record.snapshot.pois.map(poi => ({ kind: "poi", id: poi.id, name: poi.name, detail: poi.category, point: poi }))
+      : state.subTab === "secondary" && pack
+        ? pack.geography.zones.map(zone => ({ kind: "zone", id: zone.id, name: zone.name, detail: zone.label }))
+        : pack ? pack.geography.landmarks.map(point => ({ kind: "landmark", id: point.id, name: point.name, detail: point.zoneId, point }))
         : record.snapshot.stations.map(point => ({ kind: "station", id: point.id, name: point.name, detail: point.transitLines.join(", ") }));
   const q = state.pointQuery.trim().toLocaleLowerCase("id-ID");
   const matches = rows.filter(row => `${row.name} ${row.detail} ${row.id}`.toLocaleLowerCase("id-ID").includes(q));
@@ -578,7 +587,7 @@ function renderPointList(record: StudioVersionRecord, state: Step2State) {
     <ul class="rb-list">
       ${matches.length ? matches.slice(page * pageSize, (page + 1) * pageSize).map(row =>
         `<li><button type="button" class="secondary studio-point-item" data-select-kind="${row.kind}" data-select-id="${escapeText(row.id)}">
-          <strong>${escapeText(row.name)}</strong><small>${escapeText(row.detail)}</small>
+          <strong>${escapeText(row.name)}</strong><small>${escapeText(row.detail)}</small>${fieldVerificationBadge(row.point)}
         </button></li>`).join("") : "<li>Tidak ada lokasi yang cocok.</li>"}
     </ul>
     ${renderListControls(page, matches.length)}
@@ -640,10 +649,11 @@ export function renderStep2Bottom(
 ): string {
   const claim = isClaimStudioPack(record.pack);
   const selected = ensureStep2Selection(record, state);
-  const currentPoint = state.subTab === "secondary" && !claim && selected?.kind !== "poi" ? null : selected;
+  const poiView = state.subTab === "pois" || (state.subTab === "secondary" && !claim);
+  const currentPoint = poiView && selected?.kind !== "poi" ? null : selected;
   const zoneView = claim && state.subTab === "secondary";
   const boundaryView = state.subTab === "boundary";
-  const addPoint = editable && (state.subTab === "primary" || (state.subTab === "secondary" && !claim));
+  const addPoint = editable && (state.subTab === "primary" || poiView);
   const showLandmarkChallenges =
     state.editingChallenges &&
     claim &&
@@ -659,7 +669,7 @@ export function renderStep2Bottom(
   }
   return `<div class="studio-section-tabs studio-map-layers" role="group" aria-label="Jenis lokasi yang disunting">
       ${([["primary", claim ? "Landmark" : "Stasiun"], ["secondary", claim ? "Zona" : "POI"],
-        ["start", "Titik mulai"], ["boundary", "Batas"]] as const).map(([tab, label]) =>
+        ...(claim ? [["pois", "POI"]] as const : []), ["start", "Titik mulai"], ["boundary", "Batas"]] as const).map(([tab, label]) =>
           `<button type="button" data-map-tab="${tab}" aria-pressed="${state.subTab === tab}">${label}</button>`).join("")}
     </div>
     ${state.drawer === "points" ? renderPointList(record, state) : ""}
@@ -674,7 +684,7 @@ export function renderStep2Bottom(
         : renderInspector(record, currentPoint, editable, state.locatingGps)}
       ${editable && currentPoint && !zoneView && !boundaryView && !state.mapFailed
         ? `<button type="button" class="studio-tool" data-map-mode="move" aria-pressed="${state.mapMode === "move"}">Pindahkan titik di peta</button>` : ""}
-      ${addPoint ? `<button type="button" class="studio-tool" data-map-action="${claim ? "add-landmark" : state.subTab === "secondary" ? "add-poi" : "add-station"}">Tambah ${claim ? "landmark" : state.subTab === "secondary" ? "POI" : "stasiun"}</button>` : ""}
+      ${addPoint ? `<button type="button" class="studio-tool" data-map-action="${poiView ? "add-poi" : claim ? "add-landmark" : "add-station"}">Tambah ${poiView ? "POI" : claim ? "landmark" : "stasiun"}</button>` : ""}
     </fieldset>`}
     <div class="rb-sticky-footer studio-step-actions">
       <button type="button" class="studio-tool" data-step="1">← Draf</button>
@@ -695,6 +705,7 @@ export function renderStep2View(
       <p role="status">Peta belum bisa dimuat. Pilih lokasi dari daftar untuk menyuntingnya.</p>
       <button type="button" class="secondary" data-map-action="retry-map">Coba muat peta</button>
     </div>
+    <div id="st-poi-drawer" hidden></div>
     <div id="st-step2-bottom">${renderStep2Bottom(record, state, editable, claimStep3)}</div>
   </div>`;
 }
