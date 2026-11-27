@@ -1,7 +1,5 @@
 import copy from "./locales/id.json" with { type: "json" };
-import { mountLandingPage } from "./landing-page";
 import { initPwaInstallCapture } from "./pwa-install";
-import { mountRulebookCatalog } from "./rulebook-catalog";
 
 export type { GameConfiguration } from "@kelana-ria/contracts";
 
@@ -82,32 +80,47 @@ async function showRoute(focusHeading = false) {
       url.pathname === "/catalog" ||
       url.pathname === "/catalog/" ||
       params.has("edition");
-    if (isCatalogPath) {
-      unmountPlay = mountRulebookCatalog(setup, {
-        navigate: navigateRoute,
-        openRoom,
-        async openPractice(edition, selectedMode) {
-          const { mountEditionPractice } = await import("./edition-practice");
-          if (currentNavigation === navigation && !practice.open) {
-            mountEditionPractice(practice, edition, selectedMode, {
-              onReady: () => {
-                const primaryCta = setup.querySelector<HTMLButtonElement>(
-                  '.cat-actions button.primary:not(:disabled)',
-                );
-                primaryCta?.focus({ preventScroll: true });
-              },
-            });
-          }
-        },
-        openStudio,
-      }, focusHeading);
-    } else {
-      unmountPlay = mountLandingPage(setup, {
-        navigate: navigateRoute,
-        openRoom,
-        openStudio,
-        openAbout: () => guide.showModal(),
-      }, focusHeading);
+    try {
+      if (isCatalogPath) {
+        const { mountRulebookCatalog } = await import("./rulebook-catalog");
+        if (currentNavigation !== navigation) return;
+        unmountPlay = mountRulebookCatalog(setup, {
+          navigate: navigateRoute,
+          openRoom,
+          async openPractice(edition, selectedMode) {
+            const { mountEditionPractice } = await import("./edition-practice");
+            if (currentNavigation === navigation && !practice.open) {
+              mountEditionPractice(practice, edition, selectedMode, {
+                onReady: () => {
+                  const primaryCta = setup.querySelector<HTMLButtonElement>(
+                    '.cat-actions button.primary:not(:disabled)',
+                  );
+                  primaryCta?.focus({ preventScroll: true });
+                },
+              });
+            }
+          },
+          openStudio,
+        }, focusHeading);
+      } else {
+        const { mountLandingPage } = await import("./landing-page");
+        if (currentNavigation !== navigation) return;
+        unmountPlay = mountLandingPage(setup, {
+          navigate: navigateRoute,
+          openRoom,
+          openStudio,
+          openAbout: () => guide.showModal(),
+        }, focusHeading);
+      }
+    } catch {
+      if (currentNavigation !== navigation) return;
+      setup.innerHTML = `<h1>Kelana Ria</h1>
+        <p class="intro" role="alert">Halaman belum bisa dibuka. Periksa koneksi lalu coba lagi.</p>
+        <button id="setup-reload" class="secondary" type="button">Coba lagi</button>`;
+      const { signal } = routeEvents;
+      const retry = () => location.reload();
+      setup.querySelector<HTMLButtonElement>("#setup-reload")?.addEventListener("click", retry, { signal });
+      window.addEventListener("online", retry, { once: true, signal });
     }
     return;
   }
