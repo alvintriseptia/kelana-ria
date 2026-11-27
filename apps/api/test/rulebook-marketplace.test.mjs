@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as api from "../dist/index.js";
+import { TEST_ADMIN } from "./auth-client.mjs";
 
 const T0 = 1_800_000_000_000;
 
@@ -103,9 +104,9 @@ test("Community Hide & Seek pack authoring: clone template, seed GeoSnapshot wit
     assert.equal(savedGood.ok, true);
     assert.equal(savedGood.validation.ok, true);
     assert.equal(store.submitDraft("creator-1", goodPack.meta.packId, 1, T0 + 5000).ok, true);
-    assert.equal(store.reviewVersion(goodPack.meta.packId, 1, { action: "request-changes", note: "Clarify station note" }, T0 + 6000).ok, true);
+    assert.equal(store.reviewVersion(goodPack.meta.packId, 1, { action: "request-changes", note: "Clarify station note" }, TEST_ADMIN, T0 + 6000).ok, true);
     assert.equal(store.submitDraft("creator-1", goodPack.meta.packId, 1, T0 + 7000).ok, true);
-    assert.equal(store.reviewVersion(goodPack.meta.packId, 1, { action: "publish" }, T0 + 8000).ok, true);
+    assert.equal(store.reviewVersion(goodPack.meta.packId, 1, { action: "publish" }, TEST_ADMIN, T0 + 8000).ok, true);
 
     // 6. Paid pack rejects free room launch; host purchases via Midtrans and settles
     assert.equal(store.createFreeRoomFromRulebook(goodPack.meta.packId, 1, "buyer-1", "Host", T0 + 9000).error, "payment-required");
@@ -139,7 +140,7 @@ test("Community Hide & Seek pack authoring: clone template, seed GeoSnapshot wit
     assert.equal(roomView.room.seats.length, 3);
 
     // 8. Pausing the pack stops new orders while keeping active room & earnings intact
-    assert.equal(store.reviewVersion(goodPack.meta.packId, 1, { action: "pause", reason: "Station renovation" }, T0 + 20_000).ok, true);
+    assert.equal(store.reviewVersion(goodPack.meta.packId, 1, { action: "pause", reason: "Station renovation" }, TEST_ADMIN, T0 + 20_000).ok, true);
     assert.equal((await store.createOrder("buyer-2", goodPack.meta.packId, 1, T0 + 21_000)).error, "pack-unavailable");
     assert.equal(store.viewRoom(roomCode, "buyer-1", T0 + 22_000).room.seats.length, 3);
     assert.equal(store.listEarnings().length, 1);

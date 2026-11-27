@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as api from "../dist/index.js";
+import { TEST_ADMIN } from "./auth-client.mjs";
 
 const T0 = 1_800_000_000_000;
 
@@ -82,7 +83,7 @@ test("Unified Claim RulebookPack marketplace: clone official template, custom ph
     goodPack.challenges.landmarkChallenges["m-bloc"][0].payload.autoApproveMs = 2 * 60_000;
     assert.equal(store.saveDraft("claim-creator-1", goodPack, cloned.record.snapshot, T0 + 4000).validation.ok, true);
     assert.equal(store.submitDraft("claim-creator-1", goodPack.meta.packId, 1, T0 + 5000).ok, true);
-    assert.equal(store.reviewVersion(goodPack.meta.packId, 1, { action: "publish" }, T0 + 6000).ok, true);
+    assert.equal(store.reviewVersion(goodPack.meta.packId, 1, { action: "publish" }, TEST_ADMIN, T0 + 6000).ok, true);
 
     // Order 1: Solo paid Claim room
     const ordSolo = await store.createOrder("solo-buyer", goodPack.meta.packId, 1, T0 + 7000);
@@ -136,7 +137,7 @@ test("Published custom variants keep review notes and solutions private and reve
     }, T0);
     assert.ok(draft.ok, draft.error);
     assert.ok(store.submitDraft(creator, packId, 1, T0).ok);
-    assert.ok(store.reviewVersion(packId, 1, { action: "publish" }, T0).ok);
+    assert.ok(store.reviewVersion(packId, 1, { action: "publish" }, TEST_ADMIN, T0).ok);
     const versionTwo = structuredClone(draft.record.pack);
     versionTwo.meta.version = 2;
     const common = {
@@ -181,7 +182,7 @@ test("Published custom variants keep review notes and solutions private and reve
     assert.ok(saved.ok && saved.validation.ok, JSON.stringify(saved.validation?.errors));
     assert.equal(saved.record.version, 2);
     assert.ok(store.submitDraft(creator, packId, 2, T0 + 2000).ok);
-    const release = store.reviewVersion(packId, 2, { action: "publish" }, T0 + 3000);
+    const release = store.reviewVersion(packId, 2, { action: "publish" }, TEST_ADMIN, T0 + 3000);
     assert.ok(release.ok, release.error);
     const safe = /correctChoiceId|acceptedAnswers|verificationNotes|Review source fixture/;
     const early = /Bandingkan tinggi dua baris|Undakan memberi penonton/;

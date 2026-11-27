@@ -1,5 +1,3 @@
-export const reviewerKey = "kelana-qa-reviewer-fixture";
-
 export async function signInQaContext(context, baseUrl, email, displayName = "Pemain QA") {
   const req = await context.request.post(`${baseUrl}/api/auth/request-otp`, {
     data: { email },
@@ -31,14 +29,7 @@ export async function openDraft(page, packId, version = 1) {
 export async function openReview(page) {
   await page.locator('button[data-studio-view="home"]').click();
   await page.locator('button[data-studio-view="review"]').click();
-  const auth = page.getByLabel("Kunci peninjau");
-  const queue = page.getByRole("region", { name: "Paket untuk tinjauan" });
-  await auth.or(queue).waitFor();
-  if (await auth.isVisible()) {
-    await auth.fill(reviewerKey);
-    await page.getByRole("button", { name: "Buka antrean tinjauan" }).click();
-  }
-  await queue.waitFor();
+  await page.getByRole("region", { name: "Paket untuk tinjauan" }).waitFor();
 }
 
 export async function buyPublishedDraft(page, packId, version = 1) {

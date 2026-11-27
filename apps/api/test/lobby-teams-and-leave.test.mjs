@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import * as api from "../dist/index.js";
+import { TEST_ADMIN } from "./auth-client.mjs";
 
 const T0 = 1_800_100_000_000;
-const REVIEWER_KEY = "reviewer-secret-141";
 
 function makeClient(baseUrl) {
   const cookies = new Map();
@@ -120,7 +120,6 @@ test("monotonic seat IDs avoid seat-taken collision on lobby leave & rejoin in C
     now: () => clock.now,
     allowSandboxAuthOtp: true,
     allowRulebookSandboxCheckout: true,
-    rulebookReviewerKey: REVIEWER_KEY,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
@@ -222,7 +221,6 @@ test("hostName defaults to signed-in displayName and lobby rename-seat validates
     now: () => clock.now,
     allowSandboxAuthOtp: true,
     allowRulebookSandboxCheckout: true,
-    rulebookReviewerKey: REVIEWER_KEY,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
@@ -304,7 +302,7 @@ test("Host canceling paid-pack lobby via leave notifies guests over SSE and free
     now: () => clock.now,
     allowSandboxAuthOtp: true,
     allowRulebookSandboxCheckout: true,
-    rulebookReviewerKey: REVIEWER_KEY,
+    adminEmails: [TEST_ADMIN.email],
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
@@ -322,11 +320,12 @@ test("Host canceling paid-pack lobby via leave notifies guests over SSE and free
   });
   assert.equal(cloned.status, 200, JSON.stringify(cloned.body));
   assert.equal((await creator.post("/api/rulebooks", { type: "submit-draft", packId: "pack-paid-cancel-141", version: 1 })).status, 200);
+  const admin = makeClient(baseUrl);
+  await signIn(admin, TEST_ADMIN.email);
   assert.equal(
-    (await creator.post(
+    (await admin.post(
       "/api/rulebooks",
       { type: "publish-version", packId: "pack-paid-cancel-141", version: 1 },
-      { authorization: `Bearer ${REVIEWER_KEY}` },
     )).status,
     200,
   );

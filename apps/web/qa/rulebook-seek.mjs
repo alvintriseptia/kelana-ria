@@ -7,7 +7,7 @@ import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/
 import { catalogUrl, openEdition } from "./catalog.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
-import { buyPublishedDraft, openDraft, openReview, reviewerKey, signInQaContext, startDraft } from "./studio-navigation.mjs";
+import { buyPublishedDraft, openDraft, openReview, signInQaContext, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -26,7 +26,7 @@ const server = createSoloServer({
   allowSimulatedLocation: true,
   allowRulebookSandboxCheckout: true,
   allowSandboxAuthOtp: true,
-  rulebookReviewerKey: reviewerKey,
+  adminEmails: ["seek-creator@kelana.test"],
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

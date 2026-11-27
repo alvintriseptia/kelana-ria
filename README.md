@@ -28,7 +28,9 @@ Run the API and `npm run dev` to open the game catalog locally. For installation
 
 Each edition page has a shareable address with its pack ID and version. Set `ALLOW_RULEBOOK_SANDBOX_CHECKOUT=1` on a test server to use the catalog’s test payment flow. Public sessions can launch free editions.
 
-Studio drafts are tied to the browser’s creator session. To enable the separate reviewer queue, set a private `RULEBOOK_REVIEWER_KEY` on the API server and use it to open **Peninjau** from Studio. Keep the key outside the frontend build and use HTTPS for deployed servers.
+To enable editorial review, set `ADMIN_EMAILS` on the API server to a comma-separated list of admin email addresses, then restart the server. Sign in with an email OTP for one of those addresses and open **Peninjau** in Studio. The server promotes matching existing accounts at startup and grants the role to new accounts when they verify their email. Use HTTPS and configure email delivery on deployed servers. Reserve sandbox OTP codes for local QA.
+
+Admins can grant or revoke the role for other registered accounts via `/api/auth/admins`. To revoke a configured admin, first remove the address from `ADMIN_EMAILS` and restart, then revoke the role from another admin account. Review decisions record the signed-in admin, action, note and timestamp.
 
 To reproduce the mobile checks after building:
 

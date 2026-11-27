@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createSoloServer } from "../dist/index.js";
 
-async function studioServer(t, key) {
+const adminEmail = "studio-admin@kelana.test";
+
+async function studioServer(t, adminEmails = []) {
   const server = createSoloServer({
     databasePath: ":memory:",
-    rulebookReviewerKey: key,
+    adminEmails,
     allowSandboxAuthOtp: true,
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
@@ -38,9 +40,8 @@ async function studioServer(t, key) {
 }
 
 test("rulebook Studio scopes draft ownership and independently authorizes editorial actions", async t => {
-  const key = "rulebook-review-test-fixture";
-  const { get, post, signIn } = await studioServer(t, key);
-  const reviewer = { authorization: `Bearer ${key}` };
+  const { get, post, signIn } = await studioServer(t, [adminEmail]);
+  const reviewer = await signIn(adminEmail);
   assert.equal((await get("?role=writer")).status, 401);
   const owner = await signIn("studio-owner@kelana.test");
   const outsider = await signIn("studio-outsider@kelana.test");
@@ -60,7 +61,7 @@ test("rulebook Studio scopes draft ownership and independently authorizes editor
   assert.equal(ownerData.versions[0].ownerHash, undefined);
   assert.deepEqual((await (await get("?role=writer", outsider)).json()).versions, []);
   assert.equal((await get("?role=reviewer", owner)).status, 403);
-  assert.equal((await get("?role=reviewer", { authorization: "Bearer wrong-key" })).status, 403);
+  assert.equal((await get("?role=reviewer")).status, 401);
   assert.deepEqual((await (await get("?role=reviewer", reviewer)).json()).versions, []);
 
   const copy = structuredClone(record.pack);
@@ -80,18 +81,17 @@ test("rulebook Studio scopes draft ownership and independently authorizes editor
   assert.equal(JSON.stringify(catalog).includes("correctChoiceId"), false);
 });
 
-test("rulebook editorial access is disabled when the server has no reviewer key", async t => {
+test("rulebook editorial actions require an admin account", async t => {
   const { get, post, signIn } = await studioServer(t);
   const writer = await signIn("studio-noreview@kelana.test");
-  assert.equal((await (await get("?role=writer", writer)).json()).reviewEnabled, false);
-  assert.equal((await get("?role=reviewer", { authorization: "Bearer test" })).status, 403);
-  assert.equal((await post({ type: "publish-version" }, { authorization: "Bearer test" })).status, 403);
+  assert.equal((await (await get("?role=writer", writer)).json()).isAdmin, false);
+  assert.equal((await get("?role=reviewer", writer)).status, 403);
+  assert.equal((await post({ type: "publish-version" }, writer)).status, 403);
 });
 
 test("delete-draft removes owner draft and changes-requested versions, closes draft playtests, and guards status/ownership", async t => {
-  const key = "rulebook-review-delete-test";
-  const { get, post, signIn } = await studioServer(t, key);
-  const reviewer = { authorization: `Bearer ${key}` };
+  const { get, post, signIn } = await studioServer(t, [adminEmail]);
+  const reviewer = await signIn(adminEmail);
   const owner = await signIn("delete-owner@kelana.test");
   const outsider = await signIn("delete-outsider@kelana.test");
 

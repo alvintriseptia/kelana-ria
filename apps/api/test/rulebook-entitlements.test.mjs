@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import * as api from "../dist/index.js";
+import { TEST_ADMIN } from "./auth-client.mjs";
 
 const T0 = 1_800_000_000_000;
 
@@ -17,7 +18,7 @@ async function startServer(databasePath, clockRef, midtrans = api.createRecorded
     allowRulebookSandboxCheckout: true,
     allowHideSeekQa: true,
     allowSandboxAuthOtp: true,
-    rulebookReviewerKey: "entitlement-reviewer-key",
+    adminEmails: [TEST_ADMIN.email],
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -97,7 +98,7 @@ test("Paid pack settlement grants durable account-bound ownership, replayable So
   let buyerCookies;
   let creatorCookies;
 
-  // Phase 1: Signed-in creator publishes v1 and v2; signed-in buyer purchases once via Midtrans
+  // Phase 1: Admin publishes both creator versions, and a signed-in buyer purchases once via Midtrans
   {
     const { server, baseUrl, midtrans } = await startServer(dbPath, clock);
     try {
@@ -112,6 +113,8 @@ test("Paid pack settlement grants durable account-bound ownership, replayable So
 
       const creator = makeClient(baseUrl);
       await creator.signIn("creator-ent@kelana.test", "Studio Selatan");
+      const admin = makeClient(baseUrl);
+      await admin.signIn(TEST_ADMIN.email);
       const buyer = makeClient(baseUrl);
       await buyer.signIn("buyer-ent@kelana.test", "Pembeli Satu");
 
@@ -126,7 +129,7 @@ test("Paid pack settlement grants durable account-bound ownership, replayable So
       assert.equal(cloned.status, 200);
       assert.equal((await creator.post("/api/rulebooks", { type: "submit-draft", packId, version: 1 })).status, 200);
       assert.equal(
-        (await creator.post("/api/rulebooks", { type: "publish-version", packId, version: 1 }, { authorization: "Bearer entitlement-reviewer-key" })).status,
+        (await admin.post("/api/rulebooks", { type: "publish-version", packId, version: 1 })).status,
         200,
       );
 
@@ -141,7 +144,7 @@ test("Paid pack settlement grants durable account-bound ownership, replayable So
       assert.equal(savedV2.status, 200);
       assert.equal((await creator.post("/api/rulebooks", { type: "submit-draft", packId, version: 2 })).status, 200);
       assert.equal(
-        (await creator.post("/api/rulebooks", { type: "publish-version", packId, version: 2 }, { authorization: "Bearer entitlement-reviewer-key" })).status,
+        (await admin.post("/api/rulebooks", { type: "publish-version", packId, version: 2 })).status,
         200,
       );
       creatorCookies = creator.cookieMap;
@@ -256,10 +259,9 @@ test("Paid pack settlement grants durable account-bound ownership, replayable So
       assert.ok(leaveRes.body.room.outcome);
 
       // Pause v1 -> new purchases of v1 are blocked, while existing owner can still launch unaffected published v2!
-      const pauseV1 = await creator.post(
+      const pauseV1 = await admin.post(
         "/api/rulebooks",
         { type: "pause-version", packId, version: 1, reason: "Maintenance" },
-        { authorization: "Bearer entitlement-reviewer-key" },
       );
       assert.equal(pauseV1.status, 200);
       const blockedBuyer = makeClient(baseUrl);

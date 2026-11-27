@@ -7,7 +7,7 @@ import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/
 import { catalogUrl, openEdition } from "./catalog.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
-import { openReview, reviewerKey, signInQaContext, startDraft } from "./studio-navigation.mjs";
+import { openReview, signInQaContext, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -26,7 +26,7 @@ const server = createSoloServer({
   allowSimulatedLocation: true,
   allowRulebookSandboxCheckout: true,
   allowSandboxAuthOtp: true,
-  rulebookReviewerKey: reviewerKey,
+  adminEmails: ["claim-creator@kelana.test"],
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -580,10 +580,8 @@ try {
   fixture.session.maxPlayers = 3;
   fixture.session.durationMs = 105 * 60_000;
   const author = async data => {
-    const reviewAction = data.type === "publish-version" || data.type === "pause-version";
     const res = await ctxCreator.request.post(`${baseUrl}/api/rulebooks`, {
       data,
-      ...(reviewAction ? { headers: { authorization: `Bearer ${reviewerKey}` } } : {}),
     });
     const reply = await res.json();
     assert.ok(reply.ok, JSON.stringify(reply.error ?? reply.validation?.errors));
