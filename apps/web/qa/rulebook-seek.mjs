@@ -81,6 +81,9 @@ try {
   await pageCreator.click('button[data-step="3"]');
   await pageCreator.waitForSelector("#ed-head");
   assert.equal(await pageCreator.locator("#ed-curse-title").count(), 0, "Curse quick-add should not appear inside Timer & Sesi");
+  const repeatMode = pageCreator.locator("#ed-repeat-mode");
+  assert.equal(await repeatMode.inputValue(), "single_use_locked");
+  await repeatMode.selectOption("escalating_multiplier");
   await pageCreator.click('button[data-action="save-draft"]');
   await pageCreator.waitForFunction(() => document.body.textContent.includes("lolos validator otomatis"));
 
@@ -117,7 +120,9 @@ try {
     pageCreator.click('button[data-action="export-json"]'),
   ]);
   const exportedJson = await readFile(await download.path(), "utf8");
-  assert.ok(exportedJson.includes("pack-senopati-seek"), "Exported JSON should contain active pack");
+  const exportedPack = JSON.parse(exportedJson).pack;
+  assert.equal(exportedPack.meta.packId, "pack-senopati-seek");
+  assert.equal(exportedPack.investigationBook.repeatCostMode, "escalating_multiplier");
   await pageCreator.click('button[data-studio-view="home"]');
   await startDraft(pageCreator, "hide-and-seek");
   await pageCreator.click('[data-testid="studio-more-menu"] summary');
@@ -782,8 +787,11 @@ try {
       });
     });
 
+    const { listings } = await locHiderCtx.request.get(`${baseUrl}/api/rulebooks?format=hide-and-seek`).then(r => r.json());
+    const compact = listings.find(listing => listing.packId === "official-jakarta-compact-seek");
+    assert.ok(compact, "Official Compact Seek should be listed");
     const createdSeek = await locHiderCtx.request.post(`${baseUrl}/api/rulebooks`, {
-      data: { type: "create-free-room", packId: "official-jakarta-compact-seek", version: 2, hostName: "Sembunyi" },
+      data: { type: "create-free-room", packId: compact.packId, version: compact.version, hostName: "Sembunyi" },
     });
     const locCode = (await createdSeek.json()).roomCode;
     await locSeekerCtx.request.post(`${baseUrl}/api/rulebooks`, {

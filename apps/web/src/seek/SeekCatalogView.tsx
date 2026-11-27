@@ -1,7 +1,13 @@
 import type { HideSeekQuestionFamily, RulebookEntitlementSummary } from "@kelana-ria/contracts";
 import type { Signal } from "@preact/signals";
 import { SeekSlotAlert } from "./SeekShared";
-import { idr, questionNames, type SeekInlineError, type SeekPublicListing } from "./types";
+import {
+  idr,
+  questionNames,
+  questionRepeatRules,
+  type SeekInlineError,
+  type SeekPublicListing,
+} from "./types";
 
 export function SeekCatalogView({
   listings,
@@ -134,6 +140,7 @@ export function SeekCatalogView({
               {item.title} <small>v{item.version}</small>
             </h3>
             <p>{item.summary}</p>
+            <p>{questionRepeatRules[item.repeatCostMode]}</p>
             <p>
               <small>
                 Oleh {item.byline} · Mulai: {item.startName} · Sembunyi {item.headStartMinutes} mnt

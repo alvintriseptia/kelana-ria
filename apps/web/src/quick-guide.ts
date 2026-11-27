@@ -1,6 +1,7 @@
-import type { RulebookFormat, RulebookPlayMode } from "@kelana-ria/contracts";
+import type { HideSeekRepeatCostMode, RulebookPlayMode } from "@kelana-ria/contracts";
 import { escapeText } from "./escape-text";
 import type { CatalogEdition } from "./rulebook-catalog";
+import { questionRepeatRules } from "./seek/types";
 import "./quick-guide.css";
 
 export type PhaseCueKey =
@@ -90,7 +91,6 @@ export function resetAllPhaseCues(): void {
 }
 
 export type QuickGuideContext = {
-  format: RulebookFormat;
   mode?: RulebookPlayMode;
   role?: "hider" | "seeker" | "lobby" | "player";
   packId: string;
@@ -98,7 +98,10 @@ export type QuickGuideContext = {
   title: string;
   inLobby?: boolean;
   onResetCues?: () => void;
-};
+} & (
+  | { format: "claim-the-city" }
+  | { format: "hide-and-seek"; repeatCostMode: HideSeekRepeatCostMode }
+);
 
 type GuideStep = { title: string; body: string };
 
@@ -176,11 +179,11 @@ function guideSpec(ctx: QuickGuideContext): {
       steps: [
         {
           title: "Ajukan Petunjuk di Menu Tanya",
-          body: "Gunakan Radar, Termometer, Foto, atau petunjuk lain untuk mempersempit wilayah penyembunyi.",
+          body: `Gunakan petunjuk untuk mempersempit area pencarian. ${questionRepeatRules[ctx.repeatCostMode]}`,
         },
         {
           title: "Baca Deduksi di Peta",
-          body: "Peta menandai area yang masih mungkin dan menyisihkan stasiun yang tidak cocok.",
+          body: "Peta menyisihkan stasiun yang tidak cocok. Buka Riwayat untuk melihat lagi jawaban petunjuk.",
         },
         {
           title: "Selidiki & Temukan Penyembunyi",
@@ -201,7 +204,7 @@ function guideSpec(ctx: QuickGuideContext): {
       },
       {
         title: "Sembunyi lalu Lacak di Peta",
-        body: "Penyembunyi mengunci satu stasiun saat Persiapan; pencari mengajukan petunjuk untuk melacaknya.",
+        body: `Penyembunyi mengunci stasiun saat Persiapan. Pencari mengajukan petunjuk. ${questionRepeatRules[ctx.repeatCostMode]}`,
       },
       {
         title: "Tukar Peran & Bandingkan Waktu",
@@ -230,6 +233,9 @@ async function resolvePracticeEdition(ctx: QuickGuideContext): Promise<CatalogEd
   );
   if (exact) return exact;
   const sameFormat = cachedCatalogEditions?.find((e) => e.format === ctx.format);
+  if (sameFormat?.format === "hide-and-seek" && ctx.format === "hide-and-seek") {
+    return { ...sameFormat, title: ctx.title || sameFormat.title, repeatCostMode: ctx.repeatCostMode };
+  }
   if (sameFormat) {
     return { ...sameFormat, title: ctx.title || sameFormat.title };
   }
@@ -268,6 +274,7 @@ async function resolvePracticeEdition(ctx: QuickGuideContext): Promise<CatalogEd
     regroupMinutes: 10,
     objectiveResponseMs: 300_000,
     photoResponseMs: 300_000,
+    repeatCostMode: ctx.repeatCostMode,
     questionFamilies: [
       { family: "radar", drawCount: 2, keepCount: 1 },
       { family: "thermometer", drawCount: 2, keepCount: 1 },

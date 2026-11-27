@@ -22,6 +22,7 @@ import {
   isDraftPlaytest,
   orderedSeekSeats,
   phaseLabels,
+  questionRepeatRules,
   questionStatusLabel,
   type SeekInlineError,
   type SeekRoomPayload,
@@ -221,6 +222,7 @@ export function SeekRoomShellView({
           </div>
         </div>
         <h2>{room.packMeta.title}</h2>
+        {room.phase === "lobby" && <p>{questionRepeatRules[room.repeatCostMode]}</p>}
         {isDraft && (
           <div class="cg-draft-bar-head" data-testid="draft-playtest-bar">
             <DraftStudioLink format="hide-and-seek" pass={pass} />

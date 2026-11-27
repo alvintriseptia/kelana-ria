@@ -546,3 +546,77 @@ test("Pending Midtrans orders and settled paid pass, room, and earnings persist 
     }
   }
 });
+
+for (const board of ["compact", "wide"]) {
+  test(`official ${board} Seek questions lock for one turn and replay without another draw`, () => {
+    const store = api.rulebookStore(":memory:", { now: () => T0 });
+    try {
+      const packId = `official-jakarta-${board}-seek`;
+      const listing = store.listPublicListings("hide-and-seek").find(item => item.packId === packId);
+      assert.equal(listing.repeatCostMode, "single_use_locked");
+      const hider = "lock-test-host";
+      const seeker = "lock-test-guest";
+      const created = store.createFreeRoomFromRulebook(packId, listing.version, hider, "Hider", T0, true, "group");
+      assert.equal(created.ok, true);
+      const { roomCode } = created;
+      assert.equal(store.joinRoom(roomCode, seeker, "Seeker", T0).ok, true);
+      const { publicBoard } = store.viewRoom(roomCode, hider, T0);
+      const anchor = publicBoard.stations[0];
+      const start = publicBoard.startPoint;
+      for (const seat of [hider, seeker]) {
+        act(store, roomCode, seat, T0, { type: "check-in-start", fix: fixAt(start, T0) });
+        act(store, roomCode, seat, T0, { type: "ready", ready: true });
+      }
+      const head = act(store, roomCode, hider, T0 + 1000, { type: "start" }).room;
+      act(store, roomCode, hider, T0 + 2000, { type: "lock-anchor", stationId: anchor.id, fix: fixAt(anchor, T0 + 2000) });
+      const seekAt = head.releaseAt + 1000;
+      const before = store.viewRoom(roomCode, seeker, seekAt).room;
+      const radarItems = before.menu.filter(item => item.family === "radar" && !item.isCustomRadius);
+      assert.ok(radarItems.length > 1);
+      const [radar, other] = radarItems;
+      const ask = { type: "ask", actionId: "ask-once", family: radar.family, itemId: radar.itemId, fix: fixAt(start, seekAt) };
+      const asked = act(store, roomCode, seeker, seekAt, ask).room.questions[0];
+      const pending = store.viewRoom(roomCode, hider, seekAt).room.questions[0];
+      const answer = {
+        type: "answer-question", actionId: "answer-once", questionId: asked.id, answerCode: pending.privateComputedAnswer.code,
+      };
+      act(store, roomCode, hider, seekAt + 1000, answer);
+      const draw = store.viewRoom(roomCode, hider, seekAt + 1000).deck.activeDraw;
+      assert.ok(draw);
+
+      const replay = act(store, roomCode, seeker, seekAt + 2000, ask).room;
+      assert.equal(replay.questions.length, 1);
+      assert.equal(replay.questions[0].id, asked.id);
+      assert.equal(replay.questions[0].status, "answered");
+      assert.equal(replay.menu.find(item => item.itemId === radar.itemId).lockedSingleUse, true);
+      assert.equal(replay.menu.find(item => item.itemId === other.itemId).lockedSingleUse, false);
+      const duplicate = store.actInRoom(roomCode, seeker, { ...ask, actionId: "new-ask", fix: fixAt(start, seekAt + 2000) }, seekAt + 2000);
+      assert.equal(duplicate.error, "question-already-used");
+
+      act(store, roomCode, hider, seekAt + 2000, answer);
+      const chose = store.deckActionInRoom(roomCode, hider, {
+        kind: "choose-draw", actionId: "draw-once", keepInstanceIds: draw.cards.slice(0, draw.keepCount).map(card => card.instanceId),
+      }, seekAt + 2500);
+      assert.equal(chose.ok, true);
+      assert.equal(store.viewRoom(roomCode, hider, seekAt + 2600).deck.activeDraw, null, "Replays must not queue a second draw");
+
+      const endAt = before.phaseEndsAt;
+      const ended = store.viewRoom(roomCode, hider, endAt).room;
+      assert.equal(ended.phase, "regroup");
+      const checkInAt = endAt + 1000;
+      for (const seat of [hider, seeker]) {
+        act(store, roomCode, seat, checkInAt, { type: "regroup-check-in", fix: fixAt(ended.regroupPoint, checkInAt) });
+      }
+      const swapped = store.viewRoom(roomCode, seeker, checkInAt).room;
+      assert.equal(swapped.turnNumber, 2);
+      act(store, roomCode, seeker, checkInAt + 1000, { type: "lock-anchor", stationId: anchor.id, fix: fixAt(anchor, checkInAt + 1000) });
+      const nextSeekAt = swapped.releaseAt + 1000;
+      const next = store.viewRoom(roomCode, hider, nextSeekAt).room;
+      assert.equal(next.menu.find(item => item.itemId === radar.itemId).lockedSingleUse, false);
+      assert.equal(next.questions.length, 0);
+      act(store, roomCode, hider, nextSeekAt, { ...ask, actionId: "turn-two-ask", fix: fixAt(next.turnStartPoint, nextSeekAt) });
+    } finally {
+      store.close();
+    }
+  });
+}

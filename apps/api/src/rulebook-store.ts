@@ -154,6 +154,7 @@ export type HideSeekPublicListing = {
   objectiveResponseMs: number;
   photoResponseMs: number;
   drawDecisionMs: number;
+  repeatCostMode: HideSeekRulebookPack["investigationBook"]["repeatCostMode"];
   regroupPolicy: HideSeekRulebookPack["session"]["regroupPolicy"];
   stationCount: number;
   startName: string;
@@ -317,6 +318,7 @@ export function toPublicSeekListing(record: StoredRulebookRecord): HideSeekPubli
     photoResponseMs: pack.timers.photoResponseMs,
     drawDecisionMs: pack.timers.drawDecisionMs,
     regroupPolicy: pack.session.regroupPolicy,
+    repeatCostMode: pack.investigationBook.repeatCostMode,
     stationCount: snapshot.stations.filter((s) => s.eligibleHidingAnchor).length,
     startName: snapshot.startPoint.name,
     questionFamilies: families,

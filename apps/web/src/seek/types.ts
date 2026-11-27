@@ -1,5 +1,6 @@
 import type {
   HideSeekQuestionFamily,
+  HideSeekRepeatCostMode,
   LocationFix,
   RoomActivityFeed,
   RulebookEntitlementSummary,
@@ -34,6 +35,7 @@ export type SeekPublicListing = {
   regroupMinutes: number;
   stationCount: number;
   startName: string;
+  repeatCostMode: HideSeekRepeatCostMode;
   questionFamilies: { family: string; itemCount: number; drawCount: number; keepCount: number }[];
   deckSummary: {
     totalCards: number;
@@ -156,6 +158,12 @@ export const questionDescriptions: Record<HideSeekQuestionFamily, string> = {
   thermometer: "Mendekat atau menjauh?",
   tentacles: "Cari tempat di sekitar",
   photo: "Minta petunjuk visual",
+};
+
+export const questionRepeatRules: Record<HideSeekRepeatCostMode, string> = {
+  single_use_locked: "Setiap pertanyaan hanya bisa diajukan sekali per giliran.",
+  escalating_multiplier: "Biaya kartu untuk pertanyaan yang sama naik setiap kali diajukan.",
+  flat: "Pertanyaan boleh diulang dengan biaya kartu tetap.",
 };
 
 const questionStatusLabels: Record<string, string> = {

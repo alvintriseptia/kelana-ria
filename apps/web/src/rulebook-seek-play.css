@@ -597,6 +597,10 @@
 .sg-question-text small { font: 740 .69rem/1.22 "DM Sans", sans-serif; }
 .sg-picks { display: flex; flex-wrap: wrap; gap: 7px; }
 .sg-pick, .sg-picks .sg-main { flex: 1 1 94px; }
+.sg-game .sg-pick--used:disabled {
+  opacity: 1; background: #e4ece7; color: #36544a; border-style: dashed;
+}
+.sg-pick-status { display: block; margin-top: 3px; font-size: .72rem; font-weight: 750; }
 .sg-reward-grid[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .sg-reward-art { background-image: url("./assets/seek-rewards.webp"); }
 .sg-reward-card[aria-pressed="true"] { outline: 2px solid var(--sg-teal); outline-offset: -2px; background: #e7f8bf; }

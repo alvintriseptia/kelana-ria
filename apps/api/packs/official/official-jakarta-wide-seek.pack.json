@@ -1,7 +1,7 @@
 {
   "meta": {
     "packId": "official-jakarta-wide-seek",
-    "version": 2,
+    "version": 3,
     "schemaVersion": "hide-seek-rulebook-v1",
     "format": "hide-and-seek",
     "isOfficial": true,
@@ -44,7 +44,7 @@
     "geoSnapshotHash": "3960a2d2eab2d2e6b31d360257eab41c64107751d4aef1f17de707765bb720ea"
   },
   "investigationBook": {
-    "repeatCostMode": "escalating_multiplier",
+    "repeatCostMode": "single_use_locked",
     "tieToleranceMeters": 100,
     "families": {
       "radar": {

@@ -7,6 +7,7 @@ import * as api from "../dist/index.js";
 import { TEST_ADMIN } from "./auth-client.mjs";
 
 const T0 = 1_800_100_000_000;
+const compactSeek = api.loadOfficialSeekPacks().find(({ pack }) => pack.meta.packId === "official-jakarta-compact-seek").pack.meta;
 
 function makeClient(baseUrl) {
   const cookies = new Map();
@@ -178,8 +179,8 @@ test("monotonic seat IDs avoid seat-taken collision on lobby leave & rejoin in C
   const s4 = makeClient(baseUrl);
   const createdSeek = await seekHost.post("/api/rulebooks/catalog", {
     type: "play",
-    edition: "official-jakarta-compact-seek",
-    version: 2,
+    edition: compactSeek.packId,
+    version: compactSeek.version,
     mode: "group",
     requestId: "req-seek-monotonic-0001",
   });
@@ -267,8 +268,8 @@ test("hostName defaults to signed-in displayName and lobby rename-seat validates
   // Explicit hostName overrides signed-in displayName in Seek
   const seekRes = await host.post("/api/rulebooks/catalog", {
     type: "play",
-    edition: "official-jakarta-compact-seek",
-    version: 2,
+    edition: compactSeek.packId,
+    version: compactSeek.version,
     mode: "group",
     hostName: "Custom Seek Host",
     requestId: "req-host-custom-seek-01",

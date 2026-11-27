@@ -18,6 +18,7 @@ import {
   attachPress,
 } from "./game-motion";
 import { practiceDeck } from "./edition-practice-deck";
+import { questionRepeatRules } from "./seek/types";
 import samplePhoto from "./assets/jakarta.webp";
 import "./edition-practice.css";
 
@@ -258,7 +259,7 @@ function EditionPracticeView({
       if (step === 1) {
         return {
           title: "Pencari · Pilih petunjuk",
-          text: `Saat pencarian aktif, gunakan lokasimu untuk menyiapkan petunjuk. ${clue.prompt}`,
+          text: `Gunakan lokasimu untuk menyiapkan petunjuk. ${questionRepeatRules[seek.repeatCostMode]} ${clue.prompt}`,
           action: "next",
           label: "Pratinjau " + clueTitle,
         };
