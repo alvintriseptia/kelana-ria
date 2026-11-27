@@ -1,3 +1,5 @@
+import { useRef } from "preact/hooks";
+import { animateSheetIn } from "../game-motion";
 import type { SeekEngineRoomView } from "@kelana-ria/contracts";
 import { answerText, questionNames } from "./types";
 
@@ -25,12 +27,7 @@ export function SeekHistoryPanel({ room }: { room: SeekEngineRoomView }) {
                     : "Pertanyaan ditutup"}
               </small>
               {question.photoId && (
-                <img
-                  class="sg-clue-photo"
-                  src={`/api/rulebooks/rooms/${encodeURIComponent(room.code)}/photos/${encodeURIComponent(question.photoId)}`}
-                  alt="Foto petunjuk"
-                  loading="lazy"
-                />
+                <SeekCluePhoto src={`/api/rulebooks/rooms/${encodeURIComponent(room.code)}/photos/${encodeURIComponent(question.photoId)}`} />
               )}
             </li>
           ))
@@ -38,4 +35,14 @@ export function SeekHistoryPanel({ room }: { room: SeekEngineRoomView }) {
       </ul>
     </>
   );
+}
+
+function SeekCluePhoto({ src }: { src: string }) {
+  const sourceAnimated = useRef("");
+  return <img class="sg-clue-photo" src={src} alt="Foto petunjuk" loading="lazy"
+    onLoad={event => {
+      if (sourceAnimated.current === src) return;
+      sourceAnimated.current = src;
+      animateSheetIn(event.currentTarget, { offsetY: 4, fromScale: 1 });
+    }} />;
 }

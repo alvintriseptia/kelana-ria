@@ -599,6 +599,7 @@
 .sg-reward-copy small { font-size: .71rem; text-transform: uppercase; letter-spacing: .03em; font-weight: 800; color: var(--sg-teal); }
 .sg-reward-copy > span { font-size: .82rem; line-height: 1.2; }
 .sg-offer { position: relative; min-width: 0; }
+.sg-offer-face { height: 100%; perspective: 520px; }
 .sg-offer .sg-reward-card { width: 100%; height: 100%; }
 .sg-offer-back {
   display: none;
@@ -612,20 +613,15 @@
   font-size: 2rem;
   pointer-events: none;
 }
-.sg-deal .sg-offer-back {
-  display: grid;
-  animation: sg-deal-flip 420ms ease-out both;
+/* Opacity defaults to zero when a card is restored without a live draw. */
+.sg-offer-back:not([hidden]) { display: grid; opacity: 0; transform: perspective(520px); }
+.sg-card-flight.sg-offer-back {
+  position: fixed; inset: auto; display: grid; box-sizing: border-box; z-index: 86;
 }
-.sg-deal .sg-reward-card > span { animation: sg-reveal-face 420ms ease-out both; }
-.sg-deal .sg-offer:nth-child(2) :is(.sg-offer-back, .sg-reward-card > span) { animation-delay: 55ms; }
-.sg-deal .sg-offer:nth-child(3) :is(.sg-offer-back, .sg-reward-card > span) { animation-delay: 110ms; }
-@keyframes sg-deal-flip {
-  0% { opacity: 1; transform: perspective(440px) translateY(32px) rotate(-5deg); }
-  38% { opacity: 1; transform: perspective(440px); }
-  68% { opacity: 1; transform: perspective(440px); }
-  100% { opacity: 0; transform: perspective(440px) rotateY(90deg); }
+.sg-sheet-exit {
+  position: fixed; display: none; pointer-events: none; z-index: 70;
+  border-radius: 12px; background: #f2f7ed;
 }
-@keyframes sg-reveal-face { 0%, 64% { opacity: 0; } 100% { opacity: 1; } }
 @media (min-width: 650px) {
   .sg-dock { inset-inline: 18px auto; margin-inline: 0; }
 }
@@ -633,8 +629,8 @@
   .sg-question-card .sg-art { aspect-ratio: 1.85; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sg-deal .sg-offer-back { animation: none; display: none; }
-  .sg-deal .sg-reward-card > span { animation: none; }
+  .sg-offer-back, .sg-card-flight, .sg-sheet-exit { visibility: hidden; }
+  .sg-offer-face { opacity: 1 !important; transform: none !important; }
   .sg-main:active, .sg-question-card:active, .sg-reward-card:is(button):active { transform: none; }
 }
 

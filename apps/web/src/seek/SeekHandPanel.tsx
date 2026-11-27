@@ -37,7 +37,7 @@ export function SeekHandPanel({
 }: {
   payload: SeekRoomPayload;
   panel: SeekPanel;
-  deal: boolean;
+  deal: number | null;
   keepIds: Set<string>;
   selectedAnswer: string;
   photoDraft: { prepared: PreparedPhoto | null; processing: boolean; uploading: boolean } | null;
