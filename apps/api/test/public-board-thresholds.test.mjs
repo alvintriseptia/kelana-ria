@@ -4,50 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import * as api from "../dist/index.js";
+import { makeClient, signInWithSandboxOtp, TEST_ADMIN } from "./auth-client.mjs";
 
 const T0 = 1_800_200_000_000;
-const REVIEWER_KEY = "reviewer-143";
-
-function makeClient(baseUrl) {
-  const cookies = new Map();
-  function mergeCookies(res) {
-    const rawList = typeof res.headers.getSetCookie === "function"
-      ? res.headers.getSetCookie()
-      : res.headers.get("set-cookie")
-        ? [res.headers.get("set-cookie")]
-        : [];
-    for (const raw of rawList) {
-      const [pair] = raw.split(";");
-      const eq = pair.indexOf("=");
-      if (eq < 0) continue;
-      const name = pair.slice(0, eq).trim();
-      const value = pair.slice(eq + 1).trim();
-      if (!value || /Max-Age=0/i.test(raw)) cookies.delete(name);
-      else cookies.set(name, value);
-    }
-  }
-  function cookieHeader() {
-    return [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-  }
-  return {
-    async get(path) {
-      const hdr = cookieHeader();
-      const res = await fetch(`${baseUrl}${path}`, { headers: hdr ? { cookie: hdr } : {} });
-      mergeCookies(res);
-      return { status: res.status, body: await res.json() };
-    },
-    async post(path, body, extraHeaders = {}) {
-      const hdr = cookieHeader();
-      const res = await fetch(`${baseUrl}${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", ...(hdr ? { cookie: hdr } : {}), ...extraHeaders },
-        body: JSON.stringify(body),
-      });
-      mergeCookies(res);
-      return { status: res.status, body: await res.json() };
-    },
-  };
-}
 
 async function startServer() {
   const dir = mkdtempSync(join(tmpdir(), "kelana-board-thresholds-"));
@@ -58,7 +17,7 @@ async function startServer() {
     now: () => clock,
     allowSandboxAuthOtp: true,
     allowRulebookSandboxCheckout: true,
-    rulebookReviewerKey: REVIEWER_KEY,
+    adminEmails: [TEST_ADMIN.email],
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address();
@@ -115,14 +74,7 @@ test("ClaimPublicBoard and SeekPublicBoard expose data-driven checkInRadiusMeter
 
     // Custom creator pack with non-default thresholds proves values come from pack geography, never hardcoded
     const creator = makeClient(srv.baseUrl);
-    const otpReq = await creator.post("/api/auth/request-otp", { email: "creator143@example.com" });
-    assert.equal(otpReq.status, 200, JSON.stringify(otpReq.body));
-    const otpVerify = await creator.post("/api/auth/verify-otp", {
-      challengeId: otpReq.body.challengeId,
-      code: otpReq.body.sandboxCode,
-      displayName: "Creator143",
-    });
-    assert.equal(otpVerify.status, 200, JSON.stringify(otpVerify.body));
+    await signInWithSandboxOtp(creator, "creator143@example.com", "Creator143");
 
     const cloned = await creator.post("/api/rulebooks", {
       type: "clone-official",
@@ -145,11 +97,12 @@ test("ClaimPublicBoard and SeekPublicBoard expose data-driven checkInRadiusMeter
     });
     assert.equal(saved.status, 200, JSON.stringify(saved.body));
     assert.equal((await creator.post("/api/rulebooks", { type: "submit-draft", packId: "custom-thresholds-143", version: 1 })).status, 200);
+    const admin = makeClient(srv.baseUrl);
+    await signInWithSandboxOtp(admin, TEST_ADMIN.email);
     assert.equal(
-      (await creator.post(
+      (await admin.post(
         "/api/rulebooks",
         { type: "publish-version", packId: "custom-thresholds-143", version: 1 },
-        { authorization: `Bearer ${REVIEWER_KEY}` },
       )).status,
       200,
     );

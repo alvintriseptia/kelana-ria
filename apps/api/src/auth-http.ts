@@ -19,6 +19,18 @@ export type AuthHandlerOptions = {
   onAuthenticated?: (guestCredential: string, accountPrincipal: string, now: number) => boolean;
 };
 
+export function ensureAdmin(user: AuthUser | null, response: ServerResponse): user is AuthUser {
+  if (!user) {
+    json(response, 401, { ok: false, error: "auth-required" });
+    return false;
+  }
+  if (user.role !== "admin") {
+    json(response, 403, { ok: false, error: "admin-only" });
+    return false;
+  }
+  return true;
+}
+
 export function authHandler(options: AuthHandlerOptions) {
   const {
     auth,
@@ -43,6 +55,16 @@ export function authHandler(options: AuthHandlerOptions) {
   async function handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const path = url.pathname;
     const ts = now();
+
+    const managingAdmins = path === "/api/auth/admins";
+    const admin = managingAdmins ? resolveUser(request, response, ts) : null;
+    if (managingAdmins) {
+      if (!ensureAdmin(admin, response)) return;
+      if (request.method === "GET") {
+        json(response, 200, { ok: true, admins: auth.listAdmins() });
+        return;
+      }
+    }
 
     if (request.method === "GET" && path === "/api/auth/me") {
       const user = resolveUser(request, response, ts);
@@ -85,6 +107,20 @@ export function authHandler(options: AuthHandlerOptions) {
     }
     if (!isObject(body)) {
       json(response, 400, { ok: false, error: "invalid-request" });
+      return;
+    }
+
+    if (admin) {
+      const { action, email } = body;
+      if ((action !== "grant" && action !== "revoke") || typeof email !== "string") {
+        json(response, 400, { ok: false, error: "invalid-request" });
+        return;
+      }
+      const updated = auth.updateAdmin(admin.userId, { action, email }, ts);
+      if (updated.ok) json(response, 200, updated);
+      else if (updated.error === "admin-only") json(response, 403, updated);
+      else if (updated.error === "user-not-found") json(response, 404, updated);
+      else json(response, 400, updated);
       return;
     }
 

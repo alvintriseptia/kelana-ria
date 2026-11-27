@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import type { AuthUser } from "@kelana-ria/contracts";
+import type { AdminAccountSummary, AuthAdminUpdateRequest, AuthAdminsReply, AuthRole, AuthUser } from "@kelana-ria/contracts";
 
 export const OTP_TTL_MS = 10 * 60_000;
 export const OTP_MAX_ATTEMPTS = 5;
@@ -54,6 +54,7 @@ type UserRow = {
   user_id: string;
   email_normalized: string;
   display_name: string;
+  role: AuthRole;
   created_at: number;
   updated_at: number;
 };
@@ -74,11 +75,13 @@ function rowToUser(row: UserRow): AuthUser {
     userId: row.user_id,
     email: row.email_normalized,
     displayName: row.display_name,
+    role: row.role,
     createdAt: row.created_at,
   };
 }
 
-export function authStore(databasePath: string) {
+export function authStore(databasePath: string, options: { adminEmails?: string[] } = {}) {
+  const adminEmails = new Set((options.adminEmails ?? []).map(normalizeEmail).filter(email => email !== null));
   if (databasePath !== ":memory:") mkdirSync(dirname(databasePath), { recursive: true });
   const db = new DatabaseSync(databasePath, { timeout: 5000 });
   db.exec(`
@@ -93,6 +96,7 @@ export function authStore(databasePath: string) {
       user_id TEXT PRIMARY KEY,
       email_normalized TEXT UNIQUE NOT NULL,
       display_name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'user',
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -120,6 +124,15 @@ export function authStore(databasePath: string) {
       ON auth_otp_challenges (email_normalized, created_at);
   `);
 
+  transact(() => {
+    const columns = db.prepare("PRAGMA table_info(users)").all();
+    if (!columns.some(column => column.name === "role")) {
+      db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'");
+    }
+    const promote = db.prepare("UPDATE users SET role = 'admin' WHERE email_normalized = ? AND role != 'admin'");
+    for (const email of adminEmails) promote.run(email);
+  });
+
   const ipSendLog = new Map<string, number[]>();
 
   const recentEmailChallengesStmt = db.prepare(
@@ -141,18 +154,25 @@ export function authStore(databasePath: string) {
   );
 
   const getUserByEmailStmt = db.prepare(
-    "SELECT user_id, email_normalized, display_name, created_at, updated_at FROM users WHERE email_normalized = ?",
+    "SELECT user_id, email_normalized, display_name, role, created_at, updated_at FROM users WHERE email_normalized = ?",
   );
   const getUserByIdStmt = db.prepare(
-    "SELECT user_id, email_normalized, display_name, created_at, updated_at FROM users WHERE user_id = ?",
+    "SELECT user_id, email_normalized, display_name, role, created_at, updated_at FROM users WHERE user_id = ?",
   );
   const insertUserStmt = db.prepare(`
-    INSERT INTO users (user_id, email_normalized, display_name, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO users (user_id, email_normalized, display_name, role, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
   const updateUserDisplayNameStmt = db.prepare(
     "UPDATE users SET display_name = ?, updated_at = ? WHERE user_id = ?",
   );
+
+  const updateUserRoleStmt = db.prepare("UPDATE users SET role = ?, updated_at = ? WHERE user_id = ?");
+  const listAdminsStmt = db.prepare(`
+    SELECT user_id, email_normalized, display_name, role, created_at, updated_at
+    FROM users WHERE role = 'admin' ORDER BY email_normalized
+  `);
+  const countAdminsStmt = db.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'");
 
   const insertSessionStmt = db.prepare(`
     INSERT INTO user_sessions (session_id, token_hash, user_id, created_at, expires_at, revoked_at)
@@ -160,7 +180,7 @@ export function authStore(databasePath: string) {
   `);
   const getSessionWithUserStmt = db.prepare(`
     SELECT s.session_id, s.expires_at, s.revoked_at,
-           u.user_id, u.email_normalized, u.display_name, u.created_at, u.updated_at
+           u.user_id, u.email_normalized, u.display_name, u.role, u.created_at, u.updated_at
     FROM user_sessions s
     JOIN users u ON u.user_id = s.user_id
     WHERE s.token_hash = ?
@@ -328,20 +348,28 @@ export function authStore(databasePath: string) {
 
       const explicitName = input.displayName !== undefined ? normalizeDisplayName(input.displayName) : null;
       let userRow = getUserByEmailStmt.get(row.email_normalized) as UserRow | undefined;
+      const pinned = adminEmails.has(row.email_normalized);
       if (!userRow) {
         const userId = `usr_${randomBytes(12).toString("hex")}`;
         const finalName = explicitName ?? defaultDisplayNameFromEmail(row.email_normalized);
-        insertUserStmt.run(userId, row.email_normalized, finalName, now, now);
+        const role = pinned ? "admin" : "user";
+        insertUserStmt.run(userId, row.email_normalized, finalName, role, now, now);
         userRow = {
           user_id: userId,
           email_normalized: row.email_normalized,
           display_name: finalName,
+          role,
           created_at: now,
           updated_at: now,
         };
       } else if (explicitName && explicitName !== userRow.display_name) {
         updateUserDisplayNameStmt.run(explicitName, now, userRow.user_id);
         userRow = { ...userRow, display_name: explicitName, updated_at: now };
+      }
+
+      if (pinned && userRow.role !== "admin") {
+        updateUserRoleStmt.run("admin", now, userRow.user_id);
+        userRow.role = "admin";
       }
 
       const token = randomBytes(32).toString("base64url");
@@ -400,6 +428,33 @@ export function authStore(databasePath: string) {
     });
   }
 
+  function listAdmins(): AdminAccountSummary[] {
+    return (listAdminsStmt.all() as UserRow[]).map(row => ({
+      ...rowToUser(row),
+      isEnvBootstrapped: adminEmails.has(row.email_normalized),
+    }));
+  }
+
+  function updateAdmin(actorId: string, request: AuthAdminUpdateRequest, now: number): AuthAdminsReply {
+    const email = normalizeEmail(request.email);
+    if (!email) return { ok: false, error: "invalid-email" };
+
+    return transact(() => {
+      const actor = getUserByIdStmt.get(actorId) as UserRow | undefined;
+      if (actor?.role !== "admin") return { ok: false, error: "admin-only" };
+
+      const target = getUserByEmailStmt.get(email) as UserRow | undefined;
+      if (!target) return { ok: false, error: "user-not-found" };
+      if (request.action === "revoke" && target.role === "admin") {
+        if (adminEmails.has(email)) return { ok: false, error: "env-bootstrapped-admin" };
+        if (countAdminsStmt.get()?.count === 1) return { ok: false, error: "cannot-remove-last-admin" };
+      }
+      const role = request.action === "grant" ? "admin" : "user";
+      if (role !== target.role) updateUserRoleStmt.run(role, now, target.user_id);
+      return { ok: true, admins: listAdmins() };
+    });
+  }
+
   function logout(token: string, now: number): boolean {
     if (!token) return false;
     const result = revokeSessionStmt.run(now, sha256Hex(token));
@@ -412,6 +467,8 @@ export function authStore(databasePath: string) {
     verifyOtp,
     authenticate,
     updateDisplayName,
+    listAdmins,
+    updateAdmin,
     logout,
     close() {
       db.close();

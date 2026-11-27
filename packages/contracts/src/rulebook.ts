@@ -4,6 +4,18 @@
 import type { StudioAiProvenance, StudioPointProvenance } from "./studio-cocreator.js";
 
 export type RulebookFormat = "hide-and-seek" | "claim-the-city";
+export type RulebookReviewAuditEntry = {
+  auditId: string;
+  packId: string;
+  version: number;
+  action: "publish" | "request-changes" | "pause" | "resume";
+  adminUserId: string;
+  adminEmail: string;
+  adminDisplayName: string;
+  note: string | null;
+  createdAt: number;
+};
+
 export type RulebookDifficulty = "starter" | "standard" | "expert";
 export type TransitMode = "walk" | "mrt" | "krl" | "transjakarta" | "lrt" | "other";
 

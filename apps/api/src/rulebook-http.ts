@@ -1,6 +1,6 @@
 import { createOsmPoiCurator, type OsmPoiCuratorOptions } from "./osm-poi-curator.js";
 import { maxBase64Length } from "./seek-photo.js";
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   AuthUser,
@@ -13,6 +13,7 @@ import type {
   SeekEngineAction,
   SeekMapPreviewRequest,
 } from "@kelana-ria/contracts";
+import { ensureAdmin } from "./auth-http.js";
 import { credential, hasJsonBody, isObject, json, requestBody, setCredential } from "./http.js";
 import type { MidtransNotificationPayload } from "./midtrans-adapter.js";
 import type { PlaySeekCardParams } from "./seek-engine/deck-engine.js";
@@ -32,10 +33,6 @@ function studioRecord({ ownerHash: _ownerHash, ...record }: StoredRulebookRecord
   return record;
 }
 
-function hashKey(value: string) {
-  return createHash("sha256").update(value).digest();
-}
-
 function normalizeRoomCode(raw: unknown): string {
   return typeof raw === "string" ? raw.trim().replace(/\s+/g, "").toUpperCase() : "";
 }
@@ -51,20 +48,12 @@ function resolveSeatName(raw: unknown, user: AuthUser | null, fallback: string):
 
 export function rulebookHandler(
   store: Store, now: () => number, secureCookie = false, allowHideSeekQa = false, allowSandboxCheckout = false,
-  reviewerKey = "",
   resolveUser?: ResolveUserFn,
   allowSandboxAuthOtp = false,
   osmPoiOptions: OsmPoiCuratorOptions = {},
 ): RulebookRequestHandler {
   const poiCurator = createOsmPoiCurator({ ...osmPoiOptions, now });
-  const configuredReviewer = reviewerKey.trim();
-  const reviewerHash = configuredReviewer ? hashKey(configuredReviewer) : undefined;
   const activeSseStreams = new Set<() => void>();
-
-  function canReview(request: IncomingMessage): boolean {
-    const key = /^Bearer (.+)$/i.exec(request.headers.authorization ?? "")?.[1];
-    return Boolean(reviewerHash && key && timingSafeEqual(reviewerHash, hashKey(key)));
-  }
 
   function resolveQaFix(action: Record<string, unknown>, roomCode: string, cred: string, ts: number): boolean {
     if (!isObject(action.fix) || !("qaLocationId" in action.fix)) return true;
@@ -107,6 +96,12 @@ export function rulebookHandler(
       json(response, 401, { error: "auth-required" });
       return null;
     }
+    return { cred: `user:${user.userId}`, user };
+  }
+
+  function requireAdmin(request: IncomingMessage, response: ServerResponse, ts: number) {
+    const user = resolveUser?.(request, response, ts) ?? null;
+    if (!ensureAdmin(user, response)) return null;
     return { cred: `user:${user.userId}`, user };
   }
 
@@ -165,8 +160,17 @@ export function rulebookHandler(
       const rawFormat = url.searchParams.get("format");
       const format: RulebookFormat | undefined =
         rawFormat === "hide-and-seek" || rawFormat === "claim-the-city" ? rawFormat : undefined;
-      const listings = store.listPublicListings(format);
       const ts = now();
+      if (role === "reviewer") {
+        if (!requireAdmin(request, response, ts)) return;
+        const status = url.searchParams.get("status");
+        if ((status !== null && status !== "submitted" && status !== "published" && status !== "paused") ||
+            (rawFormat !== null && format === undefined)) {
+          return json(response, 400, { error: "invalid-request" });
+        }
+        return json(response, 200, { role, versions: store.listReviewVersions(status ?? undefined, format) });
+      }
+      const listings = store.listPublicListings(format);
       if (role === "writer") {
         const signedIn = requireSignedIn(request, response, ts);
         if (!signedIn) return;
@@ -179,15 +183,9 @@ export function rulebookHandler(
           earnings,
           ownedPackIds: ownership.ownedPackIds,
           entitlements: ownership.entitlements,
-          reviewEnabled: Boolean(reviewerHash),
+          isAdmin: signedIn.user.role === "admin",
         });
         return;
-      }
-      if (role === "reviewer") {
-        if (!canReview(request)) return json(response, 403, { error: "reviewer-only" });
-        const visible = store.listAllVersions().filter(record => !record.isOfficial &&
-          (!format || record.format === format) && (record.status === "submitted" || record.status === "published"));
-        return json(response, 200, { role, versions: visible.map(studioRecord) });
       }
       const member = resolveReadCred(request, response, ts);
       const ownership = member
@@ -509,12 +507,15 @@ export function rulebookHandler(
 
     if (path === "/api/rulebooks") {
       const type = body.type;
-      if (type === "publish-version" || type === "request-changes" || type === "pause-version") {
-        if (!canReview(request)) return json(response, 403, { error: "reviewer-only" });
-        const decision = type === "publish-version" ? { action: "publish" as const }
-          : type === "request-changes" ? { action: "request-changes" as const, note: String(body.note ?? "") }
-          : { action: "pause" as const, reason: String(body.reason ?? "") };
-        const res = store.reviewVersion(String(body.packId ?? ""), Number(body.version ?? 0), decision, ts);
+      if (type === "publish-version" || type === "request-changes" || type === "pause-version" || type === "resume-version") {
+        const admin = requireAdmin(request, response, ts);
+        if (!admin) return;
+        const note = String(body.note ?? "");
+        const decision = type === "pause-version" ? { action: "pause" as const, reason: String(body.reason ?? "") }
+          : type === "request-changes" ? { action: "request-changes" as const, note }
+          : type === "publish-version" ? { action: "publish" as const, note }
+          : { action: "resume" as const, note };
+        const res = store.reviewVersion(String(body.packId ?? ""), Number(body.version ?? 0), decision, admin.user, ts);
         return json(response, res.ok ? 200 : 400, res.ok ? { ...res, record: studioRecord(res.record) } : res);
       }
       if (type === "clone-official") {
@@ -561,12 +562,14 @@ export function rulebookHandler(
         json(response, res.ok ? 200 : res.status, res);
         return;
       }
-      if (type === "start-draft-playtest") {
-        const signedIn = requireSignedIn(request, response, ts);
+      if (type === "start-draft-playtest" || type === "start-admin-playtest") {
+        const access = type === "start-admin-playtest" ? "admin" : "creator";
+        const signedIn = access === "admin" ? requireAdmin(request, response, ts) : requireSignedIn(request, response, ts);
         if (!signedIn) return;
         const mode = body.mode === "solo" || body.mode === "group" ? body.mode : undefined;
-        const hostName = resolveSeatName(body.hostName, signedIn.user, "Kreator");
-        const res = store.startDraftPlaytest(
+        const hostName = resolveSeatName(body.hostName, signedIn.user, access === "admin" ? "Admin" : "Kreator");
+        const res = store.startPlaytest(
+          access,
           signedIn.cred,
           String(body.packId ?? ""),
           Number(body.version ?? 0),

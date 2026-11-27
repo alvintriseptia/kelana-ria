@@ -1,16 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as api from "../dist/index.js";
+import { TEST_ADMIN } from "./auth-client.mjs";
 
 const initialTime = 1_800_000_000_000;
-const REVIEWER_KEY = "release-reviewer-key";
 
 async function listen(context, options = {}) {
   const server = api.createSoloServer({
     databasePath: ":memory:",
     allowRulebookSandboxCheckout: true,
     allowSandboxAuthOtp: true,
-    rulebookReviewerKey: REVIEWER_KEY,
     ...options,
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -262,9 +261,9 @@ test("all six section 2 release configurations run through /api/rulebooks to act
 test("Midtrans webhook signature, amount/currency mismatch, TTL expiry, and idempotent settlement on /api/rulebooks (A30, §8.1)", async (context) => {
   let now = initialTime;
   const midtrans = api.createRecordedMidtransAdapter();
-  const { url } = await listen(context, { now: () => now, midtrans });
+  const { url } = await listen(context, { now: () => now, midtrans, adminEmails: [TEST_ADMIN.email] });
 
-  // Creator signs in, clones & publishes a priced Claim pack (Rp 25.000)
+  // Creator submits a priced Claim pack (Rp 25.000) and an admin publishes it
   const creator = makeClient(url);
   await creator.signIn("creator-checkout@kelana.test", "Kreator Checkout");
   const cloned = await creator.request("POST", "/api/rulebooks", {
@@ -282,11 +281,12 @@ test("Midtrans webhook signature, amount/currency mismatch, TTL expiry, and idem
     version: 1,
   });
   assert.equal(submitted.status, 200);
-  const published = await creator.request(
+  const admin = makeClient(url);
+  await admin.signIn(TEST_ADMIN.email);
+  const published = await admin.request(
     "POST",
     "/api/rulebooks",
     { type: "publish-version", packId: "pack-checkout-security", version: 1 },
-    { authorization: `Bearer ${REVIEWER_KEY}` },
   );
   assert.equal(published.status, 200);
 

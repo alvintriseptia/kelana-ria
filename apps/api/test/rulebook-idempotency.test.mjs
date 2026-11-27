@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as api from "../dist/index.js";
+import { makeClient, signInWithSandboxOtp, TEST_ADMIN } from "./auth-client.mjs";
 
 const T0 = 1_800_000_000_000;
 
@@ -12,58 +13,11 @@ async function startServer(nowRef) {
     allowRulebookSandboxCheckout: true,
     allowHideSeekQa: true,
     allowSandboxAuthOtp: true,
-    rulebookReviewerKey: "test-reviewer-key",
+    adminEmails: [TEST_ADMIN.email],
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   return { server, baseUrl };
-}
-
-function makeClient(baseUrl) {
-  const cookies = new Map();
-  function mergeCookies(res) {
-    const rawList = typeof res.headers.getSetCookie === "function"
-      ? res.headers.getSetCookie()
-      : res.headers.get("set-cookie")
-        ? [res.headers.get("set-cookie")]
-        : [];
-    for (const raw of rawList) {
-      const [pair] = raw.split(";");
-      const eq = pair.indexOf("=");
-      if (eq < 0) continue;
-      const name = pair.slice(0, eq).trim();
-      const value = pair.slice(eq + 1).trim();
-      if (!value || /Max-Age=0/i.test(raw)) cookies.delete(name);
-      else cookies.set(name, value);
-    }
-  }
-  function cookieHeader() {
-    return [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-  }
-  return {
-    async get(path) {
-      const hdr = cookieHeader();
-      const res = await fetch(`${baseUrl}${path}`, {
-        headers: hdr ? { cookie: hdr } : undefined,
-      });
-      mergeCookies(res);
-      return { status: res.status, body: await res.json() };
-    },
-    async post(path, body, extraHeaders = {}) {
-      const hdr = cookieHeader();
-      const res = await fetch(`${baseUrl}${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(hdr ? { cookie: hdr } : {}),
-          ...extraHeaders,
-        },
-        body: JSON.stringify(body),
-      });
-      mergeCookies(res);
-      return { status: res.status, body: await res.json() };
-    },
-  };
 }
 
 test("POST /api/rulebooks create-free-room and create-order deduplicate retries by requestId", async () => {
@@ -91,13 +45,7 @@ test("POST /api/rulebooks create-free-room and create-order deduplicate retries 
     assert.equal(r1.body.roomCode, r2.body.roomCode, "Retried create-free-room must not create a second room");
 
     // Sign in before Studio authoring and paid checkout
-    const otpReq = await client.post("/api/auth/request-otp", { email: "idemp@kelana.test" });
-    assert.equal(otpReq.status, 200);
-    const otpVer = await client.post("/api/auth/verify-otp", {
-      challengeId: otpReq.body.challengeId,
-      code: otpReq.body.sandboxCode,
-    });
-    assert.equal(otpVer.status, 200);
+    await signInWithSandboxOtp(client, "idemp@kelana.test");
 
     // Publish a paid pack and confirm create-order deduplicates by requestId
     const cloned = await client.post("/api/rulebooks", {
@@ -115,10 +63,11 @@ test("POST /api/rulebooks create-free-room and create-order deduplicate retries 
       version: 1,
     });
     assert.equal(submitted.status, 200);
-    const published = await client.post(
+    const admin = makeClient(baseUrl);
+    await signInWithSandboxOtp(admin, TEST_ADMIN.email);
+    const published = await admin.post(
       "/api/rulebooks",
       { type: "publish-version", packId: "paid-retry-claim", version: 1 },
-      { authorization: "Bearer test-reviewer-key" },
     );
     assert.equal(published.status, 200);
 

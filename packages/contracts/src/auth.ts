@@ -1,8 +1,24 @@
+export type AuthRole = "user" | "admin";
+
 export type AuthUser = {
   userId: string;
   email: string;
   displayName: string;
+  role: AuthRole;
   createdAt: number;
+};
+
+export type AdminAccountSummary = AuthUser & {
+  isEnvBootstrapped: boolean;
+};
+
+export type AuthAdminsReply =
+  | { ok: true; admins: AdminAccountSummary[] }
+  | { ok: false; error: string };
+
+export type AuthAdminUpdateRequest = {
+  action: "grant" | "revoke";
+  email: string;
 };
 
 export type AuthMeReply = {

@@ -166,8 +166,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let versions: StudioVersionRecord[] = [];
   let templates: StudioTemplate[] = [];
   let earnings: StudioEarningsRecord[] = [];
-  let reviewEnabled = false;
-  let reviewerKey = "";
+  let isAdmin = false;
   let reviewVersions: StudioVersionRecord[] = [];
   let selectedKey = view === "editor" ? `${params.get("draft") ?? ""}@${Number(params.get("version"))}` : "";
   let authState: AuthMeReply | null = getCachedAuth();
@@ -822,6 +821,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }
 
   function handleStudioAuthRequired() {
+    refreshSeq++;
     authRequired = true;
     authState = {
       authenticated: false,
@@ -830,15 +830,16 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     };
     versions = [];
     earnings = [];
+    reviewVersions = [];
+    isAdmin = false;
     errorMsg = "";
     loading = false;
     render();
   }
 
-  async function apiJson<T>(path: string, body?: unknown, key?: string): Promise<T> {
+  async function apiJson<T>(path: string, body?: unknown): Promise<T> {
     const headers = new Headers();
     if (body !== undefined) headers.set("content-type", "application/json");
-    if (key) headers.set("authorization", `Bearer ${key}`);
     const res = await fetch(path, {
       method: body === undefined ? "GET" : "POST",
       headers,
@@ -854,16 +855,23 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   async function refresh() {
     const seq = ++refreshSeq;
     try {
-      if (view === "review" && reviewerKey) {
-        const data = await apiJson<{ versions?: StudioVersionRecord[]; error?: string }>("/api/rulebooks?role=reviewer", undefined, reviewerKey);
+      if (view === "review") {
+        const data = await apiJson<{ versions?: StudioVersionRecord[]; error?: string }>("/api/rulebooks?role=reviewer");
         if (seq !== refreshSeq || signal.aborted) return;
+        if (data.error === "auth-required") {
+          handleStudioAuthRequired();
+          return;
+        }
         if (data.error) {
-          reviewerKey = "";
           reviewVersions = [];
-          errorMsg = "Kunci peninjau belum cocok. Periksa lalu coba lagi.";
-        } else reviewVersions = data.versions ?? [];
+          if (data.error === "admin-only") isAdmin = false;
+          errorMsg = "Antrean tinjauan belum bisa dibuka.";
+        } else {
+          isAdmin = true;
+          reviewVersions = data.versions ?? [];
+        }
       } else {
-        const data = await apiJson<{ versions?: StudioVersionRecord[]; earnings?: StudioEarningsRecord[]; listings?: StudioTemplate[]; reviewEnabled?: boolean; error?: string }>(
+        const data = await apiJson<{ versions?: StudioVersionRecord[]; earnings?: StudioEarningsRecord[]; listings?: StudioTemplate[]; isAdmin?: boolean; error?: string }>(
           "/api/rulebooks?role=writer",
         );
         if (seq !== refreshSeq || signal.aborted) return;
@@ -876,7 +884,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         earnings = data.earnings ?? [];
         const official = (data.listings ?? []).filter(item => item.isOfficial);
         templates = official.filter((item, i) => official.findIndex(template => template.packId === item.packId) === i);
-        reviewEnabled = Boolean(data.reviewEnabled);
+        isAdmin = Boolean(data.isAdmin);
       }
     } catch {
       if (seq !== refreshSeq || signal.aborted) return;
@@ -1091,7 +1099,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             </button>
           </div>
         </section>`}
-        ${reviewEnabled ? '<button type="button" class="secondary" data-studio-view="review">Peninjau</button>' : ""}
+        ${isAdmin ? '<button type="button" class="secondary" data-studio-view="review">Peninjau</button>' : ""}
       </div>
       ${renderHomeEarningsCard()}
       ${renderDeleteDraftDialog()}
@@ -1100,11 +1108,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   function renderReview(): string {
     if (loading) return '<p role="status">Memuat antrean…</p>';
-    if (!reviewEnabled) return '<div class="rb-card"><p>Akses peninjau belum diaktifkan.</p></div>';
-    if (!reviewerKey) return `<div class="rb-card">
-      <label class="rb-field"><span>Kunci peninjau</span><input type="password" id="studio-reviewer-key" autocomplete="off"></label>
-      <button type="button" class="primary" data-action="open-review">Buka antrean tinjauan</button>
-    </div>`;
+    if (!isAdmin) return '<div class="rb-card"><p>Masuk dengan akun admin untuk meninjau paket.</p></div>';
     return `<section class="rb-card" aria-label="Paket untuk tinjauan"><ul class="rb-list">
       ${reviewVersions.length === 0 ? "<li>Belum ada paket untuk ditinjau.</li>" : reviewVersions.map(record => `<li>
         <div class="rb-rev-head"><strong>${escapeText(record.pack.meta.title)}</strong>
@@ -1116,7 +1120,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           ${record.status === "submitted"
             ? `<button type="button" class="primary" data-action="publish" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Terbitkan ke Katalog</button>
               <button type="button" class="secondary" data-action="request-changes" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Minta Revisi</button>`
-            : `<button type="button" class="secondary" data-action="pause" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Jeda Penjualan</button>`}
+            : record.status === "published" ? `<button type="button" class="secondary" data-action="pause" data-pack="${escapeText(record.packId)}" data-version="${record.version}">Jeda Penjualan</button>` : ""}
         </div>
       </li>`).join("")}
     </ul></section>`;
@@ -1218,7 +1222,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         <summary>${validationErrors.length} hal perlu diperiksa</summary>${issues}</details>` : issues}
     </div>`;
 
-    if (authRequired && view !== "review") {
+    if (authRequired) {
       stepperSlot.innerHTML = "";
       destroyStep2Map();
       bodySlot.innerHTML = `<div class="rb-card" data-testid="studio-auth-gate">
@@ -2669,19 +2673,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         }
         return;
       }
-      if (action === "open-review") {
-        reviewerKey = root.querySelector<HTMLInputElement>("#studio-reviewer-key")?.value.trim() ?? "";
-        if (!reviewerKey) {
-          errorMsg = "Masukkan kunci peninjau untuk membuka antrean.";
-          render();
-          root.querySelector<HTMLInputElement>("#studio-reviewer-key")?.focus();
-          return;
-        }
-        loading = true;
-        render();
-        await refresh();
-        return;
-      }
       if (action === "export-json") {
         if (formDirty && !(await flushDirtyFormIfNeeded())) return;
         const active = currentDraft();
@@ -2847,7 +2838,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         return;
       }
       if (action === "publish" || action === "request-changes" || action === "pause") {
-        if (view !== "review" || !reviewerKey) return;
+        if (view !== "review" || !isAdmin) return;
         const packId = btn.dataset.pack ?? "";
         const version = Number(btn.dataset.version ?? 1);
         const type =
@@ -2859,7 +2850,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           version,
           note: noteInput || "Perjelas catatan akses lokasi.",
           reason: "Lokasi sedang perawatan.",
-        }, reviewerKey);
+        });
         if (res.ok) {
           statusMsg =
             type === "publish-version"
@@ -2886,6 +2877,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }, { signal });
 
   onAuthChange((next) => {
+    if (next.user?.userId !== authState?.user?.userId || next.user?.role !== "admin") {
+      isAdmin = false;
+      reviewVersions = [];
+    }
     authState = next;
     if (next.authenticated) {
       authRequired = false;
@@ -2893,10 +2888,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       errorMsg = "";
       render();
       void refresh();
-    } else if (view !== "review") {
-      handleStudioAuthRequired();
     } else {
-      render();
+      handleStudioAuthRequired();
     }
   }, signal);
 

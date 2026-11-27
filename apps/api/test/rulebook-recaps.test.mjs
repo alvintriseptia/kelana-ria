@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { createSoloServer, rulebookStore } from "../dist/index.js";
+import { TEST_ADMIN } from "./auth-client.mjs";
 
 const start = 1_800_000_000_000;
 const host = "h".repeat(43);
@@ -166,7 +167,7 @@ test("community recap sharing is private by default, strips private fields, supp
     }, start);
     assert.ok(clonedV1.ok, clonedV1.error);
     assert.ok(store.submitDraft(creator, customPackId, 1, start).ok);
-    assert.ok(store.reviewVersion(customPackId, 1, { action: "publish" }, start).ok);
+    assert.ok(store.reviewVersion(customPackId, 1, { action: "publish" }, TEST_ADMIN, start).ok);
 
     const createdV1 = store.createFreeRoomFromRulebook(customPackId, 1, host, "Rahasia Host", start, false, "group");
     assert.ok(createdV1.ok, createdV1.error);
@@ -190,7 +191,7 @@ test("community recap sharing is private by default, strips private fields, supp
     assert.ok(clonedV2.ok, clonedV2.error);
     assert.equal(clonedV2.record.version, 2);
     assert.ok(store.submitDraft(creator, customPackId, 2, start + 5000).ok);
-    assert.ok(store.reviewVersion(customPackId, 2, { action: "publish" }, start + 5000).ok);
+    assert.ok(store.reviewVersion(customPackId, 2, { action: "publish" }, TEST_ADMIN, start + 5000).ok);
 
     const createdV2 = store.createFreeRoomFromRulebook(customPackId, 2, host, "Nama Ruang V2", start + 6000, false, "solo");
     assert.ok(createdV2.ok, createdV2.error);

@@ -13,7 +13,6 @@ const results = path.join(root, "qa-results");
 mkdirSync(results, { recursive: true });
 
 let now = 1_800_000_000_000;
-const reviewerKey = "qa-player-errors-reviewer";
 const server = createSoloServer({
   databasePath: ":memory:",
   now: () => now,
@@ -22,7 +21,7 @@ const server = createSoloServer({
   allowSimulatedLocation: false,
   allowRulebookSandboxCheckout: true,
   allowSandboxAuthOtp: true,
-  rulebookReviewerKey: reviewerKey,
+  adminEmails: ["errors-buyer@kelana.test"],
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -142,7 +141,6 @@ try {
   });
   const pubRes = await ctxCat.request.post(`${baseUrl}/api/rulebooks`, {
     data: { type: "publish-version", packId: "qa-paid-errors-claim", version: 1 },
-    headers: { authorization: `Bearer ${reviewerKey}` },
   });
   assert.equal(pubRes.status(), 200);
 

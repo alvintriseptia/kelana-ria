@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
-import { buyPublishedDraft, openDraft, openReview, reviewerKey, startDraft } from "./studio-navigation.mjs";
+import { buyPublishedDraft, openDraft, openReview, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const distDir = path.join(root, "dist");
@@ -19,7 +19,7 @@ const server = createSoloServer({
   allowSimulatedLocation: true,
   allowRulebookSandboxCheckout: true,
   allowSandboxAuthOtp: true,
-  rulebookReviewerKey: reviewerKey,
+  adminEmails: ["studio-creator@kelana.test"],
 });
 
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

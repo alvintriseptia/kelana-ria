@@ -300,7 +300,7 @@ export type GameServerOptions = {
   allowHideSeekQa?: boolean;
   allowRulebookSandboxCheckout?: boolean;
   allowSandboxAuthOtp?: boolean;
-  rulebookReviewerKey?: string;
+  adminEmails?: string[];
   demoVideoYoutubeId?: string | null;
   osmPoi?: OsmPoiCuratorOptions;
 };
@@ -318,11 +318,11 @@ export function createSoloServer({
   allowHideSeekQa = false,
   allowRulebookSandboxCheckout = false,
   allowSandboxAuthOtp = false,
-  rulebookReviewerKey = "",
+  adminEmails = [],
   demoVideoYoutubeId = null,
   osmPoi,
 }: GameServerOptions = {}) {
-  const auth = authStore(databasePath);
+  const auth = authStore(databasePath, { adminEmails });
   const resolvedEmailAdapter =
     emailAdapter ?? createEmailOtpAdapterFromEnv(process.env, { allowSandboxFallback: allowSandboxAuthOtp });
   const rulebooks = rulebookStore(databasePath, { midtrans, now });
@@ -341,7 +341,6 @@ export function createSoloServer({
     secureCookie,
     allowHideSeekQa,
     allowRulebookSandboxCheckout,
-    rulebookReviewerKey,
     handleAuth.resolveUser,
     allowSandboxAuthOtp,
     osmPoi,
@@ -454,7 +453,7 @@ if (import.meta.main) {
     allowHideSeekQa: process.env.ALLOW_HIDE_SEEK_QA === "1",
     allowRulebookSandboxCheckout: process.env.ALLOW_RULEBOOK_SANDBOX_CHECKOUT === "1",
     allowSandboxAuthOtp,
-    rulebookReviewerKey: process.env.RULEBOOK_REVIEWER_KEY,
+    adminEmails: process.env.ADMIN_EMAILS?.split(","),
     demoVideoYoutubeId: process.env.DEMO_VIDEO_YOUTUBE_ID,
     osmPoi: {
       overpassApiUrl: process.env.OVERPASS_API_URL,

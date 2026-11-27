@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
   ActiveRulebookRoomSummary,
+  AuthUser,
   ClaimEngineAction,
   ClaimEngineActionReply,
   ClaimEngineRoomView,
@@ -24,6 +25,7 @@ import type {
   RulebookEntitlementSummary,
   RulebookFormat,
   RulebookPlayMode,
+  RulebookReviewAuditEntry,
   SeekEngineAction,
   SeekEngineActionReply,
   SeekEngineRoomView,
@@ -105,6 +107,12 @@ function isRecordedAdapter(adapter: MidtransAdapter): adapter is RecordedMidtran
 
 export type AnyRulebookPack = HideSeekRulebookPack | ClaimRulebookPack;
 export type AnyRulebookValidationResult = HideSeekRulebookValidationResult | ClaimRulebookValidationResult;
+
+type ReviewStatus = "submitted" | "published" | "paused";
+type ReviewDecision =
+  | { action: "request-changes"; note: string }
+  | { action: "publish" | "resume"; note?: string }
+  | { action: "pause"; reason: string };
 
 export type StoredRulebookRecord = {
   packId: string;
@@ -404,6 +412,19 @@ export function rulebookStore(
       payload TEXT NOT NULL,
       PRIMARY KEY (pack_id, version)
     );
+    CREATE TABLE IF NOT EXISTS rulebook_review_audit (
+      audit_id TEXT PRIMARY KEY NOT NULL,
+      pack_id TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      action TEXT NOT NULL,
+      admin_user_id TEXT NOT NULL,
+      admin_email TEXT NOT NULL,
+      admin_display_name TEXT NOT NULL,
+      note TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rulebook_review_audit_version
+      ON rulebook_review_audit (pack_id, version, created_at);
     CREATE TABLE IF NOT EXISTS rulebook_orders (
       order_id TEXT PRIMARY KEY,
       buyer_hash TEXT NOT NULL,
@@ -479,6 +500,29 @@ export function rulebookStore(
   const listVersionsByOwnerStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE owner_hash = ? AND is_official = 0");
   const latestVersionStmt = db.prepare("SELECT payload FROM rulebook_versions WHERE pack_id = ? ORDER BY version DESC LIMIT 1");
   const deleteVersionStmt = db.prepare("DELETE FROM rulebook_versions WHERE pack_id = ? AND version = ?");
+  const insertAuditStmt = db.prepare(`
+    INSERT INTO rulebook_review_audit
+      (audit_id, pack_id, version, action, admin_user_id, admin_email, admin_display_name, note, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const lastReviewedVersionStmt = db.prepare(
+    "SELECT MAX(version) AS version FROM rulebook_review_audit WHERE pack_id = ?",
+  );
+  const listReviewVersionsStmt = db.prepare(`
+    SELECT v.payload, (
+      SELECT json_group_array(json_object(
+        'auditId', audit_id, 'packId', pack_id, 'version', version, 'action', action,
+        'adminUserId', admin_user_id, 'adminEmail', admin_email, 'adminDisplayName', admin_display_name,
+        'note', note, 'createdAt', created_at
+      ) ORDER BY created_at, rowid)
+      FROM rulebook_review_audit
+      WHERE pack_id = v.pack_id AND version = v.version
+    ) AS audit_log
+    FROM rulebook_versions v
+    WHERE v.is_official = 0 AND v.status IN ('submitted', 'published', 'paused')
+      AND ($status IS NULL OR v.status = $status) AND ($format IS NULL OR v.format = $format)
+    ORDER BY json_extract(v.payload, '$.updatedAt') DESC, v.pack_id, v.version DESC
+  `);
   const upsertOrderStmt = db.prepare(`
     INSERT INTO rulebook_orders (order_id, buyer_hash, pack_id, version, payload)
     VALUES (?, ?, ?, ?, ?)
@@ -755,6 +799,24 @@ export function rulebookStore(
     return row ? JSON.parse(row.payload) as StoredRulebookRecord : undefined;
   }
 
+  function listReviewVersions(status?: ReviewStatus, format?: RulebookFormat) {
+    const rows = listReviewVersionsStmt.all({ status: status ?? null, format: format ?? null }) as
+      { payload: string; audit_log: string }[];
+    return rows.map(row => {
+      const { ownerHash: _ownerHash, ...record } = JSON.parse(row.payload) as StoredRulebookRecord;
+      return {
+        ...record,
+        validation: validateAnyPack(record.pack, record.snapshot),
+        auditLog: JSON.parse(row.audit_log) as RulebookReviewAuditEntry[],
+      };
+    });
+  }
+
+  function nextVersionFor(packId: string, latest?: StoredRulebookRecord) {
+    const audited = lastReviewedVersionStmt.get(packId) as { version: number | null };
+    return Math.max(latest?.version ?? 0, audited.version ?? 0) + 1;
+  }
+
   function creatorStudio(creatorCredential: string) {
     const ownerHash = digest(creatorCredential);
     const versions = allRecords().filter(record => record.ownerHash === ownerHash && !record.isOfficial);
@@ -798,7 +860,7 @@ export function rulebookStore(
     if (previous && (previous.isOfficial || previous.ownerHash !== ownerHash || previous.format !== template.format)) {
       return { ok: false, error: "pack-unavailable" };
     }
-    const nextVersion = (previous?.version ?? 0) + 1;
+    const nextVersion = nextVersionFor(overrides.packId, previous);
     const clonedPack: AnyRulebookPack = {
       ...structuredClone(template.pack),
       meta: {
@@ -847,7 +909,7 @@ export function rulebookStore(
     if (previous && (previous.isOfficial || previous.ownerHash !== ownerHash || previous.format !== pack.meta.format)) {
       return { ok: false, error: "pack-unavailable" };
     }
-    const version = existing?.version ?? (previous?.version ?? 0) + 1;
+    const version = existing?.version ?? nextVersionFor(pack.meta.packId, previous);
     const normalizedSnapshot: GeoSnapshot = options?.rehashSnapshot
       ? { ...snapshot, hash: computeGeoSnapshotHash(snapshot) }
       : snapshot;
@@ -952,36 +1014,37 @@ export function rulebookStore(
   function reviewVersion(
     packId: string,
     version: number,
-    decision: { action: "request-changes"; note: string } | { action: "publish" } | { action: "pause"; reason: string },
+    decision: ReviewDecision,
+    admin: Pick<AuthUser, "userId" | "email" | "displayName">,
     now: number,
   ): { ok: true; record: StoredRulebookRecord } | { ok: false; error: string; validation?: AnyRulebookValidationResult } {
-    const rec = getRecord(packId, version);
-    if (!rec || rec.isOfficial) return { ok: false, error: "not-found" };
-    if (decision.action === "request-changes") {
-      if (rec.status !== "submitted") return { ok: false, error: "invalid-status" };
-      rec.status = "changes-requested";
-      rec.reviewNote = decision.note;
-      rec.updatedAt = now;
-      saveRecord(rec);
-      return { ok: true, record: rec };
-    }
-    if (decision.action === "publish") {
-      if (rec.status !== "submitted") return { ok: false, error: "invalid-status" };
-      const validation = validateAnyPack(rec.pack, rec.snapshot);
-      if (!validation.ok) return { ok: false, error: "validation-failed", validation };
-      rec.status = "published";
-      rec.publishedAt = now;
-      rec.reviewNote = null;
-      rec.updatedAt = now;
-      saveRecord(rec);
-      return { ok: true, record: rec };
-    }
-    if (rec.status !== "published") return { ok: false, error: "invalid-status" };
-    rec.status = "paused";
-    rec.pausedReason = decision.reason;
-    rec.updatedAt = now;
-    saveRecord(rec);
-    return { ok: true, record: rec };
+    return transact(() => {
+      const record = getRecord(packId, version);
+      if (!record || record.isOfficial) return { ok: false, error: "not-found" };
+      const action = decision.action;
+      const expected = action === "resume" ? "paused" : action === "pause" ? "published" : "submitted";
+      if (record.status !== expected) return { ok: false, error: "invalid-status" };
+
+      const note = (action === "pause" ? decision.reason : decision.note)?.trim() || null;
+      if (action === "publish" || action === "resume") {
+        const validation = validateAnyPack(record.pack, record.snapshot);
+        if (!validation.ok) return { ok: false, error: "validation-failed", validation };
+        record.status = "published";
+        if (action === "publish") record.publishedAt = now;
+        record.reviewNote = null;
+        record.pausedReason = null;
+      } else if (action === "request-changes") {
+        record.status = "changes-requested";
+        record.reviewNote = note;
+      } else {
+        record.status = "paused";
+        record.pausedReason = note;
+      }
+      record.updatedAt = now;
+      saveRecord(record);
+      insertAuditStmt.run(randomUUID(), packId, version, action, admin.userId, admin.email, admin.displayName, note, now);
+      return { ok: true, record };
+    });
   }
 
   type EntitlementRow = {
@@ -1211,8 +1274,9 @@ export function rulebookStore(
     return { ok: true, roomCode: session.pass.roomCode, pass: session.pass, room };
   }
 
-  function startDraftPlaytest(
-    creatorCredential: string,
+  function startPlaytest(
+    access: "creator" | "admin",
+    principal: string,
     packId: string,
     version: number,
     hostName: string,
@@ -1234,8 +1298,11 @@ export function rulebookStore(
     }
     const rec = getRecord(packId, version);
     if (!rec || rec.isOfficial) return { ok: false, status: 404, error: "not-found" };
-    const ownerHash = digest(creatorCredential);
-    if (rec.ownerHash !== ownerHash) return { ok: false, status: 403, error: "forbidden" };
+    const hostHash = digest(principal);
+    if (access === "creator" && rec.ownerHash !== hostHash) return { ok: false, status: 403, error: "forbidden" };
+    if (access === "admin" && rec.status !== "submitted" && rec.status !== "published" && rec.status !== "paused") {
+      return { ok: false, status: 400, error: "invalid-status" };
+    }
     const validation = validateAnyPack(rec.pack, rec.snapshot);
     if (!validation.ok) return { ok: false, status: 400, error: "validation-failed", validation };
     let mode: RulebookPlayMode | undefined = requestedMode;
@@ -1251,7 +1318,7 @@ export function rulebookStore(
     } else {
       mode = undefined;
     }
-    const session = instantiateRoom(rec, ownerHash, hostName, now, null, true, mode, null, true);
+    const session = instantiateRoom(rec, hostHash, hostName, now, null, true, mode, null, true);
     const room =
       session.format === "claim-the-city"
         ? viewClaimEngineMatch(session.match, "seat-1", now)
@@ -2453,6 +2520,7 @@ export function rulebookStore(
     listEntitlements,
     getCallerOwnership,
     listAllVersions: allRecords,
+    listReviewVersions,
     listRecaps: (participant: string) => recaps.list(digest(participant)),
     readRecap: (matchId: string, participant: string) => recaps.get(matchId, digest(participant)),
     readRecapDetail: (matchId: string, participant: string) => recaps.getWithShare(matchId, digest(participant)),
@@ -2475,7 +2543,7 @@ export function rulebookStore(
     reviewVersion,
     createFreeRoomFromRulebook,
     createOwnedRoomFromRulebook,
-    startDraftPlaytest,
+    startPlaytest,
     isDraftPlaytestRoom,
     migrateOwner,
     createOrder,

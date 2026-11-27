@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import sharp from "sharp";
 import * as api from "../dist/index.js";
+import { TEST_ADMIN } from "./auth-client.mjs";
 
 const T0 = 1_800_000_000_000;
 let seq = 0;
@@ -469,7 +470,7 @@ test("Pending Midtrans orders and settled paid pass, room, and earnings persist 
       );
       assert.equal(cloned.ok, true);
       assert.equal(store.submitDraft(creator, packId, 1, T0 + 1000).ok, true);
-      assert.equal(store.reviewVersion(packId, 1, { action: "publish" }, T0 + 2000).ok, true);
+      assert.equal(store.reviewVersion(packId, 1, { action: "publish" }, TEST_ADMIN, T0 + 2000).ok, true);
 
       const createdOrder = await store.createOrder(buyer, packId, 1, T0 + 3000, "group", orderReqId);
       assert.equal(createdOrder.ok, true);

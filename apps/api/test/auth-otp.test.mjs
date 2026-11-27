@@ -5,72 +5,9 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import * as api from "../dist/index.js";
+import { makeClient, signInWithSandboxOtp, TEST_ADMIN } from "./auth-client.mjs";
 
 const T0 = 1_800_000_000_000;
-
-function makeClient(baseUrl) {
-  const cookies = new Map();
-  function mergeCookies(res) {
-    const rawList = typeof res.headers.getSetCookie === "function"
-      ? res.headers.getSetCookie()
-      : res.headers.get("set-cookie")
-        ? [res.headers.get("set-cookie")]
-        : [];
-    for (const raw of rawList) {
-      const [pair] = raw.split(";");
-      const eq = pair.indexOf("=");
-      if (eq < 0) continue;
-      const name = pair.slice(0, eq).trim();
-      const value = pair.slice(eq + 1).trim();
-      if (!value || /Max-Age=0/i.test(raw)) cookies.delete(name);
-      else cookies.set(name, value);
-    }
-    return rawList;
-  }
-  function cookieHeader() {
-    return [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
-  }
-  return {
-    get cookies() {
-      return new Map(cookies);
-    },
-    async get(path, extraHeaders = {}) {
-      const hdr = cookieHeader();
-      const res = await fetch(`${baseUrl}${path}`, {
-        headers: { ...(hdr ? { cookie: hdr } : {}), ...extraHeaders },
-      });
-      const setCookies = mergeCookies(res);
-      return { status: res.status, headers: res.headers, setCookies, body: await res.json() };
-    },
-    async post(path, body, extraHeaders = {}) {
-      const hdr = cookieHeader();
-      const res = await fetch(`${baseUrl}${path}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(hdr ? { cookie: hdr } : {}),
-          ...extraHeaders,
-        },
-        body: JSON.stringify(body),
-      });
-      const setCookies = mergeCookies(res);
-      return { status: res.status, headers: res.headers, setCookies, body: await res.json() };
-    },
-  };
-}
-
-async function signInWithSandboxOtp(client, email, displayName) {
-  const req = await client.post("/api/auth/request-otp", { email });
-  assert.equal(req.status, 200, JSON.stringify(req.body));
-  assert.match(req.body.sandboxCode, /^\d{6}$/);
-  const ver = await client.post("/api/auth/verify-otp", {
-    challengeId: req.body.challengeId,
-    code: req.body.sandboxCode,
-    ...(displayName ? { displayName } : {}),
-  });
-  assert.equal(ver.status, 200, JSON.stringify(ver.body));
-  return ver;
-}
 
 test("Email 6-digit OTP lifecycle: HttpOnly session, single-use, 5-attempt lockout, 10m expiry, rate limits, profile update, and logout", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "kelana-auth-otp-"));
@@ -302,7 +239,7 @@ test("Guest-first play, auth-required checkout/Studio gates, atomic guest recap 
       emailAdapter: api.createRecordedEmailOtpAdapter(),
       allowRulebookSandboxCheckout: true,
       allowSandboxAuthOtp: true,
-      rulebookReviewerKey: "auth-e2e-reviewer",
+      adminEmails: [TEST_ADMIN.email],
     });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
@@ -364,7 +301,7 @@ test("Guest-first play, auth-required checkout/Studio gates, atomic guest recap 
       assert.equal(guestRecaps.body.recaps.length, 1);
       assert.equal(guestRecaps.body.recaps[0].matchId, migratedMatchId);
 
-      // Creator signs in via Email OTP and publishes a paid Claim pack
+      // Creator submits a paid Claim pack for an admin to publish
       const creator = makeClient(baseUrl);
       const creatorVer = await signInWithSandboxOtp(creator, "creator@kelana.test", "Studio Selatan");
       creatorUserId = creatorVer.body.user.userId;
@@ -378,10 +315,9 @@ test("Guest-first play, auth-required checkout/Studio gates, atomic guest recap 
       });
       assert.equal(cloned.status, 200);
       assert.equal((await creator.post("/api/rulebooks", { type: "submit-draft", packId, version: 1 })).status, 200);
-      assert.equal(
-        (await creator.post("/api/rulebooks", { type: "publish-version", packId, version: 1 }, { authorization: "Bearer auth-e2e-reviewer" })).status,
-        200,
-      );
+      const admin = makeClient(baseUrl);
+      await signInWithSandboxOtp(admin, TEST_ADMIN.email);
+      assert.equal((await admin.post("/api/rulebooks", { type: "publish-version", packId, version: 1 })).status, 200);
 
       // Unauthenticated paid checkout returns 401 auth-required
       const unauthBuy = await guest.post("/api/rulebooks/catalog", {
@@ -464,7 +400,7 @@ test("Guest-first play, auth-required checkout/Studio gates, atomic guest recap 
       emailAdapter: api.createRecordedEmailOtpAdapter(),
       allowRulebookSandboxCheckout: true,
       allowSandboxAuthOtp: true,
-      rulebookReviewerKey: "auth-e2e-reviewer",
+      adminEmails: [TEST_ADMIN.email],
     });
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const baseUrl = `http://127.0.0.1:${server.address().port}`;
