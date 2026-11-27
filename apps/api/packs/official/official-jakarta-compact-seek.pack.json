@@ -1,7 +1,7 @@
 {
   "meta": {
     "packId": "official-jakarta-compact-seek",
-    "version": 2,
+    "version": 3,
     "schemaVersion": "hide-seek-rulebook-v1",
     "format": "hide-and-seek",
     "isOfficial": true,
@@ -44,7 +44,7 @@
     "geoSnapshotHash": "12ad05828a01763083f308184ad470373c818a0986ceb94bd29eb66e582e3026"
   },
   "investigationBook": {
-    "repeatCostMode": "escalating_multiplier",
+    "repeatCostMode": "single_use_locked",
     "tieToleranceMeters": 100,
     "families": {
       "radar": {

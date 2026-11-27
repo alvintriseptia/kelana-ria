@@ -667,6 +667,7 @@ export function viewSeekEngineMatch(match: SeekEngineMatch, seatId: string, now:
     seatId,
     role,
     packMeta: match.pack.meta,
+    repeatCostMode: match.pack.investigationBook.repeatCostMode,
     phase: match.phase,
     turnNumber: match.turnNumber,
     totalPlannedTurns: totalPlannedTurns(match),

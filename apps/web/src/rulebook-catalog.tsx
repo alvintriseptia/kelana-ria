@@ -4,6 +4,7 @@ import type {
   AuthMeReply,
   HideSeekCardCategory,
   HideSeekQuestionFamily,
+  HideSeekRepeatCostMode,
   PackOrderSummary,
   PublicMatchRecapSummary,
   RulebookEntitlementSummary,
@@ -29,6 +30,7 @@ import { openJoinRoomModal } from "./join-room-modal";
 import { fetchApiJson, resolvePlayerError, type PlayerErrorTone } from "./player-errors";
 import { createPlayerToast } from "./player-toast";
 import { mountPwaInstallPrompt } from "./pwa-install";
+import { questionRepeatRules } from "./seek/types";
 import { AccountChip } from "./ui/AccountChip";
 import { InlineAlert } from "./ui/InlineAlert";
 import { mountPreact } from "./ui/mount";
@@ -136,6 +138,7 @@ export type CatalogEdition = {
       objectiveResponseMs: number;
       photoResponseMs: number;
       drawDecisionMs?: number;
+      repeatCostMode: HideSeekRepeatCostMode;
       questionFamilies: { family: HideSeekQuestionFamily; drawCount: number; keepCount: number }[];
       deckSummary?: { totalCards: number; baseHandLimit: number };
     }
@@ -970,6 +973,7 @@ function CatalogApp({
         <section class="cat-rules" aria-label="Aturan edisi">
           <h2>Aturan edisi</h2>
           <p>{objective(item, effectiveMode)}</p>
+          {item.format === "hide-and-seek" && <p>{questionRepeatRules[item.repeatCostMode]}</p>}
           <dl class="cat-facts">
             {buildFacts(item, effectiveMode, owned).map(([label, value]) => (
               <div key={label}>

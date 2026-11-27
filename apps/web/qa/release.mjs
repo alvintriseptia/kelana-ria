@@ -48,11 +48,12 @@ try {
   }
 
   async function clickAndWaitPost(page, selector) {
-    await Promise.all([
-      page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
+    const [response] = await Promise.all([
+      page.waitForResponse((r) => new URL(r.url()).pathname === "/api/rulebooks" && r.request().method() === "POST"),
       page.click(selector),
     ]);
     await page.waitForFunction(() => !document.querySelector('[aria-busy="true"]'));
+    return response;
   }
 
   async function refreshSeekRoom(page) {
@@ -186,12 +187,15 @@ try {
 
   // 5 & 6: Multiplayer Hide & Seek (Compact & Jakarta Wide) launched from / + invite link join + search-phase found code
   for (const board of ["compact", "jakarta-wide"]) {
+    const headStartMinutes = board === "jakarta-wide" ? 46 : 26;
     const host = await openDevice();
     const guest = await openDevice();
     try {
       await launchFromRoot(host.page, { players: 2, format: "hide-and-seek", board });
+      await host.page.getByText(/Setiap pertanyaan.*sekali per giliran/).waitFor();
       const inviteHref = await host.page.getAttribute('[data-testid="invite-link"]', "href");
       assert.ok(inviteHref && inviteHref.includes("room=RB-"), "Hide & Seek invite link must be present");
+      const roomCode = new URL(inviteHref).searchParams.get("room");
 
       await guest.page.goto(inviteHref, { waitUntil: "networkidle" });
       await guest.page.fill("#rb-join-name", "Pencari");
@@ -207,7 +211,7 @@ try {
 
       await host.page.locator('button[data-map-point="mrt-blok-m"]').press("Enter");
       await clickAndWaitPost(host.page, 'button[data-action="lock-anchor"]');
-      now += (board === "jakarta-wide" ? 46 : 26) * 60_000;
+      now += headStartMinutes * 60_000;
       await refreshSeekRoom(guest.page);
       await guest.page.waitForFunction(() => document.body.textContent.includes("Fase Cari"));
 
@@ -223,6 +227,51 @@ try {
       const guestBoard = guest.page.locator('[data-panel="board"]');
       if (await guestBoard.getAttribute("aria-pressed") !== "true") await guestBoard.click();
       await clickAndWaitPost(guest.page, 'button[data-action="seeker-check-in"]');
+
+      const radarFamily = 'button[data-action="question-family"][data-family="radar"]';
+      const radar500 = 'button[data-action="question-option"][data-item="rad-500m"]';
+      const askClue = 'button[data-action="ask-clue"]';
+      await guest.page.locator('[data-panel="ask"]').click();
+      await guest.page.locator(radarFamily).click();
+      await guest.page.locator(radar500).click();
+      const originalAsk = (await clickAndWaitPost(guest.page, askClue)).request().postDataJSON();
+
+      await refreshSeekRoom(host.page);
+      await host.page.locator('button[data-answer="yes"]').click();
+      await clickAndWaitPost(host.page, 'button[data-action="answer-pending"]');
+      await host.page.locator('button[data-action="choose-draw"]').first().click();
+      await clickAndWaitPost(host.page, 'button[data-action="confirm-draw"]');
+
+      const retry = await guest.context.request.post(`${origin}/api/rulebooks`, { data: originalAsk });
+      assert.equal(retry.status(), 200);
+      assert.equal((await retry.json()).error, undefined);
+      const repeat = await guest.context.request.post(`${origin}/api/rulebooks`, {
+        data: { ...originalAsk, action: { ...originalAsk.action, actionId: "repeat-radar-500" } },
+      });
+      assert.equal((await repeat.json()).error, "question-already-used");
+      const hostRoom = await host.context.request.get(`${origin}/api/rulebooks/rooms/${roomCode}`).then(r => r.json());
+      assert.equal(hostRoom.room.questions.length, 1);
+      assert.equal(hostRoom.deck.hiderHandCount, 1);
+      assert.equal(hostRoom.deck.activeDraw, null);
+      assert.equal(hostRoom.deck.queuedBatchCount, 0);
+
+      await guest.page.reload();
+      await guest.page.locator('[data-panel="history"]').click();
+      await guest.page.getByRole("heading", { name: "Riwayat petunjuk" }).waitFor();
+      const history = guest.page.getByRole("listitem").filter({ hasText: "Radar 500 m" });
+      await history.getByText("Ya, di dalam radar", { exact: true }).waitFor();
+      assert.equal(await history.count(), 1);
+      await guest.page.locator('[data-panel="ask"]').click();
+      await guest.page.locator(radarFamily).click();
+      const usedRadar = guest.page.locator(radar500);
+      assert.equal(await usedRadar.isDisabled(), true);
+      await usedRadar.getByText("Sudah dipakai", { exact: true }).waitFor();
+      assert.ok(await guest.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await guest.page.screenshot({ path: join(results, `release-${board}-seek-used-question.png`) });
+
+      await guest.page.locator('button[data-action="question-option"][data-item="rad-1km"]').click();
+      await guest.page.locator(`${askClue}[data-item="rad-1km"]:enabled`).waitFor();
+
       await refreshSeekRoom(host.page);
       for (const page of [host.page, guest.page]) {
         const boardTab = page.locator('[data-panel="board"]');
@@ -239,6 +288,15 @@ try {
       const secondStart = guest.page.locator('.board-map-pin-start[data-map-point="mrt-blok-m"]');
       await secondStart.press("Enter");
       await clickAndWaitPost(guest.page, 'button[data-action="lock-anchor"]');
+      now += headStartMinutes * 60_000;
+      await refreshSeekRoom(host.page);
+      await host.page.locator(radarFamily).click();
+      const resetRadar = host.page.locator(radar500);
+      assert.equal(await resetRadar.isEnabled(), true);
+      assert.equal(await resetRadar.getByText("Sudah dipakai", { exact: true }).count(), 0);
+      await resetRadar.click();
+      await host.page.locator(`${askClue}[data-item="rad-500m"]:enabled`).waitFor();
+
       now += 24 * 60 * 60_000;
       for (const page of [host.page, guest.page]) {
         await refreshSeekRoom(page);
@@ -255,6 +313,7 @@ try {
         status: "pass",
         persistedOnReload: true,
         verifiedRoleSwapAndResults: true,
+        verifiedSingleUseQuestions: true,
       });
     } finally {
       await host.context.close();

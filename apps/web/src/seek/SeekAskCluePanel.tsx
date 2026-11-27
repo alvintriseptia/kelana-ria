@@ -68,7 +68,6 @@ function SeekDraftPreviewAndSubmit({
     !blocked &&
     !busy &&
     Boolean(selected?.availableInCurrentPhase) &&
-    !selected?.lockedSingleUse &&
     (!thermometer || (thermometer.distance ?? 0) >= (selected?.minTravelMeters ?? Infinity)) &&
     previewReady;
 
@@ -264,10 +263,16 @@ export function SeekAskCluePanel({
             const available = options.find(
               (entry) => entry.availableInCurrentPhase && !entry.lockedSingleUse,
             );
+            const allUsed = options.every((entry) => entry.lockedSingleUse);
+            const detail = allUsed ? "Semua sudah dipakai" : "Lihat pilihan";
             return (
-              <SeekFamilyCard key={f} family={f} busy={busy}
-                reward={available ? rewardLabel(available.drawBatches) : "Lihat pilihan"}
-                onSelect={() => onSelectFamily(f)} />
+              <SeekFamilyCard
+                key={f}
+                family={f}
+                busy={busy}
+                detail={available ? rewardLabel(available.drawBatches) : detail}
+                onSelect={() => onSelectFamily(f)}
+              />
             );
           })}
         </div>
@@ -276,7 +281,7 @@ export function SeekAskCluePanel({
   }
 
   const entries = room.menu.filter((entry) => entry.family === family);
-  const selected = entries.find((entry) => entry.itemId === option);
+  const selected = entries.find((entry) => entry.itemId === option && !entry.lockedSingleUse);
   const blocked = deck.questionsBlocked || deck.bannedFamilies.includes(family);
   const thermometer =
     family === "thermometer"
@@ -317,14 +322,15 @@ export function SeekAskCluePanel({
             <button
               key={entry.itemId}
               type="button"
-              class="sg-pick"
+              class={entry.lockedSingleUse ? "sg-pick sg-pick--used" : "sg-pick"}
               data-action="question-option"
               data-item={entry.itemId}
               aria-pressed={selected?.itemId === entry.itemId ? "true" : "false"}
               disabled={disabled || busy}
               onClick={() => onSelectOption(entry.itemId)}
             >
-              {entry.isCustomRadius ? "Radius sendiri" : entry.label}
+              <span>{entry.isCustomRadius ? "Radius sendiri" : entry.label}</span>
+              {entry.lockedSingleUse && <small class="sg-pick-status">Sudah dipakai</small>}
             </button>
           );
         })}
@@ -383,10 +389,10 @@ export function SeekAskCluePanel({
   );
 }
 
-function SeekFamilyCard({ family, busy, reward, onSelect }: {
+function SeekFamilyCard({ family, busy, detail, onSelect }: {
   family: HideSeekQuestionFamily;
   busy: boolean;
-  reward: string;
+  detail: string;
   onSelect: () => void;
 }) {
   const button = useRef<HTMLButtonElement>(null);
@@ -397,7 +403,7 @@ function SeekFamilyCard({ family, busy, reward, onSelect }: {
       <SeekQuestionArt family={family} />
       <span class="sg-question-text">
         <strong>{questionNames[family]}</strong>
-        <small>{reward}</small>
+        <small>{detail}</small>
       </span>
     </button>
   );

@@ -8,6 +8,7 @@ import type {
   HideSeekCardCategory,
   HideSeekCardEffect,
   HideSeekQuestionFamily,
+  HideSeekRepeatCostMode,
   HideSeekRulebookPack,
   RulebookRoomPassSummary,
 } from "./rulebook.js";
@@ -181,6 +182,7 @@ export type SeekEngineRoomView = {
   seatId: string;
   role: "hider" | "seeker" | "lobby";
   packMeta: HideSeekRulebookPack["meta"];
+  repeatCostMode: HideSeekRepeatCostMode;
   phase: SeekEnginePhase;
   turnNumber: number;
   totalPlannedTurns: number;

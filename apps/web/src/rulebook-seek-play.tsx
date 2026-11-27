@@ -1726,6 +1726,7 @@ class SeekController {
       version: current.pass.version,
       title: current.room.packMeta.title,
       inLobby: current.room.phase === "lobby",
+      repeatCostMode: current.room.repeatCostMode,
       onResetCues: () => {
         this.cueRevisionSig.value += 1;
       },
