@@ -273,7 +273,7 @@ function setupStartedMatch(playerCount = 2, packOverrides = {}) {
   return { match, snapshot, pack, act, headStartStartedAt: T0 + 2000 };
 }
 
-test("2-player full match exercises all 6 evaluators, escalating 2x/3x repeat cost, Endgame, Found Code, secret isolation, and turn swap", () => {
+test("2-player full match exercises all 6 evaluators, escalating 2x/3x repeat cost, neutral check-ins, Found Code, secret isolation, and turn swap", () => {
   const { match, snapshot, act, headStartStartedAt } = setupStartedMatch(2);
   const north = snapshot.stations.find((s) => s.id === "st-n");
   const east = snapshot.stations.find((s) => s.id === "st-e");
@@ -360,42 +360,31 @@ test("2-player full match exercises all 6 evaluators, escalating 2x/3x repeat co
   assert.equal(ansTent.room.questions.at(-1).answerCode, "park-n");
   assert.equal(ansTent.room.questions.at(-1).overlay.type, "voronoi");
 
-  // 6. Photo (seeking prompt allowed; endgame-only prompt blocked before Endgame)
+  // 6. Photo remains available during search.
   t += 1 * MINUTE;
-  assert.equal(
-    act("p2", { type: "ask", family: "photo", itemId: "photo-sky", fix: fixAt(snapshot.startPoint, t) }, t).error,
-    "question-unavailable-in-phase",
-  );
   const askPhoto = act("p2", { type: "ask", family: "photo", itemId: "photo-station", fix: fixAt(snapshot.startPoint, t) }, t);
   assert.equal(askPhoto.error, undefined);
   assert.equal(act("p1", { type: "answer-question", questionId: askPhoto.room.questions.at(-1).id, photoId: "photo-turn1-1" }, t + 5000).error, undefined);
 
-  // Seeker checks in inside North Gate zone WHILE on transit -> Endgame does NOT trigger
+  // Location updates at and away from the hidden point leave the same search options.
   t += 2 * MINUTE;
-  const transitCheck = act("p2", { type: "seeker-check-in", fix: fixAt(north, t), offTransit: false }, t);
-  assert.equal(transitCheck.endgameTriggered, false);
-  assert.equal(transitCheck.room.phase, "seeking");
-
-  // Seeker checks in inside North Gate zone OFF transit -> triggers Endgame!
+  const hiddenPoint = act("p2", { type: "seeker-check-in", fix: fixAt(north, t), offTransit: true }, t);
   t += 30_000;
-  const endgameCheck = act("p2", { type: "seeker-check-in", fix: fixAt(north, t), offTransit: true }, t);
-  assert.equal(endgameCheck.endgameTriggered, true);
-  assert.equal(endgameCheck.room.phase, "endgame");
-  assert.equal(endgameCheck.room.canMoveZone, false);
-  assert.equal(endgameCheck.room.foundCode, undefined, "Seeker never sees Found Code");
-
-  // Hider sees Found Code in Endgame, and Move is blocked in Endgame
-  const hiderEndgame = api.viewSeekEngineMatch(match, "p1", t);
-  assert.equal(hiderEndgame.foundCode, "4201");
-  assert.equal(api.startMoveZoneRelocation(match, t, 5 * MINUTE, true).error, "move-disabled-in-endgame");
-
-  // Endgame-only photo now unlocks; Hider responds "Cannot answer (Endgame)" and still earns draw!
-  const askEndgamePhoto = act("p2", { type: "ask", family: "photo", itemId: "photo-sky", fix: fixAt(north, t + 5000) }, t + 5000);
-  assert.equal(askEndgamePhoto.error, undefined);
-  const cannotAns = act("p1", { type: "cannot-answer-endgame", questionId: askEndgamePhoto.room.questions.at(-1).id }, t + 10_000);
-  assert.equal(cannotAns.error, undefined);
-  assert.deepEqual(cannotAns.earnedDrawBatches, [{ drawCount: 1, keepCount: 1 }]);
-  assert.equal(cannotAns.room.questions.at(-1).status, "cannot_answer_endgame");
+  const movedAway = act("p2", { type: "seeker-check-in", fix: fixAt(south, t) }, t);
+  for (const check of [hiddenPoint, movedAway]) {
+    assert.equal(check.error, undefined);
+    const { room, ...feedback } = check;
+    assert.deepEqual(feedback, {});
+    assert.equal(room.phase, "seeking");
+    assert.equal(room.canMoveZone, true);
+    assert.equal(room.foundCode, undefined);
+    assert.equal(room.ownAnchorStationId, undefined);
+  }
+  assert.equal(hiddenPoint.room.phaseEndsAt, movedAway.room.phaseEndsAt);
+  assert.deepEqual(hiddenPoint.room.menu, movedAway.room.menu);
+  assert.equal(api.viewSeekEngineMatch(match, "p1", t).foundCode, "4201");
+  const sky = act("p2", { type: "ask", family: "photo", itemId: "photo-sky", fix: fixAt(south, t + 1000) }, t + 1000);
+  assert.equal(sky.error, undefined, "Older photo prompts remain playable in the single search phase");
 
   // Wrong Found Code fails; correct Found Code ends turn 1 and enters Regroup at previous_hiding_station (st-n)!
   t += 2 * MINUTE;
@@ -406,6 +395,7 @@ test("2-player full match exercises all 6 evaluators, escalating 2x/3x repeat co
   assert.equal(foundTurn1.room.phase, "regroup");
   assert.equal(foundTurn1.room.regroupPoint.id, "st-n");
   assert.equal(foundTurn1.room.turns.length, 1);
+  assert.equal(foundTurn1.room.turns[0].rawHidingMs, t + 5000 - (headStartStartedAt + 20 * MINUTE));
   assert.equal(foundTurn1.room.turns[0].bonusMs, 4 * MINUTE);
   assert.equal(foundTurn1.room.turns[0].adjustedMs, foundTurn1.room.turns[0].rawHidingMs + 4 * MINUTE);
 
@@ -423,6 +413,10 @@ test("2-player full match exercises all 6 evaluators, escalating 2x/3x repeat co
   const t2Lock = regroupAt + 5 * MINUTE;
   assert.equal(act("p2", { type: "lock-anchor", stationId: "st-s", fix: fixAt(south, t2Lock) }, t2Lock).error, undefined);
   const t2End = regroupAt + 1000 + 20 * MINUTE + 60 * MINUTE;
+  const stale = act("p1", { type: "submit-found-code", code: "4201" }, t2End - 1000);
+  assert.equal(stale.error, "invalid-found-code");
+  assert.equal(stale.room.phase, "seeking");
+  assert.equal(api.viewSeekEngineMatch(match, "p2", t2End - 1000).foundCode, "4202");
   const expired = api.expireSeekEngineMatch(match, t2End);
   assert.equal(expired.changed, true);
   assert.deepEqual(expired.purgedPhotoIds, ["photo-turn1-1"]);
@@ -447,10 +441,7 @@ test("4-player match enforces unified Seeker Team atomic question lock and 4-tur
   const q2 = act("p3", { type: "ask", family: "matching", itemId: "match-line", fix: fixAt(snapshot.startPoint, t + 1000) }, t + 1000);
   assert.equal(q2.error, "question-pending");
 
-  // Seeker p4 enters Endgame and spots Hider via mutual confirm-found
-  act("p4", { type: "seeker-check-in", fix: fixAt(west, t + 2 * MINUTE), offTransit: true }, t + 2 * MINUTE);
-  act("p1", { type: "confirm-found" }, t + 3 * MINUTE);
-  const found = act("p4", { type: "confirm-found" }, t + 3 * MINUTE + 1000);
+  const found = act("p4", { type: "submit-found-code", code: "4201" }, t + 3 * MINUTE + 1000);
   assert.equal(found.room.phase, "regroup");
   assert.equal(found.room.turns.length, 1);
 });
@@ -555,4 +546,34 @@ test("published clues narrow stations and a timed-out round resumes at the last 
   assert.equal(second.room.releaseAt - second.room.now, match.pack.timers.headStartMs);
   assert.equal(second.room.seekerPosition, undefined);
   assert.equal(second.room.candidateStationIds, undefined);
+});
+
+
+test("found code checks roles, retries, and the exact search deadline", () => {
+  for (const delta of [-1, 0]) {
+    const { match, snapshot, act, headStartStartedAt } = setupStartedMatch(2);
+    const north = snapshot.stations.find(s => s.id === "st-n");
+    const release = headStartStartedAt + 20 * MINUTE;
+    const deadline = release + 60 * MINUTE;
+    assert.equal(act("p1", { type: "lock-anchor", stationId: north.id, fix: fixAt(north, release - 1000) }, release - 1000).error, undefined);
+    assert.equal(act("p2", { type: "submit-found-code", code: "4201" }, release - 1).error, "room-phase-changed");
+    assert.equal(act("p1", { type: "submit-found-code", code: "4201" }, release).error, "seeker-only");
+    const replay = { type: "submit-found-code", actionId: "retry-wrong", code: "9999" };
+    for (let index = 0; index < 3; index++) {
+      assert.equal(api.applySeekEngineAction(match, "p2", replay, release + 10 + index).error, "invalid-found-code");
+    }
+    assert.equal(match.foundCodeAttempts.length, 1);
+    for (let index = 0; index < 4; index++) {
+      assert.equal(act("p2", { type: "submit-found-code", code: "9999" }, release + 20 + index).error, "invalid-found-code");
+    }
+    assert.equal(act("p2", { type: "submit-found-code", code: "9999" }, release + 30).error, "found-code-rate-limited");
+    const action = { type: "submit-found-code", actionId: "find-on-deadline", code: "4201" };
+    const result = api.applySeekEngineAction(match, "p2", action, deadline + delta);
+    assert.equal(result.room.turns[0].reason, delta < 0 ? "found" : "timeout");
+    assert.equal(result.room.turns[0].rawHidingMs, 60 * MINUTE + delta);
+    assert.equal(result.room.foundCode, undefined);
+    const retry = api.applySeekEngineAction(match, "p2", action, deadline + 2);
+    assert.equal(retry.error, result.error);
+    assert.equal(retry.room.turns.length, 1);
+  }
 });

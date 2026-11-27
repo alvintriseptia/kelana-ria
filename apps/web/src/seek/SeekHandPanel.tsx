@@ -33,7 +33,6 @@ export function SeekHandPanel({
   onClearPhoto,
   onSubmitPhoto,
   onPlayCard,
-  onCannotAnswerEndgame,
 }: {
   payload: SeekRoomPayload;
   panel: SeekPanel;
@@ -52,7 +51,6 @@ export function SeekHandPanel({
   onClearPhoto: () => void;
   onSubmitPhoto: (questionId: string) => void;
   onPlayCard: (cardInstanceId: string, primitive: string) => void;
-  onCannotAnswerEndgame: (questionId: string) => void;
 }) {
   const { room, deck, publicBoard } = payload;
   // Strictly enforce hidden-information boundary: never render hider hand/draw/private answers for non-hiders.
@@ -96,7 +94,6 @@ export function SeekHandPanel({
         onClearPhoto={onClearPhoto}
         onSubmitPhoto={onSubmitPhoto}
         onPlayAlternativeCard={onPlayCard}
-        onCannotAnswerEndgame={onCannotAnswerEndgame}
       />
     );
   }

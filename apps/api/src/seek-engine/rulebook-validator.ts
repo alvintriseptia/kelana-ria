@@ -321,9 +321,6 @@ export function validateHideSeekRulebook(
     if (!VALID_MISSED_LOCK_POLICIES.has(session.missedLockPolicy)) {
       addError("invalid-session", "session.missedLockPolicy", "Invalid missedLockPolicy.");
     }
-    if (!isNonNegativeFinite(session.endgameFreezeGraceSec) || session.endgameFreezeGraceSec > 300) {
-      addError("invalid-session", "session.endgameFreezeGraceSec", "endgameFreezeGraceSec must be between 0 and 300.");
-    }
     if (!isPositiveFinite(session.maxPathOffsetMeters) || session.maxPathOffsetMeters > 50) {
       addError("invalid-session", "session.maxPathOffsetMeters", "maxPathOffsetMeters must be in (0, 50].");
     }

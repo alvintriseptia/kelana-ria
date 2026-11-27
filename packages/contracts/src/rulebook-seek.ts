@@ -7,7 +7,6 @@ import type {
   GeoCoordinate,
   HideSeekCardCategory,
   HideSeekCardEffect,
-  HideSeekPlayPhase,
   HideSeekQuestionFamily,
   HideSeekRulebookPack,
   RulebookRoomPassSummary,
@@ -19,7 +18,6 @@ export type SeekEnginePhase =
   | "lobby"
   | "head_start"
   | "seeking"
-  | "endgame"
   | "regroup"
   | "finished"
   | "void"
@@ -33,7 +31,6 @@ export type SeekEngineSeat = {
   startVerifiedUntil: number | null;
   ready: boolean;
   regrouped: boolean;
-  confirmedFound: boolean;
 };
 
 export type SeekDrawBatch = {
@@ -87,7 +84,6 @@ export type SeekObjectiveAnswer = {
 export type SeekEngineQuestionStatus =
   | "pending"
   | "answered"
-  | "cannot_answer_endgame"
   | "timeout"
   | "vetoed"
   | "closed";
@@ -193,9 +189,6 @@ export type SeekEngineRoomView = {
   startedAt: number | null;
   releaseAt: number | null;
   phaseEndsAt: number | null;
-  endgameTriggeredAt: number | null;
-  endgameFreezeAt: number | null;
-  hiderFrozen: boolean;
   canMoveZone: boolean;
   regroupPoint: { id: string; name: string; latitude: number; longitude: number } | null;
   turnStartPoint: SeekBoardPoint;
@@ -216,7 +209,7 @@ export type SeekEngineRoomView = {
   hiderOutOfZone?: boolean;
   foundCode?: string;
   pendingDrawBatches?: SeekDrawBatch[];
-  playPhase?: HideSeekPlayPhase;
+  playPhase?: "seeking";
 };
 
 export type SeekEngineAction = { actionId: string } & (
@@ -227,8 +220,7 @@ export type SeekEngineAction = { actionId: string } & (
   | { type: "start" }
   | { type: "lock-anchor"; stationId: string; fix: LocationFix }
   | { type: "report-hider-position"; fix: LocationFix }
-  | { type: "confirm-freeze" }
-  | { type: "seeker-check-in"; fix: LocationFix; offTransit: boolean }
+  | { type: "seeker-check-in"; fix: LocationFix }
   | { type: "start-thermometer"; fix: LocationFix }
   | {
       type: "ask";
@@ -238,9 +230,7 @@ export type SeekEngineAction = { actionId: string } & (
       customRadiusMeters?: number;
     }
   | { type: "answer-question"; questionId: string; photoId?: string; answerCode?: string }
-  | { type: "cannot-answer-endgame"; questionId: string }
   | { type: "submit-found-code"; code: string }
-  | { type: "confirm-found" }
   | { type: "regroup-check-in"; fix?: LocationFix }
   | { type: "leave" }
 );
@@ -249,7 +239,6 @@ export type SeekEngineActionReply = {
   room: SeekEngineRoomView;
   error?: string;
   distanceMeters?: number;
-  endgameTriggered?: boolean;
   earnedDrawBatches?: SeekDrawBatch[];
   purgedPhotoIds?: string[];
 };

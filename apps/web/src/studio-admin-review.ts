@@ -199,7 +199,6 @@ function renderSession(record: AdminReviewRecord) {
       ["Waktu Menjawab Pertanyaan", duration(pack.timers.objectiveResponseMs)],
       ["Waktu Menjawab Foto", duration(pack.timers.photoResponseMs)],
       ["Waktu Memilih Kartu", duration(pack.timers.drawDecisionMs)],
-      ["Jeda Akhir Permainan", `${pack.session.endgameFreezeGraceSec} detik`],
     ];
   }
 
@@ -279,13 +278,11 @@ function renderClaimChallenges(pack: ClaimRulebookPack) {
 
 type SeekFamily = NonNullable<HideSeekRulebookPack["investigationBook"]["families"][HideSeekQuestionFamily]>;
 type SeekQuestion = SeekFamily["items"][number];
-const phases = { seeking: "Mencari", endgame: "Akhir Permainan", both: "Semua Fase" };
 
 function renderQuestion(item: SeekQuestion, pois: Map<string, string>) {
   const rows: Fact[] = [];
   if ("prompt" in item) rows.push(
     ["Instruksi Foto", item.prompt],
-    ["Fase", phases[item.phase]],
     ["Catatan Verifikasi Kreator", item.verificationNotes],
     ["Diperiksa di Lokasi", item.fieldVerified ? item.fieldVerifiedAt || "Ya" : "Tidak"],
   );
@@ -315,7 +312,6 @@ function renderSeekQuestions(pack: HideSeekRulebookPack, snapshot: GeoSnapshot) 
         ${facts([
           ["Ambil Kartu", family.drawCount],
           ["Simpan Kartu", family.keepCount],
-          ["Fase", family.availableInPhases.map(phase => phases[phase]).join(", ")],
           ["Waktu Menjawab", family.responseMs === undefined ? undefined : duration(family.responseMs)],
           ["Bisa Mengatur Radius", "allowCustomRadius" in family && family.allowCustomRadius !== undefined ? yesNo(family.allowCustomRadius) : undefined],
         ])}

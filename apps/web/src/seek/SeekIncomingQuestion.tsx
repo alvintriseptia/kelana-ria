@@ -26,7 +26,6 @@ export function SeekIncomingQuestion({
   onClearPhoto,
   onSubmitPhoto,
   onPlayAlternativeCard,
-  onCannotAnswerEndgame,
 }: {
   room: SeekEngineRoomView;
   question: SeekEngineQuestion;
@@ -43,7 +42,6 @@ export function SeekIncomingQuestion({
   onClearPhoto: () => void;
   onSubmitPhoto: (questionId: string) => void;
   onPlayAlternativeCard: (cardInstanceId: string, primitive: string) => void;
-  onCannotAnswerEndgame: (questionId: string) => void;
 }) {
   const answer = question.privateComputedAnswer;
   const choices: [string, string][] =
@@ -160,18 +158,6 @@ export function SeekIncomingQuestion({
             {card.title}
           </button>
         ))}
-        {room.phase === "endgame" && (
-          <button
-            type="button"
-            class="sg-pick"
-            data-action="cannot-answer"
-            data-qid={question.id}
-            disabled={busy}
-            onClick={() => onCannotAnswerEndgame(question.id)}
-          >
-            Tidak bisa menjawab
-          </button>
-        )}
       </div>
 
       <SeekSlotAlert error={inlineError} slot="answer-photo" />

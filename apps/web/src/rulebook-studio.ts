@@ -2354,7 +2354,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           const existingId = isEditing ? seekStep3.editingQuestionDraft?.id : undefined;
           const id = existingId || `${fam}-${Date.now().toString(36)}`;
           if (fam === "radar") {
-            pack.investigationBook.families.radar ??= { enabled: true, drawCount: 2, keepCount: 1, availableInPhases: ["seeking", "endgame"], items: [] };
+            pack.investigationBook.families.radar ??= { enabled: true, drawCount: 2, keepCount: 1, availableInPhases: ["seeking"], items: [] };
             const nextItem = { id, label, radiusMeters: num };
             if (isEditing && pack.investigationBook.families.radar.items[editIdx]) pack.investigationBook.families.radar.items[editIdx] = nextItem;
             else pack.investigationBook.families.radar.items.push(nextItem);
@@ -2379,7 +2379,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             if (isEditing && pack.investigationBook.families.tentacles.items[editIdx]) pack.investigationBook.families.tentacles.items[editIdx] = nextItem;
             else pack.investigationBook.families.tentacles.items.push(nextItem);
           } else {
-            pack.investigationBook.families.photo ??= { enabled: true, drawCount: 1, keepCount: 1, availableInPhases: ["seeking", "endgame"], items: [] };
+            pack.investigationBook.families.photo ??= { enabled: true, drawCount: 1, keepCount: 1, availableInPhases: ["seeking"], items: [] };
             const nextItem = { id, label, prompt: extra, phase: "both" as const };
             if (isEditing && pack.investigationBook.families.photo.items[editIdx]) pack.investigationBook.families.photo.items[editIdx] = nextItem;
             else pack.investigationBook.families.photo.items.push(nextItem);

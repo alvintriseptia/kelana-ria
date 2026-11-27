@@ -124,7 +124,6 @@ export const phaseLabels: Record<SeekEngineRoomView["phase"], string> = {
   lobby: "Ruang Tunggu",
   head_start: "Waktu Sembunyi",
   seeking: "Fase Cari",
-  endgame: "Endgame (Zona Terkunci)",
   regroup: "Berkumpul Kembali",
   finished: "Selesai",
   void: "Batal",
@@ -162,7 +161,6 @@ export const questionDescriptions: Record<HideSeekQuestionFamily, string> = {
 const questionStatusLabels: Record<string, string> = {
   pending: "Menunggu jawaban",
   answered: "Dijawab",
-  cannot_answer_endgame: "Tidak bisa dijawab",
   timeout: "Waktu habis",
   vetoed: "Dibatalkan (Veto)",
   closed: "Ditutup",
@@ -261,7 +259,7 @@ export function clockText(milliseconds: number): string {
 }
 
 export function isBoardPhase(room: SeekEngineRoomView): boolean {
-  return room.phase === "head_start" || room.phase === "seeking" || room.phase === "endgame";
+  return room.phase === "head_start" || room.phase === "seeking";
 }
 
 export function isDraftPlaytest(payload: SeekRoomPayload | null): boolean {
@@ -356,7 +354,7 @@ export function inlineSlotForSeekAction(
   const type = String(action.type ?? "");
   if (type === "check-in-start") return "lobby-checkin";
   if (type === "regroup-check-in") return "regroup-checkin";
-  if (type === "lock-anchor" || type === "seeker-check-in" || type === "confirm-freeze") {
+  if (type === "lock-anchor" || type === "seeker-check-in") {
     return "board-checkin";
   }
   if (type === "submit-found-code") return "found-code";

@@ -324,7 +324,7 @@ export function playSeekDeckCard(
   | { ok: false; error: string } {
   expireSeekDeckAndCurses(state, match, now);
 
-  if (match.phase !== "seeking" && match.phase !== "endgame") {
+  if (match.phase !== "seeking") {
     return { ok: false, error: "room-phase-changed" };
   }
   if (state.activeDraw) {

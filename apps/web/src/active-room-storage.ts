@@ -8,7 +8,6 @@ const validPhases = new Set<ActiveRulebookRoomPhase>([
   "active",
   "head_start",
   "seeking",
-  "endgame",
   "regroup",
 ]);
 

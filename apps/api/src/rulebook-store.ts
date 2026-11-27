@@ -1828,6 +1828,7 @@ export function rulebookStore(
       const deckExp = expireSeekDeckAndCurses(session.deck, session.match, now);
       const prevTurn = session.match.turnNumber;
       const roomExp = expireRoomPhotos(session, now);
+      const attemptCount = session.match.foundCodeAttempts.length;
       const reply = applySeekEngineAction(session.match, seatId, seekAction, now);
       if (replay) {
         if (deckExp.changed || roomExp.changed || roomExp.photoChanged || roomExp.recapChanged) {
@@ -1857,6 +1858,9 @@ export function rulebookStore(
       const recapChanged = captureCompletedMatch(session);
       if (!reply.error || deckExp.changed || roomExp.changed || photoChanged || actChanged || roomExp.recapChanged || recapChanged) {
         persistLiveSession(session, now, true);
+      } else if (seekAction.type === "submit-found-code" && reply.error === "invalid-found-code") {
+        // Keep failed guesses and their action IDs across restart without notifying the hider.
+        if (session.match.foundCodeAttempts.length || attemptCount) persistLiveSession(session, now, false);
       }
       return reply;
     });
@@ -2447,7 +2451,6 @@ export function rulebookStore(
           (room.phase !== "lobby" &&
             room.phase !== "head_start" &&
             room.phase !== "seeking" &&
-            room.phase !== "endgame" &&
             room.phase !== "regroup") ||
           room.outcome
         ) {

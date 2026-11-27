@@ -403,6 +403,11 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     placement: "inline-field",
     tone: "warn",
   },
+  "found-code-rate-limited": {
+    message: "Terlalu banyak percobaan kode. Tunggu sebentar, lalu coba lagi.",
+    placement: "inline-field",
+    tone: "warn",
+  },
   "invalid-found-code": {
     message: "Kode temuan tidak cocok. Pastikan 4 digit dari penyembunyi, lalu kirim lagi.",
     placement: "inline-field",
@@ -651,11 +656,6 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     placement: "toast",
     tone: "info",
   },
-  "endgame-only": {
-    message: "Aksi ini hanya tersedia saat fase Endgame.",
-    placement: "toast",
-    tone: "info",
-  },
   "hider-not-locked": {
     message: "Penyembunyi belum mengunci titik sembunyi. Tunggu hingga lokasi terkunci.",
     placement: "toast",
@@ -670,11 +670,6 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     message: "Perpindahan zona sudah aktif. Pilih stasiun baru di peta lalu kunci lokasi.",
     placement: "toast",
     tone: "info",
-  },
-  "move-disabled-in-endgame": {
-    message: "Kartu pindah zona tidak dapat dipakai saat Endgame. Gunakan kartu lain.",
-    placement: "toast",
-    tone: "warn",
   },
   "invalid-anchor-station": {
     message: "Stasiun yang dipilih tidak valid untuk titik sembunyi. Pilih stasiun lain di peta.",
