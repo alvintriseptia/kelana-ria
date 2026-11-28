@@ -3,7 +3,9 @@ import * as maplibregl from "maplibre-gl";
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?url";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { GeoCoordinate, MapConfig, SeekDeductionOverlay, SeekMapPreview, SoloPoint } from "@kelana-ria/contracts";
+import { playerMapPalette, playerMapStyle } from "./player-map-style";
 import "./board-map.css";
+import "./board-map-tokens.css";
 
 maplibregl.setWorkerUrl(maplibreWorkerUrl);
 
@@ -19,6 +21,7 @@ export type BoardMapPoint = SoloPoint & {
   label?: string;
   markerText?: string;
   markerKind?: "thermometer" | "seeker" | "station" | "landmark" | "zone" | "rival";
+  landmarkArt?: "museum" | "park";
   ownerStyle?: "mine" | "rival";
   colors?: { foreground: string; background: string };
   freshness?: "fresh" | "aging" | "stale";
@@ -37,6 +40,7 @@ type BoardCamera = Pick<maplibregl.CameraOptions, "center" | "zoom" | "bearing" 
 export type BoardMapOptions = {
   container: HTMLElement;
   config: MapConfig;
+  theme?: "player";
   start: SoloPoint;
   startSelectable?: boolean;
   startLabel?: string;
@@ -59,7 +63,7 @@ export type BoardMapOptions = {
   onError?: (reason: string) => void;
 };
 
-export type BoardMapUpdateOptions = Omit<BoardMapOptions, "container" | "config">;
+export type BoardMapUpdateOptions = Omit<BoardMapOptions, "container" | "config" | "theme">;
 
 export type BoardMapHandle = {
   getCamera: () => BoardCamera | undefined;
@@ -76,11 +80,37 @@ type BoardMarkerEntry = {
   el: HTMLElement;
   tag: "BUTTON" | "SPAN";
   customClassList: string[];
+  label: Node;
+  hitArea?: HTMLSpanElement;
   colors?: BoardMapPoint["colors"];
   lat: number;
   lng: number;
   onClick: () => void;
 };
+
+const TOKEN_HIT_RADIUS = 22;
+
+/** Give taps in an overlapping hit area to the closest marker center. */
+function clipTokenHitArea(polygon: [number, number][], dx: number, dy: number): [number, number][] {
+  const bisector = (dx * dx + dy * dy) / 2;
+  const clipped: [number, number][] = [];
+  let before = polygon[polygon.length - 1];
+  let distanceBefore = before[0] * dx + before[1] * dy - bisector;
+  for (const point of polygon) {
+    const distance = point[0] * dx + point[1] * dy - bisector;
+    if ((distanceBefore > 0) !== (distance > 0)) {
+      const fraction = distanceBefore / (distanceBefore - distance);
+      clipped.push([
+        before[0] + fraction * (point[0] - before[0]),
+        before[1] + fraction * (point[1] - before[1]),
+      ]);
+    }
+    if (distance <= 0) clipped.push(point);
+    before = point;
+    distanceBefore = distance;
+  }
+  return clipped;
+}
 
 function syncPinClasses(el: HTMLElement, prev: string[], next: string[]): string[] {
   if (prev.length === next.length && prev.every((c, i) => c === next[i])) return prev;
@@ -203,6 +233,7 @@ function offlineVectorStyle(
   deductionOverlays: SeekDeductionOverlay[],
   hidingZone?: { center: GeoCoordinate; radiusMeters: number },
   showRadarFills = true,
+  player = false,
 ): maplibregl.StyleSpecification {
   const corridorFeatures = checkpoints.map((point) => ({
     type: "Feature" as const,
@@ -238,14 +269,14 @@ function offlineVectorStyle(
       {
         id: "background",
         type: "background",
-        paint: { "background-color": "#f3f4eb" },
+        paint: { "background-color": player ? playerMapPalette.land : "#f3f4eb" },
       },
       {
         id: "corridor-lines",
         type: "line",
         source: "corridors",
         paint: {
-          "line-color": "#94a399",
+          "line-color": player ? playerMapPalette.schematic : "#94a399",
           "line-width": 2,
           "line-dasharray": [3, 2],
         },
@@ -329,14 +360,16 @@ function questionPreviewFeatures(preview?: SeekMapPreview): GeoJSON.FeatureColle
 
 export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
   const { container, config } = options;
+  const player = options.theme === "player";
   let current: BoardMapUpdateOptions = options;
 
   delete container.dataset.mapReady;
   container.innerHTML = `<div class="board-map-shell">
-    <div class="board-map-canvas" role="region" aria-label="Peta interaktif papan permainan"></div>
+    <div class="board-map-canvas${player ? " board-map-canvas--player" : ""}" role="region" aria-label="Peta interaktif papan permainan"></div>
     <p class="board-map-attribution">
-      ${config.mode === "geoapify-vector" ? "Peta vektor langsung" : "Peta vektor luring"} ·
+      ${config.mode === "geoapify-vector" ? "Peta vektor langsung" : player ? "Peta skematis luring" : "Peta vektor luring"} ·
       <a href="https://www.geoapify.com/" target="_blank" rel="noopener noreferrer">© Geoapify</a> ·
+      ${config.mode === "geoapify-vector" ? `<a href="https://openmaptiles.org/" target="_blank" rel="noopener noreferrer">© OpenMapTiles</a> ·` : ""}
       <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors</a> ·
       Transjakarta GTFS (CC BY 4.0) ·
       <a href="${config.mapLibreLicenseUrl}" target="_blank" rel="noopener noreferrer">MapLibre GL JS</a>
@@ -689,6 +722,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       dataAttrs?: Record<string, string>;
       colors?: BoardMapPoint["colors"];
       role?: "img";
+      token?: string;
       text: string;
       title?: string;
       ariaLabel: string;
@@ -705,8 +739,11 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         classes: [
           "board-map-pin",
           "board-map-pin-start",
+          player ? "board-map-token" : "",
           start.id === selectedId ? "board-map-pin-selected" : "",
         ].filter(Boolean),
+        token: player ? "start" : undefined,
+        role: player && !startSelectable ? "img" : undefined,
         text: startLabel ? `${startLabel} · ${start.name}` : `A · ${start.name}`,
         ariaLabel: `${start.name} (Titik awal)`,
         lat: start.latitude,
@@ -720,12 +757,17 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
 
     [...current.checkpoints, ...(current.labels ?? [])].forEach((point, index) => {
       const pointId = point.id;
+      const token = !player ? undefined : point.markerKind === "landmark" ? point.landmarkArt ?? "landmark"
+        : point.markerKind === "seeker" ? "player"
+        : point.markerKind === "station" || point.markerKind === "rival" ? point.markerKind : undefined;
       desired.push({
         key: `${index < current.checkpoints.length ? "ck" : "label"}:${pointId}`,
         id: pointId,
         tag: point.selectable ? "BUTTON" : "SPAN",
         classes: [
           "board-map-pin",
+          token ? "board-map-token" : "",
+          token ? `board-map-token-${token}` : "",
           point.claimed ? "board-map-pin-claimed" : "",
           point.dimmed ? "board-map-pin-dimmed" : "",
           point.markerKind ? `board-map-pin-${point.markerKind}` : "",
@@ -737,7 +779,8 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         ].filter(Boolean),
         dataAttrs: point.dataAttrs,
         colors: point.colors,
-        role: point.markerKind === "zone" ? "img" : undefined,
+        role: point.markerKind === "zone" || (token && !point.selectable) ? "img" : undefined,
+        token,
         text: point.markerText ?? (point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`),
         title: point.markerKind === "station" || point.markerKind === "landmark" || point.markerKind === "rival" ? point.name : undefined,
         ariaLabel: point.label ? `${point.name} (${point.label})` : point.name,
@@ -761,6 +804,16 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
     };
 
     const seenKeys = new Set<string>();
+    let tokenGeometryChanged = false;
+    function applyMarkerColors(el: HTMLElement, item: DesiredMarker) {
+      if (item.token) {
+        el.style.setProperty("--map-token-team", item.colors?.foreground ?? "");
+        el.style.setProperty("--map-token-tint", item.colors?.background ?? "");
+      } else {
+        el.style.color = item.colors?.foreground ?? "";
+        el.style.backgroundColor = item.colors?.background ?? "";
+      }
+    }
     for (const item of desired) {
       seenKeys.add(item.key);
       const existing = markerMap.get(item.key);
@@ -768,14 +821,11 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         existing.onClick = item.onClick;
         existing.customClassList = syncPinClasses(existing.el, existing.customClassList, item.classes);
         syncDataAttrs(existing.el, item.dataAttrs);
-        if (existing.colors?.foreground !== item.colors?.foreground) {
-          existing.el.style.color = item.colors?.foreground ?? "";
-        }
-        if (existing.colors?.background !== item.colors?.background) {
-          existing.el.style.backgroundColor = item.colors?.background ?? "";
+        if (existing.colors?.foreground !== item.colors?.foreground || existing.colors?.background !== item.colors?.background) {
+          applyMarkerColors(existing.el, item);
         }
         existing.colors = item.colors;
-        if (existing.el.textContent !== item.text) existing.el.textContent = item.text;
+        if (existing.label.textContent !== item.text) existing.label.textContent = item.text;
         existing.el.dataset.mapPoint = item.id;
         existing.el.setAttribute("aria-label", item.ariaLabel);
         if (item.title !== undefined) existing.el.title = item.title;
@@ -784,18 +834,36 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
           existing.lat = item.lat;
           existing.lng = item.lng;
           existing.marker.setLngLat([item.lng, item.lat]);
+          tokenGeometryChanged ||= Boolean(existing.hitArea);
         }
       } else {
         if (existing) {
+          tokenGeometryChanged ||= Boolean(existing.hitArea);
           existing.marker.remove();
           markerMap.delete(item.key);
         }
         const el = document.createElement(item.tag === "BUTTON" ? "button" : "span");
+        const hitArea = item.token && item.tag === "BUTTON" ? document.createElement("span") : undefined;
+        if (hitArea) {
+          tokenGeometryChanged = true;
+          hitArea.className = "board-map-token-hit";
+          hitArea.setAttribute("aria-hidden", "true");
+          el.append(hitArea);
+        }
+        const label = item.token ? document.createElement("span") : document.createTextNode("");
+        if (label instanceof HTMLElement) {
+          label.className = "board-map-token-label";
+          label.setAttribute("aria-hidden", "true");
+        }
+        label.textContent = item.text;
+        el.append(label);
         const entry: BoardMarkerEntry = {
           marker: undefined as unknown as maplibregl.Marker,
           el,
           tag: item.tag,
           customClassList: item.classes,
+          label,
+          hitArea,
           colors: item.colors,
           lat: item.lat,
           lng: item.lng,
@@ -807,16 +875,13 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         }
         el.classList.add(...item.classes);
         syncDataAttrs(el, item.dataAttrs);
-        if (item.colors) {
-          el.style.color = item.colors.foreground;
-          el.style.backgroundColor = item.colors.background;
-        }
+        if (item.colors) applyMarkerColors(el, item);
         if (item.role) el.setAttribute("role", item.role);
         if (item.title !== undefined) el.title = item.title;
         el.dataset.mapPoint = item.id;
-        el.textContent = item.text;
         el.setAttribute("aria-label", item.ariaLabel);
-        entry.marker = new maplibregl.Marker({ element: el }).setLngLat([item.lng, item.lat]).addTo(map);
+        entry.marker = new maplibregl.Marker({ element: el, ...(item.token && { subpixelPositioning: true }) })
+          .setLngLat([item.lng, item.lat]).addTo(map);
         markerMap.set(item.key, entry);
       }
     }
@@ -825,6 +890,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       if (!seenKeys.has(key)) {
         entry.marker.remove();
         markerMap.delete(key);
+        tokenGeometryChanged ||= Boolean(entry.hitArea);
       }
     }
 
@@ -832,7 +898,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
     if (selfLoc) {
       if (!selfMarker) {
         selfMarkerEl = document.createElement("span");
-        selfMarkerEl.className = "board-map-self-dot";
+        selfMarkerEl.className = `board-map-self-dot${player ? " board-map-token board-map-token-player" : ""}`;
         selfMarkerEl.dataset.testid = "map-self-dot";
         selfMarkerEl.dataset.selfLocation = "true";
         selfMarkerEl.setAttribute("role", "img");
@@ -849,6 +915,28 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       selfMarkerEl = undefined;
     }
     syncRecenterButton();
+    if (tokenGeometryChanged) syncTokenHits();
+  }
+
+  function syncTokenHits() {
+    const activeMap = map;
+    if (!player || !activeMap) return;
+    const markers = [...markerMap.values()].flatMap(entry => entry.hitArea
+      ? [{ area: entry.hitArea, center: activeMap.project([entry.lng, entry.lat]) }] : []);
+    const r = TOKEN_HIT_RADIUS;
+    for (const marker of markers) {
+      const square: [number, number][] = [[-r, -r], [r, -r], [r, r], [-r, r]];
+      let hit = square;
+      for (const near of markers) {
+        const dx = near.center.x - marker.center.x;
+        const dy = near.center.y - marker.center.y;
+        if (Math.abs(dx) >= 2 * r || Math.abs(dy) >= 2 * r || Math.hypot(dx, dy) < 1) continue;
+        if ((dx * dx + dy * dy) / 2 < r * (Math.abs(dx) + Math.abs(dy))) hit = clipTokenHitArea(hit, dx, dy);
+      }
+      const clip = hit === square ? "" : `polygon(${hit.map(([x, y]) => `${x + r}px ${y + r}px`).join(",")})`;
+      if (marker.area.style.clipPath !== clip) marker.area.style.clipPath = clip;
+      marker.area.toggleAttribute("data-overlap", hit !== square);
+    }
   }
 
   function focusQuestionPreview(padding: maplibregl.PaddingOptions) {
@@ -922,9 +1010,21 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         zoom: 12.5,
         ...camera,
         attributionControl: false,
-        transformRequest: (url) => ({ url: absolutizeMapUrl(url) }),
+        transformRequest: (url) => {
+          const absolute = absolutizeMapUrl(url);
+          if (player && new URL(absolute, window.location.origin).origin !== window.location.origin) {
+            throw new Error("invalid-player-map-asset-origin");
+          }
+          return { url: absolute };
+        },
       });
       if (padding) map.setPadding(padding);
+      if (player) {
+        const syncDensity = () => canvasHost.classList.toggle("board-map-tokens-compact", (map?.getZoom() ?? 0) < 14);
+        syncDensity();
+        map.on("zoomend", syncDensity);
+        map.on("moveend", syncTokenHits);
+      }
 
       map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
       const recenterControl: maplibregl.IControl = {
@@ -979,7 +1079,8 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       .then(async (res) => {
         if (!res.ok) throw new Error(`style-${res.status}`);
         const raw = (await res.json()) as Record<string, unknown>;
-        initMap(absolutizeStyleSpec(raw));
+        const style = absolutizeStyleSpec(raw);
+        initMap(player ? playerMapStyle(style) : style);
       })
       .catch(() => {
         if (!destroyed) current.onError?.("tile-load-failed");
@@ -993,6 +1094,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         current.deductionOverlays ?? [],
         current.hidingZone,
         !current.deductionBoundary,
+        player,
       ),
     );
   }

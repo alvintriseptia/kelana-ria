@@ -65,6 +65,7 @@ import {
   openConfirmDialog,
   openQrModal,
   openQuickJoinRoomDialog,
+  teamVisual,
 } from "./lobby-ui";
 import { fetchMapConfig } from "./map-config";
 import { preparePhotoFile, type PhotoDraftState } from "./photo-capture";
@@ -295,6 +296,7 @@ function ClaimPlayApp({
       const handle = mountBoardMap({
         container: host,
         config: mapCfg,
+        theme: "player",
         camera: {
           center: [
             payload.publicBoard.startPoint.longitude,
@@ -364,6 +366,7 @@ function ClaimPlayApp({
               const bucket = freshnessBucket(pos.at, mapNow);
               const zoneName = zoneLabelFor(room, pos.zoneId);
               const ageLabel = formatRelativeAge(pos.at, mapNow, true);
+              const team = teamVisual(Math.max(0, teams.indexOf(pos.teamId)));
               return {
                 id: `rival:${pos.seatId}`,
                 name: pos.name,
@@ -372,7 +375,8 @@ function ClaimPlayApp({
                 x: 50,
                 y: 50,
                 label: [zoneName, ageLabel].filter(Boolean).join(" · "),
-                markerText: `▲ ${seatInitials(pos.name)}`,
+                markerText: `${team.shape} ${seatInitials(pos.name)}`,
+                colors: { foreground: team.accent, background: team.bg },
                 markerKind: "rival" as const,
                 selectable: true,
                 ownerStyle: (pos.teamId === room.teamId ? "mine" : "rival") as "mine" | "rival",
@@ -428,6 +432,11 @@ function ClaimPlayApp({
       checkpoints: [
         ...publicBoard.landmarks.map((lm) => {
           const st = stateById.get(lm.id);
+          const ownerIndex = st?.ownerTeamId ? teams.indexOf(st.ownerTeamId) : -1;
+          const team = ownerIndex >= 0 ? teamVisual(ownerIndex) : undefined;
+          const isProtected = st?.shieldUntil != null && st.shieldUntil > mapNow;
+          const stateLabel = st && (isProtected && st.status === "claimed" ? "Diklaim" : landmarkStatus(st));
+          const badge = st?.status === "locked" ? "■" : st?.status === "claimed" ? "◆" : "";
           return {
             id: lm.id,
             name: lm.name,
@@ -437,10 +446,13 @@ function ClaimPlayApp({
             x: 50,
             y: 50,
             label: st
-              ? `${landmarkStatus(st)}${st.ownerTeamId ? ` · ${teamName(room, st.ownerTeamId)}` : ""}`
+              ? [stateLabel, st.ownerTeamId ? teamName(room, st.ownerTeamId) : "", isProtected ? "Perisai aktif" : ""].filter(Boolean).join(" · ")
               : lm.name,
-            markerText: st?.status === "locked" ? "■" : st?.status === "claimed" ? "◆" : "●",
+            markerText: badge ? `${team?.shape ? `${team.shape} ` : ""}${badge}` : "●",
             markerKind: "landmark" as const,
+            landmarkArt: lm.mapCategory === "park" ? "park" as const : lm.mapCategory ? "museum" as const : undefined,
+            colors: team && { foreground: team.accent, background: team.bg },
+            dataAttrs: isProtected ? { "data-protected": "true" } : undefined,
             selectable: true,
             ownerStyle: (st?.ownerTeamId
               ? st.ownerTeamId === room.teamId
@@ -515,6 +527,7 @@ function ClaimPlayApp({
       const handle = mountBoardMap({
         container: host,
         config: mapCfg,
+        theme: "player",
         ...buildClaimMapState(currentLive),
       });
       if (reqId !== claimMapReqRef.current) handle.destroy();

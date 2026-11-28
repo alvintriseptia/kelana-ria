@@ -485,6 +485,7 @@ export type ClaimPublicBoard = {
     longitude: number;
     transitSummary: string;
     accessNotes: string;
+    mapCategory?: "park" | "museum" | "monument";
   }[];
 };
 

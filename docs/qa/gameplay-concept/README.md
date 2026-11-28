@@ -23,6 +23,7 @@ Use **Tantangan** to check in and answer, **Kartu** to keep a reward and choose 
 - [Seek Radar preview, private answer and reward at 390 × 844](evidence/seek-comparison.webp)
 - [Pending, retry, reconnect, list fallback, confirmed deduction and expiry at 390 × 844](evidence/recovery.webp)
 - [Compact screens and reduced motion at 320 × 640](evidence/compact.webp)
+- [Player MapLibre basemap and token comparisons](map-evidence.md) with Jakarta Claim and Bandung Seek fixtures.
 
 The comparison frames pair the current Jakarta QA sessions at commit `dff31ef` with equivalent steps in the synthetic practice edition. The map stays visible behind focused controls in both modes. The concept moves the objective and progress into a fixed band, keeps the action and its context together, uses a single primary button, and distinguishes board states with shapes and words. The Claim card offer shows a separate selection and confirmation. In Seek, dashed Radar is a draft, a muted circle waits for an answer, and hatching marks a confirmed exclusion. The private answer, code, and reward stay with Penyembunyi. [Motion contract](../../../.agents/skills/mobile-pwa/game-ui.md#active-gameplay-concept)
 
