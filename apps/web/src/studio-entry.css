@@ -205,6 +205,25 @@
   color: #1d4e89;
 }
 
+.studio-validation-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.65rem;
+  grid-column: 1 / -1;
+  padding: 0.55rem 0.7rem;
+  border-radius: 8px;
+  background: #e8f1fb;
+  color: #1d4e89;
+  font-weight: 750;
+}
+.studio-validation-feedback[hidden],
+.studio-validation-feedback [hidden] { display: none; }
+.studio-validation-feedback p { margin: 0; }
+.studio-validation-feedback[data-state="passed"] { background: #e6f4ea; color: #12483a; }
+.studio-validation-feedback[data-state="findings"] { background: #fef3c7; color: #7c3f06; }
+.studio-validation-feedback[data-state="failed"] { background: #fde9e7; color: #84231c; }
+
 .st-copy-stepper {
   display: inline-flex;
   align-items: center;

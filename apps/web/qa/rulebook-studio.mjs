@@ -245,6 +245,73 @@ async function checkValidationSpacing(page, format) {
   }
 }
 
+async function checkAutomaticValidation(page, state, result, { source = "main", screenshot } = {}) {
+  const originalViewport = page.viewportSize();
+  await page.setViewportSize({ width: 320, height: 640 });
+  const trigger = page.locator(`[data-validate-from="${source}"]`);
+  const feedback = page.locator(`[data-validation-feedback="${source}"]`);
+  const waitForFeedbackInViewport = async () => page.waitForFunction(el => {
+    const { top, bottom } = el.getBoundingClientRect();
+    return top >= 0 && bottom <= innerHeight;
+  }, await feedback.locator("p").elementHandle(), { timeout: 5_000 });
+  const live = page.locator("#st-validation-announcement");
+  const liveNode = await live.elementHandle();
+  assert.equal(await live.getAttribute("role"), "status");
+  assert.equal(await live.getAttribute("aria-live"), "polite");
+  assert.equal(await live.getAttribute("aria-atomic"), "true");
+  const announced = await live.evaluateHandle(el => {
+    const messages = [];
+    const observer = new MutationObserver(() => messages.push(el.textContent));
+    observer.observe(el, { subtree: true, childList: true, characterData: true });
+    return { messages, observer };
+  });
+  let sent = 0;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const isSave = request =>
+    request.method() === "POST" && request.url().endsWith("/api/rulebooks")
+    && request.postDataJSON()?.type === "save-draft";
+  const routeSave = async route => {
+    if (!isSave(route.request())) return route.continue();
+    sent++;
+    await gate;
+    if (state === "failed") return route.abort("failed");
+    return route.continue();
+  };
+  await page.route("**/api/rulebooks", routeSave);
+  try {
+    await trigger.scrollIntoViewIfNeeded();
+    await Promise.all([page.waitForRequest(isSave), trigger.press("Enter")]);
+    await feedback.filter({ hasText: "Memeriksa draf…" }).waitFor();
+    assert.equal(await feedback.getAttribute("data-state"), "pending");
+    await waitForFeedbackInViewport();
+    assert.equal(await live.textContent(), "Memeriksa draf…");
+    assert.equal(await page.locator("[data-validate-from]:disabled").count(), 2);
+    await trigger.dispatchEvent("click");
+    release();
+    await feedback.filter({ hasText: result }).waitFor();
+    assert.equal(await feedback.getAttribute("data-state"), state);
+    await waitForFeedbackInViewport();
+    assert.match(await live.textContent(), result);
+    const messages = await announced.evaluate(value => value.messages);
+    assert.deepEqual(messages, ["Memeriksa draf…", await live.textContent()]);
+    assert.equal(sent, 1);
+    assert.ok(await liveNode.evaluate(el => el.isConnected), "Validation updates must preserve the live region");
+    await page.waitForFunction(selector => document.activeElement?.matches(selector), `[data-validate-from="${source}"]`);
+    await assertNoHorizontalOverflow(page, `Automatic validator ${state}`);
+    if (screenshot) {
+      await feedback.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(results, screenshot) });
+    }
+  } finally {
+    release();
+    await page.unroute("**/api/rulebooks", routeSave);
+    await announced.evaluate(value => value.observer.disconnect());
+    await announced.dispose();
+    await page.setViewportSize(originalViewport);
+  }
+}
+
 async function checkAdminPhoneLayout(page, scope, label) {
   const originalViewport = page.viewportSize();
   try {
@@ -806,6 +873,22 @@ try {
   await assertCleanUiCopy(page, "Hide & Seek Step 3 validator banner");
   await checkCompactForm(page, '[data-testid="seek-timers-panel"]', "Hide & Seek rule validation");
 
+  await page.click('button[data-step="4"]');
+  await checkAutomaticValidation(page, "findings", /Validator menemukan \d+ masalah/, {
+    screenshot: "studio-validator-findings-320.png",
+  });
+  const validationIssues = page.locator("#st-validation-issues button[data-jump-path]");
+  const previousIssueCount = await validationIssues.count();
+  assert.ok(previousIssueCount > 0);
+  await checkAutomaticValidation(page, "failed", /Draf belum bisa diperiksa/, { source: "footer" });
+  assert.equal(await validationIssues.count(), previousIssueCount);
+  await checkAutomaticValidation(page, "findings", /Validator menemukan \d+ masalah/);
+  await page.getByRole("button", { name: "Lihat temuan", exact: true }).click();
+  assert.equal(await page.locator("#st-validation-issues:focus").count(), 1);
+  await page.getByRole("button", { name: /Lompat & Perbaiki/ }).click();
+  await page.waitForSelector("#ed-zone:focus");
+  assert.equal(await page.inputValue("#ed-zone"), "10");
+
   // #146: Edit Head Start timer without clicking Simpan -> switching to Pertanyaan sub-tab auto-saves without data loss
   const nextHeadStart = String(Number(await page.inputValue("#ed-head")) + 2);
   await page.fill("#ed-head", nextHeadStart);
@@ -888,6 +971,10 @@ try {
 
   // Step 4: interactive Hide & Seek clue dry-run simulator
   await page.click('button[data-step="4"]');
+  await checkAutomaticValidation(page, "passed", /Draf lolos validator otomatis/, {
+    screenshot: "studio-validator-passed-320.png",
+  });
+  await checkAutomaticValidation(page, "passed", /Draf lolos validator otomatis/);
   await page.waitForSelector('button[data-dry-action="run-seek-clue"]');
   await page.click('button[data-dry-action="run-seek-clue"]');
   await page.waitForSelector('[data-testid="dry-seek-result"]');

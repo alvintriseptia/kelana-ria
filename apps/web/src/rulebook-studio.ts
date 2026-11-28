@@ -101,6 +101,13 @@ import "./studio-entry.css";
 type StudioView = "home" | "format" | "template" | "import" | "editor" | "review";
 type StudioTemplate = { packId: string; title: string; format: RulebookFormat; isOfficial: boolean };
 type CloneFields = { templatePackId: string; packId: string; title: string; byline: string; priceIdr: string };
+type DraftValidation = { ok: boolean; errors: RulebookValidationIssue[] };
+type ValidationSource = "main" | "footer";
+type ValidationFeedback = {
+  source: ValidationSource;
+  state: "pending" | "passed" | "findings" | "failed";
+  message: string;
+};
 
 const formatLabels = { "claim-the-city": "Claim the City", "hide-and-seek": "Hide & Seek" };
 
@@ -197,6 +204,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let formDirty = false;
   let savingForm = false;
   let validationErrors: RulebookValidationIssue[] = [];
+  let validationFeedback: ValidationFeedback | null = null;
   let dryRunSummary = "";
   let statusMsg = "";
   let errorMsg = "";
@@ -320,6 +328,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     step = 1;
     formDirty = false;
     savingForm = false;
+    setValidationFeedback(null);
     resetStep3Editors();
     openAccordions.clear();
     step2.selected = null;
@@ -405,7 +414,35 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       pill.dataset.saveState = info.state;
     }
     for (const saveBtn of root.querySelectorAll<HTMLButtonElement>('button[data-action="save-draft"]')) {
-      saveBtn.disabled = savingForm || busy;
+      saveBtn.disabled = savingForm || busy || Boolean(saveBtn.dataset.validateFrom && validationFeedback?.state === "pending");
+    }
+  }
+
+  function syncValidationFeedback() {
+    const message = validationFeedback?.message ?? "";
+    const announcement = root.querySelector("#st-validation-announcement");
+    if (announcement && announcement.textContent !== message) announcement.textContent = message;
+    for (const slot of root.querySelectorAll<HTMLElement>("[data-validation-feedback]")) {
+      const feedback = validationFeedback?.source === slot.dataset.validationFeedback ? validationFeedback : null;
+      slot.hidden = !feedback;
+      slot.dataset.state = feedback?.state ?? "";
+      slot.querySelector("p")!.textContent = feedback?.message ?? "";
+      slot.querySelector("button")!.hidden = feedback?.state !== "findings";
+    }
+  }
+
+  function setValidationFeedback(feedback: ValidationFeedback | null) {
+    validationFeedback = feedback;
+    syncValidationFeedback();
+    updateEditorSavePill();
+    if (feedback) {
+      requestAnimationFrame(() => {
+        if (signal.aborted || validationFeedback !== feedback) return;
+        const message = root.querySelector(`[data-validation-feedback="${feedback.source}"] p`);
+        if (!message) return;
+        const { top, bottom } = message.getBoundingClientRect();
+        if (top < 0 || bottom > window.innerHeight) message.scrollIntoView({ block: "center" });
+      });
     }
   }
 
@@ -430,6 +467,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     updatedSnapshot: GeoSnapshot,
     successMessage?: string,
     savedMapKey?: string,
+    onValidation?: (result: DraftValidation | undefined) => void,
   ): Promise<boolean> {
     const mapSave = step === 2;
     if (mapSave && savingMap) return false;
@@ -444,7 +482,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       const res = await apiJson<{
         ok?: boolean;
         record?: StudioVersionRecord;
-        validation?: { ok: boolean; errors: RulebookValidationIssue[] };
+        validation?: DraftValidation;
         error?: string;
       }>("/api/rulebooks", {
         type: "save-draft",
@@ -459,18 +497,22 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         step2.saved = mapEdits.size === 0;
         if (!mapSave) formDirty = false;
         errorMsg = "";
-        validationErrors = res.validation?.errors ?? [];
-        statusMsg = successMessage ?? (res.validation?.ok
-          ? "Draf tersimpan dan lolos validator otomatis."
-          : "Draf tersimpan dengan kesalahan validasi.");
+        if (res.validation || !onValidation) validationErrors = res.validation?.errors ?? [];
+        if (onValidation) {
+          onValidation(res.validation);
+        } else {
+          statusMsg = successMessage ?? (res.validation?.ok
+            ? "Draf tersimpan dan lolos validator otomatis."
+            : "Draf tersimpan dengan kesalahan validasi.");
+        }
         if (mapSave) savingMap = false;
         else savingForm = false;
         await refresh();
         return true;
       }
-      errorMsg = res.error ?? "Gagal menyimpan draf.";
+      if (!onValidation) errorMsg = res.error ?? "Gagal menyimpan draf.";
     } catch {
-      errorMsg = "Perubahan belum tersimpan. Periksa koneksi, lalu coba lagi.";
+      if (!onValidation) errorMsg = "Perubahan belum tersimpan. Periksa koneksi, lalu coba lagi.";
     } finally {
       if (mapSave) savingMap = false;
       else savingForm = false;
@@ -479,6 +521,30 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
     render();
     return false;
+  }
+
+  async function runAutomaticValidation(source: ValidationSource, trigger: HTMLButtonElement) {
+    const active = currentDraft();
+    if (!active || !isEditable(active) || validationFeedback?.state === "pending") return;
+    const restoreFocus = document.activeElement === trigger;
+    const { pack, snapshot } = applyFormEdits(active);
+    const pending: ValidationFeedback = { source, state: "pending", message: "Memeriksa draf…" };
+    statusMsg = "";
+    errorMsg = "";
+    setValidationFeedback(pending);
+    let report: DraftValidation | undefined;
+    await persistDraft(pack, snapshot, undefined, undefined, result => { report = result; });
+    if (signal.aborted || validationFeedback !== pending) return;
+    if (!report) {
+      setValidationFeedback({ source, state: "failed", message: "Draf belum bisa diperiksa. Coba lagi." });
+    } else if (report.ok) {
+      setValidationFeedback({ source, state: "passed", message: "Draf lolos validator otomatis." });
+    } else {
+      setValidationFeedback({ source, state: "findings", message: `Validator menemukan ${report.errors.length} masalah pada draf.` });
+    }
+    if (restoreFocus && document.activeElement === document.body) {
+      root.querySelector<HTMLButtonElement>(`[data-validate-from="${source}"]`)?.focus({ preventScroll: true });
+    }
   }
 
   async function flushDirtyFormIfNeeded(): Promise<boolean> {
@@ -1504,11 +1570,19 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     return renderSeekStep3(active.pack, seekStep3, editable, statusMsg, savingForm || busy);
   }
 
+  function renderValidationFeedback(source: ValidationSource): string {
+    return `<div class="studio-validation-feedback" data-validation-feedback="${source}" hidden>
+      <p></p>
+      <button type="button" class="secondary" data-validation-findings hidden>Lihat temuan</button>
+    </div>`;
+  }
+
   function renderStep4(active?: StudioVersionRecord): string {
     if (!active) {
       return `<div class="rb-card"><p>Pilih atau kloning draf di Tahap 1 terlebih dahulu.</p><button type="button" class="primary" data-step="1">← Kembali ke Tahap 1</button></div>`;
     }
     const editable = isEditable(active);
+    const validating = savingForm || busy || validationFeedback?.state === "pending";
     return `<div class="rb-card" data-studio-slot="dry-run-panel">
       <h3>4. Validasi, Uji Coba &amp; Ajukan · ${escapeText(active.pack.meta.title)} (v${active.version})</h3>
       <div class="rb-badges">
@@ -1518,13 +1592,15 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       <div class="rb-actions">
         <button type="button" class="primary" data-action="start-draft-playtest" data-testid="studio-playtest-btn" ${savingForm || busy ? "disabled" : ""}>Main Uji Coba (Draf)</button>
         <button type="button" class="secondary" data-action="dry-run">Uji Coba Cepat</button>
-        ${editable ? `<button type="button" class="secondary" data-action="save-draft" ${savingForm || busy ? "disabled" : ""}>Jalankan Validator Otomatis</button>` : ""}
+        ${editable ? `<button type="button" class="secondary" data-action="save-draft" data-validate-from="main" ${validating ? "disabled" : ""}>Jalankan Validator Otomatis</button>` : ""}
         ${editable ? `<button type="button" class="primary" data-action="submit-draft">Ajukan untuk Tinjauan</button>` : ""}
       </div>
+      ${editable ? renderValidationFeedback("main") : ""}
       ${dryRunSummary ? `<p role="status" class="rb-badge">${escapeText(dryRunSummary)}</p>` : ""}
       <div class="rb-sticky-footer">
         <button type="button" class="secondary" data-step="3">← Aturan</button>
-        ${editable ? `<button type="button" class="secondary" data-action="save-draft" ${savingForm || busy ? "disabled" : ""}>Validasi</button>` : "<span></span>"}
+        ${editable ? `<button type="button" class="secondary" data-action="save-draft" data-validate-from="footer" ${validating ? "disabled" : ""}>Validasi</button>` : "<span></span>"}
+        ${editable ? renderValidationFeedback("footer") : ""}
       </div>
     </div>
 
@@ -1537,6 +1613,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     const active = currentDraft();
     if (!root.querySelector("#st-header-slot")) {
       root.innerHTML = `<section class="rb-shell studio-shell" aria-label="Studio Kreator">
+        <p id="st-validation-announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
         <div id="st-header-slot"></div>
         <div id="st-stepper-slot"></div>
         <div id="st-body-slot"></div>
@@ -1550,7 +1627,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       editor: active?.pack.meta.title ?? "Editor draf", review: hasReviewAccess() ? "Panel Admin" : "Tinjauan Editorial",
     }[view];
     const showingMapIssues = headerSlot.querySelector<HTMLDetailsElement>("[data-map-validation]")?.open;
-    const issues = validationErrors.length ? `<ul class="rb-errors" aria-label="Kesalahan validasi">${validationErrors.map(error => {
+    const issues = validationErrors.length ? `<ul id="st-validation-issues" class="rb-errors" aria-label="Kesalahan validasi" tabindex="-1">${validationErrors.map(error => {
       const target = resolveValidationJump(error.path, format);
       const zone = error.code === "empty-zone" ? /"([^"]+)"/.exec(error.message)?.[1] ?? "" : "";
       return `<li><div>${escapeText(error.message)}</div>
@@ -1666,6 +1743,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             ? renderStep3(active)
             : renderStep4(active);
     restoreOpenAccordions(bodySlot);
+    if (step === 4) syncValidationFeedback();
   }
 
   function applyFormEdits(active: StudioVersionRecord): { pack: StudioPack; snapshot: GeoSnapshot } {
@@ -2022,7 +2100,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             const ok = await flushDirtyFormIfNeeded();
             if (!ok) return;
           }
-          if (nextStep !== step) statusMsg = "";
+          if (nextStep !== step) {
+            statusMsg = "";
+            setValidationFeedback(null);
+          }
           step = nextStep;
           render();
           root.querySelector<HTMLButtonElement>(".rb-step-active")?.focus();
@@ -2039,6 +2120,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           if (!ok) return;
         }
         const target = resolveValidationJump(jumpPath, format);
+        setValidationFeedback(null);
         step = target.step;
         if (target.step2Tab) {
           step2.editingChallenges = target.focusSelector === "#ed-chal-target";
@@ -2986,6 +3068,15 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
 
     const action = btn.dataset.action;
+    const validationSource = btn.dataset.validateFrom;
+    if (action === "save-draft" && (validationSource === "main" || validationSource === "footer")) {
+      void runAutomaticValidation(validationSource, btn);
+      return;
+    }
+    if (btn.hasAttribute("data-validation-findings")) {
+      root.querySelector<HTMLElement>("#st-validation-issues")?.focus();
+      return;
+    }
     if (!action) return;
 
     const moreMenu = btn.closest<HTMLDetailsElement>("details.studio-more-menu");
