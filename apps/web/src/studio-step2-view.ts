@@ -329,6 +329,22 @@ function renderCoordAccordion(
   </details>`;
 }
 
+function renderPointVerification(point: StudioPointProvenance, editable: boolean, locating: boolean) {
+  if (point.source !== "osm-curated" || !editable) return "";
+  const distance = point.gpsVerifiedProximityMeters;
+  return `<section class="studio-evidence" aria-label="Verifikasi Lapangan">
+    <h4>Verifikasi Lapangan</h4>
+    <label class="rb-field"><span>Catatan cek lapangan</span><input id="ed-field-note" value="${escapeText(point.fieldVerificationNote ?? "")}"></label>
+    <label class="studio-check"><input id="ed-field-verified" type="checkbox" ${point.fieldVerified ? "checked" : ""}> Tandai Terverifikasi di Lapangan</label>
+    <button type="button" class="secondary" data-map-action="gps-verify-point" ${locating ? "disabled" : ""}>Cek Jarak GPS Saya</button>
+    <span class="rb-badge" data-field-proximity data-near-site="${typeof distance === "number" && distance <= 100}" ${typeof distance !== "number" ? "hidden" : ""}>${typeof distance === "number" ? formatStudioProximity(distance) : ""}</span>
+  </section>`;
+}
+
+export function formatStudioProximity(distance: number) {
+  return distance <= 100 ? `Tercatat di lokasi · ≤ 100 m (${distance} m)` : `Jarak tercatat · ${distance} m`;
+}
+
 function renderInspector(
   record: StudioVersionRecord,
   selected: Step2Target | null,
@@ -376,6 +392,7 @@ function renderInspector(
         </label>
       </div>
       <label class="rb-field"><span>Catatan Akses Publik</span><input id="ed-st-notes" value="${escapeText(st.accessNotes ?? "")}" ${dis}></label>
+      ${renderPointVerification(st, editable, locatingGps)}
       ${renderCoordAccordion(st.id, "ed-st-lat", "ed-st-lng", st.latitude, st.longitude, dis)}
       ${
         editable
@@ -398,6 +415,7 @@ function renderInspector(
         <label class="rb-field"><span>Nama POI</span><input id="ed-poi-name" value="${escapeText(poi.name)}" ${dis}></label>
         <label class="rb-field"><span>Kategori POI</span><input id="ed-poi-cat" value="${escapeText(poi.category)}" ${dis}></label>
       </div>
+      ${renderPointVerification(poi, editable, locatingGps)}
       ${renderCoordAccordion(poi.id, "ed-poi-lat", "ed-poi-lng", poi.latitude, poi.longitude, dis)}
       ${
         editable
@@ -434,6 +452,7 @@ function renderInspector(
         <label class="rb-field"><span>Estimasi Tantangan (menit)</span><input id="ed-lm-chal" type="number" value="${Math.round((lm.estimatedChallengeMs ?? 240_000) / 60_000)}" ${dis}></label>
       </div>
       <label class="rb-field"><span>Catatan Akses Publik</span><input id="ed-lm-notes" value="${escapeText(lm.accessNotes)}" ${dis}></label>
+      ${renderPointVerification(lm, editable, locatingGps)}
       ${renderCoordAccordion(lm.id, "ed-lm-lat", "ed-lm-lng", lm.latitude, lm.longitude, dis)}
       ${
         editable
@@ -663,7 +682,7 @@ export function renderStep2Bottom(
     currentPoint?.kind === "landmark" &&
     claimStep3 !== undefined;
   if (showLandmarkChallenges && isClaimStudioPack(record.pack) && claimStep3) {
-    if (claimStep3.challengeTarget !== "backup" && claimStep3.challengeTarget !== currentPoint.id) {
+    if (!["backup", "hand", currentPoint.id].includes(claimStep3.challengeTarget)) {
       claimStep3.challengeTarget = currentPoint.id;
     }
   }
