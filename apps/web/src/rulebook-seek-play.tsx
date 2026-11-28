@@ -70,6 +70,7 @@ import { InlineAlert } from "./ui/InlineAlert";
 import { MapHost } from "./ui/MapHost";
 import { mountPreact } from "./ui/mount";
 import { PhaseCueStrip } from "./ui/PhaseCueStrip";
+import { RestoreRulebookRoom } from "./ui/RestoreRulebookRoom";
 import "./rulebook-seek-play.css";
 
 /**
@@ -257,7 +258,7 @@ class SeekController {
           : null;
       },
       isBusy: () => this.busySig.peek() || this.actionPending,
-      onSync: () => this.refreshRoom(false, true),
+      onSync: () => this.refreshRoom(true),
       onConnectionChange: (state) => {
         this.connectionStateSig.value = state;
       },
@@ -880,14 +881,14 @@ class SeekController {
       }
 
       if (this.roomCode) {
-        await this.refreshRoom(true);
+        await this.refreshRoom();
       }
     } finally {
       if (shouldLaunch) this.catalogLaunching = false;
     }
   }
 
-  async refreshRoom(allowInvitePrompt = false, background = false, deferCommit = false): Promise<void> {
+  async refreshRoom(background = false, deferCommit = false): Promise<void> {
     if (!this.roomCode) return;
     const code = this.roomCode;
     const request = ++this.roomRequest;
@@ -930,7 +931,7 @@ class SeekController {
       if (!board) {
         this.cachedBoard = null;
         this.roomEtag = null;
-        return this.refreshRoom(allowInvitePrompt, background, deferCommit);
+        return this.refreshRoom(background, deferCommit);
       }
       this.cachedBoard = { code, board };
       const etag = headers.get("etag");
@@ -992,11 +993,6 @@ class SeekController {
       } else {
         this.commitLivePayload(payload);
       }
-    } else if (allowInvitePrompt) {
-      batch(() => {
-        this.statusMsgSig.value = `Undangan ruang ${this.roomCode} terdeteksi. Masukkan namamu lalu tekan Gabung Ruang.`;
-        this.inlineErrorSig.value = null;
-      });
     } else if (!background) {
       this.reportError(
         { error: data.error ?? "room-not-found", status },
@@ -1101,14 +1097,14 @@ class SeekController {
           { action: type, target: targetKey },
           slot,
         );
-        await this.refreshRoom(false, false, true).catch(() => {});
+        await this.refreshRoom(false, true).catch(() => {});
         return false;
       }
       this.inlineErrorSig.value = null;
       this.toast.clear();
       this.toast.resetDedupe();
       if (type === "submit-found-code") this.foundCodeDraftSig.value = "";
-      await this.refreshRoom(false, false, true).catch(() => {});
+      await this.refreshRoom(false, true).catch(() => {});
       return true;
     } catch (error) {
       if (this.lifecycle.signal.aborted) return false;
@@ -1214,7 +1210,7 @@ class SeekController {
         this.toast.clear();
         this.toast.resetDedupe();
       }
-      await this.refreshRoom(false, false, true).catch(() => {});
+      await this.refreshRoom(false, true).catch(() => {});
     } catch (error) {
       if (this.lifecycle.signal.aborted) return;
       const resolved = this.reportError(error, { action: kind, target: curseId }, slot, curseId);
@@ -1263,7 +1259,7 @@ class SeekController {
         this.toast.clear();
         this.toast.resetDedupe();
       }
-      await this.refreshRoom(false, false, true).catch(() => {});
+      await this.refreshRoom(false, true).catch(() => {});
     } catch (error) {
       if (this.lifecycle.signal.aborted) return;
       const resolved = this.reportError(
@@ -1813,7 +1809,7 @@ class SeekController {
           this.roomCode = codeInput;
           this.toast.clear();
           this.toast.resetDedupe();
-          await this.refreshRoom(false, false, true);
+          await this.refreshRoom(false, true);
         } else {
           this.reportError(
             { error: res.error ?? "room-not-found", status },
@@ -1869,7 +1865,7 @@ class SeekController {
           this.statusMsgSig.value = `Ruang ${this.roomCode} berhasil dibuat.`;
           this.toast.clear();
           this.toast.resetDedupe();
-          await this.refreshRoom(false, false, true);
+          await this.refreshRoom(false, true);
         } else {
           this.reportError(
             { error: res.error ?? "invalid-request", status },
@@ -1902,7 +1898,7 @@ class SeekController {
         this.joinCodeSig.value = targetRoom;
         this.toast.clear();
         this.toast.resetDedupe();
-        await this.refreshRoom(false, false, true);
+        await this.refreshRoom(false, true);
       } finally {
         this.flushPendingPayloadAndUnlock();
       }
@@ -1994,7 +1990,7 @@ class SeekController {
           this.roomCode = res.pass.roomCode;
           this.joinCodeSig.value = res.pass.roomCode;
           this.statusMsgSig.value = `Pembayaran lunas! Ruang ${this.roomCode} terbuka.`;
-          await this.refreshRoom(false, false, true);
+          await this.refreshRoom(false, true);
         } else if (status === 401 || res.error === "auth-required") {
           openAuthModal({
             reason: "Masuk dengan email agar paket tersimpan permanen di akunmu.",
@@ -2139,7 +2135,7 @@ class SeekController {
           this.toast.clear();
           this.toast.resetDedupe();
         }
-        await this.refreshRoom(false, false, true).catch(() => {});
+        await this.refreshRoom(false, true).catch(() => {});
       } catch (error) {
         if (!this.lifecycle.signal.aborted) {
           const resolved = this.reportError(
@@ -2333,7 +2329,7 @@ class SeekController {
           this.toast.clear();
           this.toast.resetDedupe();
         }
-        await this.refreshRoom(false, false, true).catch(() => {});
+        await this.refreshRoom(false, true).catch(() => {});
       } catch (error) {
         if (!this.lifecycle.signal.aborted) {
           const resolved = this.reportError(
@@ -2961,6 +2957,10 @@ function RulebookSeekApp({ ctrl }: { ctrl: SeekController }) {
       ctrl.pendingEffects = [];
     }
   }, [boardPhase, live, ctrl]);
+
+  if (!live && ctrl.roomCode) {
+    return <RestoreRulebookRoom error={inlineError?.message} onBack={ctrl.onBack} />;
+  }
 
   if (!live) {
     return (

@@ -146,7 +146,7 @@ try {
       assert.ok(inviteHref && inviteHref.includes("room=RC-"), "Claim invite link must be present");
 
       await guest.page.goto(inviteHref, { waitUntil: "networkidle" });
-      await guest.page.fill("#rb-claim-join-name", "Pemain 2");
+      await guest.page.fill("#rb-join-name", "Pemain 2");
       await clickAndWaitPost(guest.page, 'button[data-action="join-room"]');
       await guest.page.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (2/"));
 
