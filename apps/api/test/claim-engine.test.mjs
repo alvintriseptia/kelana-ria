@@ -139,6 +139,62 @@ function buildClaimFixture() {
   return { snapshot, pack, landmarks };
 }
 
+test("claim rewards reserve hand slots, keep one card per offer, and discard unresolved offers at the deadline", () => {
+  const { pack, snapshot, landmarks } = buildClaimFixture();
+  pack.tacticalDeck.claimRewardDrawCount = 3;
+  pack.tacticalDeck.maxHandSize = 2;
+  pack.tacticalDeck.cards = pack.tacticalDeck.cards.slice(0, 3).map((card, i) => ({
+    ...card, copies: i === 2 ? 1 : 2,
+  }));
+  const match = api.createClaimEngineMatch({
+    code: "REWARD-1", pack, snapshot, hostSeatId: "p1", hostName: "A", hostCredentialHash: "c1",
+    rngInt: () => 0,
+  });
+  api.joinClaimEngineMatch(match, { seatId: "p2", name: "B", credentialHash: "c2" });
+  let seq = 0;
+  const act = (seatId, action, now) => api.applyClaimEngineAction(match, seatId, { actionId: `reward-${++seq}`, ...action }, now);
+  for (const seatId of ["p1", "p2"]) assert.equal(act(seatId, { type: "ready", ready: true }, T0).error, undefined);
+  const { room: { deadline } } = act("p1", { type: "start" }, T0);
+  act("p1", { type: "check-in-landmark", landmarkId: "lm-1", fix: fixAt(landmarks[0], T0 + 1) }, T0 + 1);
+  const firstClaim = { actionId: "first-claim", type: "submit-challenge", landmarkId: "lm-1", choiceId: "a" };
+  const first = act("p1", firstClaim, T0 + 2).room;
+  const offer = first.ownClaimReward;
+  assert.equal(offer.cards.length, 3);
+  assert.equal(first.ownHand.length, 0);
+  const rival = api.viewClaimEngineMatch(match, "p2", T0 + 2);
+  assert.equal(rival.landmarks.find((landmark) => landmark.landmarkId === "lm-1").status, "locked");
+  assert.equal(rival.zones[0].controllerTeamId, first.teamId);
+  assert.equal(rival.ownClaimReward, undefined);
+  assert.ok(offer.cards.every(({ instanceId }) => !JSON.stringify(rival).includes(instanceId)));
+  assert.deepEqual(act("p1", firstClaim, T0 + 3).room.ownClaimReward, offer);
+
+  act("p1", { type: "check-in-landmark", landmarkId: "lm-2", fix: fixAt(landmarks[1], T0 + 4) }, T0 + 4);
+  const second = act("p1", { type: "submit-challenge", landmarkId: "lm-2", inputValue: "4" }, T0 + 5);
+  assert.equal(second.error, undefined);
+  assert.deepEqual(second.room.ownClaimReward, offer);
+  assert.equal(match.deck.drawPile.length, 0);
+  assert.equal(api.drawClaimTacticalCard(match.deck, "p1"), null);
+  assert.equal(api.drawClaimTacticalCard(match.deck, "p2"), null);
+  const keep = {
+    actionId: "keep-retry", type: "choose-claim-reward", offerId: offer.offerId,
+    cardInstanceId: offer.cards[1].instanceId,
+  };
+  assert.equal(act("p2", keep, T0 + 6).error, "claim-reward-unavailable");
+  assert.equal(act("p1", { ...keep, actionId: "invalid-keep", cardInstanceId: "missing" }, T0 + 7).error, "claim-reward-unavailable");
+  const picked = act("p1", keep, deadline - 2);
+  assert.deepEqual(picked.room.ownHand, [offer.cards[1]]);
+  assert.deepEqual(match.deck.discardPile, [offer.cards[0], offer.cards[2]]);
+  assert.equal(picked.room.ownClaimReward.cards.length, 2);
+  assert.deepEqual(act("p1", keep, deadline - 1).room.ownHand, [offer.cards[1]]);
+  assert.equal(act("p1", { ...keep, actionId: "stale-offer" }, deadline - 1).error, "claim-reward-unavailable");
+  const queued = picked.room.ownClaimReward;
+  const late = act("p1", { ...keep, actionId: "late-keep", offerId: queued.offerId, cardInstanceId: queued.cards[0].instanceId }, deadline);
+  assert.equal(late.error, "match-finished");
+  assert.equal(late.room.ownClaimReward, undefined);
+  assert.deepEqual(late.room.ownHand, [offer.cards[1]]);
+  assert.deepEqual(match.deck.discardPile, [offer.cards[0], offer.cards[2], ...queued.cards]);
+});
+
 test("Solo Claim enforces locked targets across zones, burn-on-fail, solo card filtering, and all challenge primitives without leaking answer keys", () => {
   const { snapshot, pack, landmarks } = buildClaimFixture();
   const match = api.createClaimEngineMatch({

@@ -24,13 +24,16 @@ import {
 } from "./challenge-evaluator.js";
 import { validateClaimRulebook } from "./claim-rulebook-validator.js";
 import {
+  chooseClaimReward,
   clearClaimCurseByGps,
   clearClaimCurseByHonor,
   consumeClaimHandCard,
   createClaimTacticalDeck,
+  discardClaimRewardOffers,
   drawClaimTacticalCard,
   expireClaimCurses,
   hasActiveClaimCurseBlocker,
+  offerClaimReward,
   reviewClaimCursePhoto,
   submitClaimCursePhoto,
   type ClaimTacticalDeckState,
@@ -207,6 +210,9 @@ function finishMatch(
   match.phase = phase;
   match.outcome = outcome;
   match.activeAttemptsBySeat = {};
+  for (const seatId of Object.keys(match.deck.rewardOffersBySeat)) {
+    discardClaimRewardOffers(match.deck, seatId);
+  }
   const purged = [...match.archivedPhotoIds];
   for (const curse of match.deck.activeCurses) {
     if (curse.pendingPhoto) purged.push(curse.pendingPhoto.photoId);
@@ -310,7 +316,12 @@ function completeAttemptSuccess(
   // Tactical card draws
   const triggers = match.pack.tacticalDeck.drawTriggers;
   if ((locksNow && triggers.onLock) || (wasSteal && triggers.onSteal)) {
-    drawClaimTacticalCard(match.deck, seat.seatId);
+    const drawCount = match.pack.tacticalDeck.claimRewardDrawCount;
+    if (drawCount === undefined) {
+      drawClaimTacticalCard(match.deck, seat.seatId);
+    } else {
+      offerClaimReward(match.deck, seat.seatId, drawCount);
+    }
   }
   if (boldDraw) {
     drawClaimTacticalCard(match.deck, seat.seatId);
@@ -530,6 +541,7 @@ export function viewClaimEngineMatch(match: ClaimEngineMatch, seatId: string, no
   const { zones, standings } = computeZoneStandings(match);
   const attempt = match.activeAttemptsBySeat[seatId];
 
+  const offer = match.deck.rewardOffersBySeat[seatId]?.[0];
   const ownActiveAttempt: ClaimActiveAttemptView | null = attempt
     ? {
         landmarkId: attempt.landmarkId,
@@ -602,6 +614,7 @@ export function viewClaimEngineMatch(match: ClaimEngineMatch, seatId: string, no
     ownCooldowns: seat ? { ...seat.cooldowns } : {},
     ownBurnedLandmarks: seat ? [...seat.burnedLandmarks] : [],
     ownHand: [...(match.deck.handsBySeat[seatId] ?? [])],
+    ...(offer ? { ownClaimReward: { ...offer, cards: [...offer.cards] } } : {}),
     ...(match.pack.challenges.challengeMode === "challenge_hand" && seat
       ? { ownChallengeHand: seat.challengeHand.map((ch) => sanitizeClaimChallenge(ch)) }
       : {}),
@@ -660,6 +673,7 @@ export function applyClaimEngineAction(
         return finish({ purgedPhotoIds: purged });
       }
       seat.leftAt = now;
+      discardClaimRewardOffers(match.deck, seatId);
       const attempt = match.activeAttemptsBySeat[seatId];
       const attemptPurged: string[] = [];
       if (attempt?.pendingPhoto) {
@@ -944,6 +958,14 @@ export function applyClaimEngineAction(
       const attempt = match.activeAttemptsBySeat[seatId];
       if (!attempt || attempt.landmarkId !== action.landmarkId) return finish({ error: "no-active-attempt" });
       failAttempt(match, seat, attempt, now, "bailed");
+      return finish();
+    }
+
+    case "choose-claim-reward": {
+      if (match.phase !== "active") return finish({ error: "room-phase-changed" });
+      if (!chooseClaimReward(match.deck, seatId, action.offerId, action.cardInstanceId)) {
+        return finish({ error: "claim-reward-unavailable" });
+      }
       return finish();
     }
 

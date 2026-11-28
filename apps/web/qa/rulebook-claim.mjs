@@ -124,7 +124,6 @@ try {
   await pageSolo.waitForFunction(() => document.body.textContent.includes("1/4 terkunci"));
   await assertCleanUiCopy(pageSolo, "claim active board after lock");
   await pageSolo.locator('[data-map-point="m-bloc"][data-game-motion^="lock:"]').waitFor();
-  await pageSolo.locator('[data-panel="cards"][data-game-motion^="update:"]').waitFor();
   assert.equal(
     await claimCanvas.evaluate((el) => el.isConnected && document.querySelector("#rb-claim-map-host .maplibregl-canvas") === el),
     true,
@@ -133,7 +132,18 @@ try {
 
   // The player must choose a target before a map-targeted card can be played.
   await pageSolo.getByRole("button", { name: "Kartu", exact: true }).click();
-  await pageSolo.locator(".cg-tactic").first().click();
+  const soloOffers = pageSolo.locator('[data-action="choose-claim-reward"]');
+  assert.equal(await soloOffers.count(), 3);
+  await pageSolo.setViewportSize({ width: 320, height: 640 });
+  assert.ok(await pageSolo.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  assert.ok((await soloOffers.first().boundingBox()).height >= 44);
+  await pageSolo.screenshot({ path: path.join(results, "rulebook-claim-reward-320.png") });
+  await pageSolo.setViewportSize({ width: 390, height: 844 });
+  await clickAndWaitPost(pageSolo, '[data-action="choose-claim-reward"]');
+  await pageSolo.locator('[data-panel="cards"][data-game-motion^="update:"]').waitFor();
+  assert.equal(await soloOffers.count(), 0);
+  assert.equal(await pageSolo.locator(".cg-tactic").count(), 1);
+  await pageSolo.locator(".cg-tactic").click();
   const play = pageSolo.getByRole("button", { name: "Mainkan Kartu" });
   assert.equal(await play.isDisabled(), true);
   const eligible = pageSolo.locator("button.board-map-pin-eligible");
@@ -327,6 +337,32 @@ try {
   assert.equal(stealEvents[0].alert, true);
   assert.equal(activityForRival.events.find(event => event.kind === "steal").alert, undefined);
   assert.doesNotMatch(JSON.stringify(lostClaimFeed), /"latitude"|"longitude"|"photoId"|"correctChoiceId"|"acceptedAnswers"|"verificationNotes"/);
+  const readRoom = async page => (await (await page.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`)).json()).room;
+  const stealOffer = (await readRoom(pageP2)).ownClaimReward;
+  assert.equal(stealOffer.cards.length, 3);
+  for (const rival of [pageP1, pageP3]) {
+    const rivalRoom = await readRoom(rival);
+    assert.equal(rivalRoom.ownClaimReward, undefined);
+    assert.ok(stealOffer.cards.every(card => !JSON.stringify(rivalRoom).includes(card.instanceId)));
+    await rival.getByRole("button", { name: "Kartu", exact: true }).click();
+    assert.equal(await rival.getByRole("region", { name: "Pilih satu kartu hadiah" }).count(), 0);
+  }
+  await pageP2.reload();
+  await pageP2.getByRole("button", { name: "Kartu", exact: true }).click();
+  const rewardOptions = pageP2.locator('[data-action="choose-claim-reward"]');
+  assert.equal(await rewardOptions.count(), 3);
+  assert.deepEqual((await readRoom(pageP2)).ownClaimReward, stealOffer);
+  const keepRequestPromise = pageP2.waitForRequest(request =>
+    request.method() === "POST" && request.url().endsWith("/api/rulebooks")
+    && request.postDataJSON()?.action?.type === "choose-claim-reward",
+  );
+  await clickAndWaitPost(pageP2, '[data-action="choose-claim-reward"]');
+  const keepRequest = (await keepRequestPromise).postDataJSON();
+  const keepRetry = await pageP2.request.post(`${baseUrl}/api/rulebooks`, { data: keepRequest });
+  assert.ok(keepRetry.ok());
+  const keptRoom = (await keepRetry.json()).room;
+  assert.equal(keptRoom.ownClaimReward, undefined);
+  assert.deepEqual(keptRoom.ownHand.map(card => card.instanceId), [stealOffer.cards[0].instanceId]);
   await stealNotice.getByRole("button", { name: "Buka", exact: true }).click();
   assert.equal(await pageP1.locator(".cg-selected").getAttribute("data-landmark-id"), "taman-literasi");
   await pageP1.reload();

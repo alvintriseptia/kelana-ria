@@ -609,7 +609,7 @@ function ClaimPlayApp({
   function ensurePendingAction(
     signature: string,
     kind: string,
-    meta?: { cardInstanceId?: string; landmarkId?: string },
+    meta?: Pick<PendingClaimAction, "cardInstanceId" | "landmarkId" | "offerId">,
     persistKey?: string,
   ): PendingClaimAction {
     if (pendingActionRef.current?.signature === signature) return pendingActionRef.current;
@@ -628,13 +628,15 @@ function ClaimPlayApp({
   function reconcilePendingAction(room: ClaimEngineRoomView) {
     const pending = pendingActionRef.current;
     if (!pending) return;
-    const { kind, cardInstanceId, landmarkId } = pending;
+    const { kind, cardInstanceId, landmarkId, offerId } = pending;
     let resolvedOnServer = false;
     if (kind === "play-card" && cardInstanceId) {
       resolvedOnServer = !room.ownHand.some((card) => card.instanceId === cardInstanceId);
       if (resolvedOnServer && selectedCardIdSig.value === cardInstanceId) {
         selectedCardIdSig.value = "";
       }
+    } else if (kind === "choose-claim-reward" && offerId) {
+      resolvedOnServer = room.ownClaimReward?.offerId !== offerId;
     } else if (kind === "check-in-landmark" && landmarkId) {
       resolvedOnServer = room.ownActiveAttempt?.landmarkId === landmarkId;
     } else if (kind === "start") {
@@ -957,6 +959,7 @@ function ClaimPlayApp({
     const landmarkId = typeof action.landmarkId === "string" ? action.landmarkId : undefined;
     const cardInstanceId =
       typeof action.cardInstanceId === "string" ? action.cardInstanceId : undefined;
+    const offerId = typeof action.offerId === "string" ? action.offerId : undefined;
     const targetSeatId =
       typeof action.targetSeatId === "string" ? action.targetSeatId : undefined;
     const curseId =
@@ -967,6 +970,7 @@ function ClaimPlayApp({
       type,
       landmarkId,
       cardInstanceId,
+      offerId,
       targetSeatId,
       curseId,
       action.tier,
@@ -976,7 +980,7 @@ function ClaimPlayApp({
       action.name,
       action.ready,
     ]);
-    const pending = ensurePendingAction(signature, type, { cardInstanceId, landmarkId });
+    const pending = ensurePendingAction(signature, type, { cardInstanceId, landmarkId, offerId });
     const previousAttempt = liveSig.value?.room.ownActiveAttempt;
     const { slot, targetId } = inlineSlotForRoomAction(action);
 
@@ -2435,6 +2439,17 @@ function ClaimPlayApp({
                     landmarkId,
                     targetSeatId,
                   });
+                });
+              }}
+              onChooseReward={(offerId, cardInstanceId) => {
+                runBusyAction("choose-claim-reward", "landmark-checkin", offerId, async () => {
+                  if (await postRoomAction({ type: "choose-claim-reward", offerId, cardInstanceId })) {
+                    requestAnimationFrame(() => {
+                      root.querySelector<HTMLElement>(
+                        '[data-action="choose-claim-reward"], [data-action="select-card"], [data-action="close-card"]',
+                      )?.focus({ preventScroll: true });
+                    });
+                  }
                 });
               }}
             />

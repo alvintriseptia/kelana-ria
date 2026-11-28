@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import type {
   ClaimActiveCurse,
   ClaimCardInstance,
+  ClaimRewardOffer,
   ClaimRulebookPack,
   GeoSnapshot,
   LocationFix,
@@ -17,6 +18,7 @@ export type ClaimTacticalDeckState = {
   drawPile: ClaimCardInstance[];
   discardPile: ClaimCardInstance[];
   handsBySeat: Record<string, ClaimCardInstance[]>;
+  rewardOffersBySeat: Record<string, ClaimRewardOffer[]>;
   activeCurses: ClaimActiveCurse[];
   rngInt: (maxExclusive: number) => number;
 };
@@ -58,24 +60,61 @@ export function createClaimTacticalDeck(
     drawPile: shuffleCards(instances, rngInt),
     discardPile: [],
     handsBySeat: {},
+    rewardOffersBySeat: {},
     activeCurses: [],
     rngInt,
   };
 }
 
-export function drawClaimTacticalCard(state: ClaimTacticalDeckState, seatId: string): ClaimCardInstance | null {
-  if (!state.enabled) return null;
-  const hand = (state.handsBySeat[seatId] ??= []);
-  if (hand.length >= state.maxHandSize) return null;
+function hasClaimHandSpace(state: ClaimTacticalDeckState, seatId: string): boolean {
+  return (state.handsBySeat[seatId]?.length ?? 0) + (state.rewardOffersBySeat[seatId]?.length ?? 0) < state.maxHandSize;
+}
+
+function takeClaimDeckCard(state: ClaimTacticalDeckState): ClaimCardInstance | undefined {
   if (state.drawPile.length === 0) {
-    if (state.discardPile.length === 0) return null;
     state.drawPile = shuffleCards(state.discardPile, state.rngInt);
     state.discardPile = [];
   }
-  const next = state.drawPile.pop();
+  return state.drawPile.pop();
+}
+
+export function drawClaimTacticalCard(state: ClaimTacticalDeckState, seatId: string): ClaimCardInstance | null {
+  if (!state.enabled || !hasClaimHandSpace(state, seatId)) return null;
+  const next = takeClaimDeckCard(state);
   if (!next) return null;
-  hand.push(next);
+  (state.handsBySeat[seatId] ??= []).push(next);
   return next;
+}
+
+export function offerClaimReward(state: ClaimTacticalDeckState, seatId: string, drawCount: number): void {
+  if (!state.enabled || !hasClaimHandSpace(state, seatId)) return;
+  const cards: ClaimCardInstance[] = [];
+  for (let i = 0; i < drawCount; i++) {
+    const card = takeClaimDeckCard(state);
+    if (!card) break;
+    cards.push(card);
+  }
+  if (cards.length) {
+    (state.rewardOffersBySeat[seatId] ??= []).push({ offerId: randomUUID(), cards });
+  }
+}
+
+export function chooseClaimReward(state: ClaimTacticalDeckState, seatId: string, offerId: string, cardInstanceId: string): boolean {
+  const offers = state.rewardOffersBySeat[seatId];
+  const offer = offers?.[0];
+  if (!offer || offer.offerId !== offerId) return false;
+  const kept = offer.cards.find((card) => card.instanceId === cardInstanceId);
+  if (!kept) return false;
+  offers.shift();
+  (state.handsBySeat[seatId] ??= []).push(kept);
+  state.discardPile.push(...offer.cards.filter((card) => card.instanceId !== cardInstanceId));
+  return true;
+}
+
+export function discardClaimRewardOffers(state: ClaimTacticalDeckState, seatId: string): void {
+  const offers = state.rewardOffersBySeat[seatId] ?? [];
+  for (const offer of offers) state.discardPile.push(...offer.cards);
+  delete state.rewardOffersBySeat[seatId];
 }
 
 export function consumeClaimHandCard(

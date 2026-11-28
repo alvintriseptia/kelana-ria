@@ -107,6 +107,7 @@ function renderClaimSession(pack: ClaimRulebookPack, dis: string): string {
       </label>
       <label class="rb-field"><span>Jeda Gagal (menit)</span><input id="ed-claim-cooldown" type="number" min="0" max="30" value="${Math.round((pack.claiming.failCooldownMs ?? 300_000) / 60_000)}" ${dis}></label>
       <label class="rb-field"><span>Batas Kartu di Tangan</span><input id="ed-claim-hand" type="number" min="1" max="4" value="${pack.tacticalDeck.maxHandSize}" ${dis}></label>
+      <label class="rb-field"><span>Pilihan Kartu Hadiah Klaim</span><input id="ed-claim-reward-draw" type="number" min="1" max="6" value="${pack.tacticalDeck.claimRewardDrawCount ?? ""}" ${dis}><small>Kosongkan untuk memberi satu kartu langsung.</small></label>
     </fieldset>
   </section>`;
 }
