@@ -26,6 +26,7 @@ import {
 import { ClaimLobbyView } from "./claim/ClaimLobbyView";
 import { ClaimRivalPositionsList, ClaimScorePanel } from "./claim/ClaimScorePanel";
 import { ClaimDraftBar } from "./claim/ClaimShared";
+import { claimZoneOwnership, ClaimZoneList } from "./claim/ClaimZoneOwnership";
 import {
   cardTargets,
   destructiveExitSpec,
@@ -33,6 +34,7 @@ import {
   isQaRoom,
   landmarkStatus,
   nextFreshTeamId,
+  orderedTeamIds,
   readSessionId,
   resolveQaCoord,
   seatInitials,
@@ -339,6 +341,7 @@ function ClaimPlayApp({
 
   function buildClaimMapState(payload: ClaimRoomPayload): BoardMapUpdateOptions {
     const { room, publicBoard } = payload;
+    const teams = orderedTeamIds(room.seats);
     const mapNow = clockNowSig.peek();
     const stateById = new Map(room.landmarks.map((lm) => [lm.landmarkId, lm]));
     const targets =
@@ -454,20 +457,9 @@ function ClaimPlayApp({
       labels: room.zones.flatMap((zone) => {
         const points = publicBoard.landmarks.filter((lm) => lm.zoneId === zone.zoneId);
         if (points.length === 0) return [];
-        const controller = zone.controllerTeamId;
-        const soloDone = room.landmarks.some(
-          (lm) =>
-            lm.zoneId === zone.zoneId && lm.status === "locked" && lm.ownerTeamId === room.teamId,
-        );
-        const owner = room.isSolo
-          ? soloDone
-            ? "Tercapai"
-            : ""
-          : controller
-            ? controller === room.teamId
-              ? "Kamu"
-              : "Lawan"
-            : "";
+        const { state, label, visual } = claimZoneOwnership(room, zone, teams);
+        const markerState = visual && !room.isSolo ? `${visual.shape} ${visual.label}`
+          : state === "unclaimed" ? (room.isSolo ? "Belum" : "Netral") : label;
         return [
           {
             id: `zone:${zone.zoneId}`,
@@ -476,10 +468,11 @@ function ClaimPlayApp({
             y: 50,
             latitude: points.reduce((sum, point) => sum + point.latitude, 0) / points.length,
             longitude: points.reduce((sum, point) => sum + point.longitude, 0) / points.length,
-            markerText: owner ? `${zone.label} · ${owner}` : zone.label,
+            markerText: `${zone.label} · ${markerState}`,
             markerKind: "zone",
-            ownerStyle: owner ? (owner === "Lawan" ? "rival" : "mine") : undefined,
-            label: owner || "Netral",
+            dataAttrs: { "data-zone-state": state },
+            colors: visual && { foreground: visual.accent, background: visual.bg },
+            label,
           },
         ];
       }),
@@ -2264,6 +2257,7 @@ function ClaimPlayApp({
               onEnableLocation={() => liveLocationRef.current?.start()}
               onSelectLandmark={selectLandmark}
             />
+            <ClaimZoneList room={room} />
             <ClaimRivalPositionsList room={room} clockNowSig={clockNowSig} />
           </>
         )}

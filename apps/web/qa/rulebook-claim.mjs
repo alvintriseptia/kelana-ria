@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { catalogUrl, openEdition } from "./catalog.mjs";
+import { contrastRatio } from "./contrast.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
 import { moderateAdminPack, openAdminPanel, signInQaContext, startDraft } from "./studio-navigation.mjs";
@@ -297,8 +298,14 @@ try {
   // Ensure P2's map & SSE stream are active, then P1 claims & bails taman-literasi -> P2 receives update via SSE (< 1.5s) while MapLibre stays connected
   await pageP2.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
   const p2MapCanvas = await pageP2.locator("#rb-claim-map-host .maplibregl-canvas").elementHandle();
+  const p2Zone = pageP2.locator('[data-map-point="zone:blok-m"]');
+  await pageP2.getByRole("img", { name: "Blok M (Belum dikuasai)" }).waitFor();
+  const p2ZoneNode = await p2Zone.elementHandle();
+  assert.ok(await contrastRatio(p2Zone) >= 4.5);
   await checkIn(pageP1, "taman-literasi");
   await pageP1.waitForSelector('button[data-action="bail-challenge"]');
+  await pageP2.getByRole("img", { name: "Blok M (Dikuasai Tim 1)" }).waitFor();
+  const teamOneColor = await p2Zone.evaluate(el => getComputedStyle(el).color);
   const bailSentAt = Date.now();
   await clickAndWaitPost(pageP1, 'button[data-action="bail-challenge"]');
 
@@ -326,6 +333,10 @@ try {
   await pageP1.locator('[data-map-point="zone:blok-m"][data-game-motion^="role:"]').waitFor({ state: "attached" });
   assert.equal(await pageP2.locator('[data-map-point="taman-literasi"][data-game-motion^="steal:"]').count(), 0);
   assert.match(await stealNotice.innerText(), /berpindah tim.*Penguasaan zona berubah/);
+  await pageP2.getByRole("img", { name: "Blok M (Dikuasai Tim 2)" }).waitFor();
+  assert.ok(await p2ZoneNode.evaluate(el => el.isConnected), "Control changes preserve the marker node");
+  const teamTwoColor = await p2Zone.evaluate(el => getComputedStyle(el).color);
+  assert.notEqual(teamTwoColor, teamOneColor);
   assert.equal(await pageP2.locator('[data-activity-message][data-notice-kind="steal"]:visible').count(), 0);
   await ctxP3.setOffline(false);
   assert.equal(await pageP3.locator('[data-activity-message][data-notice-kind="steal"]:visible').count(), 0);
@@ -378,6 +389,50 @@ try {
   await activityPanel.getByText(/Taman Literasi.*bisa direbut/).waitFor();
   assert.ok(await pageP3.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageP3.screenshot({ path: path.join(results, "rulebook-claim-recent-activity.png") });
+
+  // One landmark each ties the zone. Both clients and the tile fallback show the tie.
+  await checkIn(pageP1, "m-bloc");
+  await clickAndWaitPost(pageP1, 'button[data-action="bail-challenge"]');
+  for (const p of [pageP1, pageP2]) {
+    await p.getByRole("img", { name: "Blok M (Seri)" }).waitFor();
+    await p.getByRole("button", { name: "Skor", exact: true }).click();
+    const zoneRow = p.getByRole("list", { name: "Kepemilikan Zona" }).locator('[data-zone-id="blok-m"]');
+    assert.equal(await zoneRow.getByText("Seri", { exact: true }).count(), 1);
+    const room = await readRoom(p);
+    assert.equal(room.zones.find(zone => zone.zoneId === "blok-m").controllerTeamId, null);
+    assert.deepEqual(Object.values(room.zones.find(zone => zone.zoneId === "blok-m").weightsByTeam).sort(), [0, 1, 1]);
+  }
+  await pageP3.route("**/api/map/config", route => route.fulfill({ json: {
+    mode: "geoapify-vector", styleUrl: "/qa-unavailable-group-map", mapLibreLicenseUrl: "/licenses/maplibre-gl.txt",
+  } }));
+  await pageP3.route("**/qa-unavailable-group-map", route => route.abort());
+  await pageP3.reload();
+  const fallback = pageP3.getByRole("complementary", { name: "Papan landmark" });
+  const fallbackZone = fallback.getByRole("list", { name: "Kepemilikan Zona" }).locator('[data-zone-id="blok-m"]');
+  await fallbackZone.getByText("Seri", { exact: true }).waitFor();
+  await fallback.getByRole("list", { name: "Daftar Landmark" }).waitFor();
+
+  // A third landmark restores Tim 2's control and color on the mounted map, score panel and fallback.
+  await checkIn(pageP2, "blok-m-plaza");
+  await clickAndWaitPost(pageP2, 'button[data-action="bail-challenge"]');
+  await fallbackZone.getByText(/Dikuasai Tim 2/).waitFor();
+  const p1Zone = pageP1.getByRole("img", { name: "Blok M (Dikuasai Tim 2)" });
+  const p1Badge = pageP1.getByRole("list", { name: "Kepemilikan Zona" }).locator('[data-zone-id="blok-m"] [data-zone-state="controlled"]');
+  await p1Badge.getByText(/Dikuasai Tim 2/).waitFor();
+  for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 640 }]) {
+    await pageP1.setViewportSize(viewport);
+    assert.equal(await p1Zone.evaluate(el => getComputedStyle(el).color), teamTwoColor);
+    assert.equal(await p1Badge.evaluate(el => getComputedStyle(el).color), teamTwoColor);
+    assert.ok(await contrastRatio(p1Zone) >= 4.5);
+    assert.ok(await contrastRatio(p1Badge) >= 4.5);
+    assert.ok(await pageP1.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await p1Badge.scrollIntoViewIfNeeded();
+    await pageP1.screenshot({ path: path.join(results, `rulebook-claim-zones-${viewport.width}.png`) });
+    await pageP1.getByRole("button", { name: /Lihat peta/ }).click();
+    await pageP1.screenshot({ path: path.join(results, `rulebook-claim-map-zones-${viewport.width}.png`) });
+    await pageP1.getByRole("button", { name: /Buka panel/ }).click();
+  }
+  await pageP1.setViewportSize({ width: 390, height: 844 });
 
   // Abort SSE /events on P2 -> verify automatic 3s polling fallback delivers rival photo review cleanly
   await pageP2.route(`**/api/rulebooks/rooms/${roomCode}/events`, route => route.abort());

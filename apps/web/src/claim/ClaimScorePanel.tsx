@@ -1,9 +1,10 @@
 import type { ClaimEngineRoomView } from "@kelana-ria/contracts";
 import type { Signal } from "@preact/signals";
-import { PostMatchActions } from "../lobby-ui";
+import { LobbyTeamChip, PostMatchActions } from "../lobby-ui";
 import { claimDecidingMetric, claimResultReasons } from "../rulebook-claim-result";
 import { ClaimRelativeAge, LearningExplanation } from "./ClaimShared";
-import { phaseLabels, teamName, zoneLabelFor, type ClaimRoomPayload } from "./types";
+import { ClaimZoneList } from "./ClaimZoneOwnership";
+import { orderedTeamIds, phaseLabels, teamName, zoneLabelFor, type ClaimRoomPayload } from "./types";
 
 export function ClaimRivalPositionsList({
   room,
@@ -80,6 +81,7 @@ export function ClaimScorePanel({
 }) {
   const { room, pass } = payload;
   const solo = room.soloProgress;
+  const teams = orderedTeamIds(room.seats);
   const ownSeat = room.seats.find((s) => s.seatId === room.seatId);
   const canPlayAgain =
     !pass.paid || Boolean(ownSeat?.isHost) || ownedPackIds.includes(pass.packId);
@@ -139,6 +141,7 @@ export function ClaimScorePanel({
             {room.standings.map((score) => (
               <li key={score.teamId}>
                 <strong>
+                  <LobbyTeamChip teamIndex={teams.indexOf(score.teamId)} className="cg-zone-badge" />{" "}
                   {teamName(room, score.teamId)}
                   {score.teamId === room.teamId ? " · Kamu" : ""}
                 </strong>
@@ -154,6 +157,7 @@ export function ClaimScorePanel({
           </p>
         </>
       )}
+      <ClaimZoneList room={room} />
       <ClaimRivalPositionsList room={room} clockNowSig={clockNowSig} />
       {room.outcome && (
         <PostMatchActions

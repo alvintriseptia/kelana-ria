@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
 import { catalogUrl, openEdition } from "./catalog.mjs";
+import { contrastRatio } from "./contrast.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
 import { buyPublishedDraft, moderateAdminPack, openAdminPanel, openDraft, signInQaContext, startDraft } from "./studio-navigation.mjs";
@@ -200,20 +201,6 @@ try {
   await pageG3.fill("#rb-join-name", "Pencari 2");
   await pageG3.click('button[data-action="join-room"]');
   await pageG3.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (3/4)"));
-
-  function contrastRatio(locator) {
-  return locator.evaluate(el => {
-    const luminance = color => {
-      const components = color.match(/[\d.]+/g).map(value => Number(value) / 255);
-      const linear = components.slice(0, 3).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
-      return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
-    };
-    const style = getComputedStyle(el);
-    if (style.backgroundColor === "rgba(0, 0, 0, 0)") return 0;
-    const values = [luminance(style.color), luminance(style.backgroundColor)];
-    return (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05);
-  });
-}
 
 async function refreshSeekRoom(page) {
     for (let attempt = 1; attempt <= 3; attempt += 1) {

@@ -50,7 +50,7 @@
   z-index: 2;
 }
 .cg-board .board-map-pin-zone {
-  margin-top: -24px;
+  margin-top: -36px;
   border-radius: 8px;
   background: #f6fbf7;
   color: #244438;
@@ -58,7 +58,22 @@
   box-shadow: 0 1px 4px #0b35253d;
   padding: 3px 6px;
   font: 800 .68rem/1.2 "DM Sans", sans-serif;
+  z-index: 5;
   pointer-events: none;
+}
+.cg-board .board-map-pin-zone[data-zone-state="unclaimed"],
+.cg-zone-badge[data-zone-state="unclaimed"] { background: #f2f5f3; color: #40514a; }
+.cg-board .board-map-pin-zone[data-zone-state="tied"],
+.cg-zone-badge[data-zone-state="tied"] { background: #fff3cf; color: #61450c; border-style: dashed; }
+.cg-zone-list li { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.cg-zone-badge {
+  display: inline-block;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  padding: 3px 7px;
+  font-size: .75rem;
+  font-weight: 800;
+  line-height: 1.2;
 }
 .cg-board .board-map-pin-start { max-width: 126px; white-space: normal; pointer-events: none; }
 .cg-board .board-map-pin-mine { background: #075c54; color: white; }
