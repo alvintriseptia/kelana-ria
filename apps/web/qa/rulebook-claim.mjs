@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
+import { verifyCardInfo } from "./card-info.mjs";
 import { catalogUrl, openEdition } from "./catalog.mjs";
 import { contrastRatio } from "./contrast.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
@@ -145,6 +146,21 @@ try {
   assert.equal(await soloOffers.count(), 0);
   assert.equal(await pageSolo.locator(".cg-tactic").count(), 1);
   await pageSolo.locator(".cg-tactic").click();
+  const readSoloRoom = async () => (await (await pageSolo.request.get(`${baseUrl}/api/rulebooks/rooms/${soloRoomCode}`)).json()).room;
+  const ownCard = (await readSoloRoom()).ownHand[0];
+  const expectedTarget = {
+    scout_challenge: /Landmark yang belum terkunci/,
+    double_weight: /Landmark terkunci milik timmu/,
+    swap_challenge: /Tantangan aktifmu/,
+    instant_lock: /Landmark rentan yang dikuasai timmu/,
+  }[ownCard.effect.primitive];
+  assert.ok(expectedTarget);
+  await pageSolo.setViewportSize({ width: 320, height: 640 });
+  await verifyCardInfo(pageSolo, ownCard.title, [expectedTarget, /Kapan/, /Efek/, /Biaya/], {
+    keyboard: true, screenshot: path.join(results, "rulebook-claim-card-info.png"),
+  });
+  assert.deepEqual((await readSoloRoom()).ownHand, [ownCard]);
+  await pageSolo.setViewportSize({ width: 390, height: 844 });
   const play = pageSolo.getByRole("button", { name: "Mainkan Kartu" });
   assert.equal(await play.isDisabled(), true);
   const eligible = pageSolo.locator("button.board-map-pin-eligible");
@@ -357,6 +373,7 @@ try {
     assert.ok(stealOffer.cards.every(card => !JSON.stringify(rivalRoom).includes(card.instanceId)));
     await rival.getByRole("button", { name: "Kartu", exact: true }).click();
     assert.equal(await rival.getByRole("region", { name: "Pilih satu kartu hadiah" }).count(), 0);
+    assert.equal(await rival.locator(".card-info-button").count(), 0);
   }
   await pageP2.reload();
   await pageP2.getByRole("button", { name: "Kartu", exact: true }).click();
@@ -497,7 +514,7 @@ try {
     pageP2.waitForResponse(r => r.url().includes(`/api/rulebooks/recaps/${roomCode}/share`) && r.status() === 200),
     pageP2.getByRole("button", { name: "Bagikan ke komunitas", exact: true }).click(),
   ]);
-  assert.match(await pageP2.getByTestId("recap-visibility-badge").innerText(), /Publik/);
+  await pageP2.getByTestId("recap-visibility-badge").filter({ hasText: /Publik/ }).waitFor();
   const publicHref = await pageP2.getByTestId("public-recap-link").getAttribute("href");
   assert.match(publicHref, /^\/\?shared=SR-[\dA-F]{12}$/);
   assert.ok(await pageP2.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
