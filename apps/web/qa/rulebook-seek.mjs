@@ -521,6 +521,9 @@ try {
   const seekCaptureBox = await pageCreator.getByTestId("photo-capture-btn").boundingBox();
   assert.ok(seekCaptureBox && seekCaptureBox.height >= 44, "Seek Ambil Foto button must meet 44px touch target");
 
+  const photoNotice = pageG2.locator('[data-activity-message][data-notice-kind="photo-clue"]');
+  const photoEvents = async () => (await pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json()))
+    .activity.events.filter(event => event.kind === "photo-clue");
   // Corrupt non-image file rejected cleanly without enabling submit
   await seekPhotoInput.setInputFiles(buildCorruptPhotoFile());
   await pageCreator.getByRole("alert").filter({ hasText: /foto|format|JPEG/i }).waitFor();
@@ -541,9 +544,21 @@ try {
   await pageCreator.getByTestId("photo-clear-btn").click();
   assert.equal(await pageCreator.getByTestId("photo-preview-img").count(), 0);
   assert.equal(await pageCreator.locator('button[data-action="answer-photo"]').isDisabled(), true);
+  assert.deepEqual(await photoEvents(), [], "An invalid or canceled photo must not notify the seeker");
   await pageCreator.locator("#sg-clue-photo").setInputFiles(largeSeekPhoto);
   await pageCreator.locator('img[alt="Pratinjau foto petunjuk"]').waitFor();
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-photo"]');
+  await photoNotice.waitFor({ timeout: 2200 });
+  assert.match(await pageG2.locator('[data-activity-announcement][role="status"]').textContent(), /Foto petunjuk sudah masuk/);
+  assert.equal(await pageCreator.locator('[data-activity-message][data-notice-kind="photo-clue"]').count(), 0);
+  const [notice] = await photoEvents();
+  assert.ok(notice);
+  await pageG2.screenshot({ path: path.join(results, "rulebook-seek-photo-notice.png") });
+  await photoNotice.getByRole("button", { name: "Buka", exact: true }).press("Enter");
+  const openedPhoto = pageG2.locator(`[data-photo-clue-index="${notice.clueIndex}"]`);
+  await openedPhoto.locator("img").waitFor();
+  assert.equal(await openedPhoto.evaluate(el => el === document.activeElement), true);
+  assert.deepEqual(await photoEvents(), [notice]);
   const photoId = (await snapshot()).room.questions.at(-1).photoId;
   assert.ok(photoId);
   const photoUrl = `${baseUrl}/api/rulebooks/rooms/${roomCode}/photos/${photoId}`;
@@ -557,6 +572,7 @@ try {
   await pageG2.route("**/qa-tiles/style.json", route => route.abort());
   await pageG2.reload();
   await pageG2.locator('[data-action="retry-map"]').waitFor();
+  assert.equal(await photoNotice.count(), 0, "Reload does not replay the accepted photo notice");
   await pageG2.click('button[data-action="select-station"][data-station="mrt-blok-m"]');
   await clickAndWaitPost(pageG2, 'button[data-action="seeker-check-in"]');
   const atHider = (await snapshot()).room;
