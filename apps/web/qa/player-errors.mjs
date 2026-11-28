@@ -299,9 +299,10 @@ try {
   ]);
   await page.waitForFunction(() => document.body.textContent.includes("1/4 terkunci"));
   await page.getByRole("button", { name: "Kartu", exact: true }).click();
-  const rewards = page.locator('[data-action="choose-claim-reward"]');
+  const rewards = page.locator('[data-action="select-claim-reward"]');
   assert.equal(await rewards.count(), 3);
   await rewards.first().click();
+  await page.click('[data-action="choose-claim-reward"]');
   await page.locator(".cg-tactic").waitFor();
 
   // Check drawn tactical card; if it needs a claimed/active landmark (instant_lock / swap_challenge),

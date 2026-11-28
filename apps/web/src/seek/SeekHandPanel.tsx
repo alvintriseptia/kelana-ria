@@ -59,7 +59,7 @@ export function SeekHandPanel({
   const { activeDraw, hand, currentHandLimit } = deck as SeekDeckHiderView;
   const pending = room.questions.find((q) => q.status === "pending");
 
-  if (activeDraw && (panel === "hand" || !pending)) {
+  if (activeDraw && panel === "hand") {
     return (
       <SeekDrawOffer
         activeDraw={activeDraw}
@@ -73,17 +73,14 @@ export function SeekHandPanel({
     );
   }
 
-  if (pending) {
-    const alternatives = hand.filter(
-      (card) => card.effect.primitive === "veto" || card.effect.primitive === "randomize",
-    );
+  if (panel === "question") {
+    if (!pending) return null;
     return (
       <SeekIncomingQuestion
         room={room}
         question={pending}
         selectedAnswer={selectedAnswer}
         pois={publicBoard.pois}
-        alternatives={alternatives}
         photoDraft={photoDraft}
         inlineError={inlineError}
         busy={busy}
@@ -93,7 +90,6 @@ export function SeekHandPanel({
         onSelectPhotoFile={onSelectPhotoFile}
         onClearPhoto={onClearPhoto}
         onSubmitPhoto={onSubmitPhoto}
-        onPlayAlternativeCard={onPlayCard}
       />
     );
   }
@@ -109,7 +105,10 @@ export function SeekHandPanel({
         <div class="sg-reward-grid" data-count={hand.length}>
           {hand.map((card) => {
             const primitive = card.effect.primitive;
-            const canPlay = PLAYABLE_HAND_PRIMITIVES.has(primitive);
+            const needsQuestion = primitive === "veto" || primitive === "randomize";
+            const requiresClearQuestion = primitive === "duplicate" || primitive === "discard_draw";
+            const canPlay = needsQuestion ? Boolean(pending)
+              : PLAYABLE_HAND_PRIMITIVES.has(primitive) && !(pending && requiresClearQuestion);
             return (
               <SeekRewardCard
                 key={card.instanceId}

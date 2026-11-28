@@ -1,35 +1,47 @@
 import type { ClaimRewardOffer } from "@kelana-ria/contracts";
+import { useState } from "preact/hooks";
+import { motionAllowed } from "../game-motion";
+import { RewardDrawCard } from "../ui/RewardDrawCard";
 import { CardInfo } from "../card-info";
 import { claimCardRules } from "../card-rules";
 import { cardLabels, cardTargets, type ClaimRoomPayload } from "./types";
 
-function ClaimRewardChoices({ offer, busy, onChoose }: {
+function ClaimRewardChoices({ offer, busy, canDeal, onPresented, onChoose }: {
   offer: ClaimRewardOffer;
   busy: boolean;
+  canDeal: boolean;
+  onPresented: () => void;
   onChoose: (offerId: string, cardInstanceId: string) => void;
 }) {
+  const [selected, select] = useState("");
+  const [deal] = useState(() => canDeal && motionAllowed() ? offer.offerId : null);
   return (
-    <section aria-labelledby="cg-reward-title">
+    <section aria-labelledby="cg-reward-title" class="cg-reward-draw">
       <h3 id="cg-reward-title">Pilih satu kartu hadiah</h3>
-      <div class="cg-reward-options">
-        {offer.cards.map((item) => (
-          <div key={item.instanceId} class="cg-reward-option">
-            <button
-              type="button"
-              class="sg-pick"
-              data-action="choose-claim-reward"
-              aria-label={`Simpan ${item.title}`}
-              aria-describedby={`cg-reward-${item.instanceId}`}
-              disabled={busy}
-              onClick={() => onChoose(offer.offerId, item.instanceId)}
-            >
-              <strong>{item.title}</strong>
-              <span id={`cg-reward-${item.instanceId}`}>{item.description}</span>
-            </button>
-            <CardInfo title={item.title} description={item.description} rules={claimCardRules(item.effect)} />
-          </div>
-        ))}
+      <p class="sg-reward-note">Pilih 1 dari {offer.cards.length} kartu</p>
+      <div class={`sg-reward-grid${deal !== null ? " sg-deal" : ""}`} data-count={offer.cards.length}>
+        {offer.cards.map((item, index) => {
+          const [label, art] = cardLabels[item.effect.primitive];
+          return (
+            <RewardDrawCard key={item.instanceId} index={index} deal={deal} sourcePanel="cards"
+              selected={selected === item.instanceId} onPresented={onPresented}>
+              <div class="sg-reward-entry">
+                <button type="button" class="sg-reward-card" data-action="select-claim-reward"
+                  data-instance={item.instanceId} aria-pressed={selected === item.instanceId}
+                  disabled={busy} onClick={() => select(selected === item.instanceId ? "" : item.instanceId)}>
+                  <span class={`sg-reward-art cg-art-${art}`} aria-hidden="true" />
+                  <span class="sg-reward-copy"><small>{label}</small><strong>{item.title}</strong></span>
+                </button>
+                <CardInfo title={item.title} description={item.description} rules={claimCardRules(item.effect)} />
+              </div>
+            </RewardDrawCard>
+          );
+        })}
       </div>
+      <button type="button" class="sg-main" data-action="choose-claim-reward"
+        disabled={busy || !selected} onClick={() => onChoose(offer.offerId, selected)}>
+        Simpan {selected ? 1 : 0}/1 kartu
+      </button>
     </section>
   );
 }
@@ -44,6 +56,8 @@ export function ClaimCardsPanel({
   onSelectCard,
   onCloseCard,
   onSelectRival,
+  dealOfferId,
+  onRewardPresented,
   onChooseReward,
   onPlayCard,
 }: {
@@ -56,6 +70,8 @@ export function ClaimCardsPanel({
   onSelectCard: (instanceId: string) => void;
   onCloseCard: () => void;
   onSelectRival: (seatId: string) => void;
+  dealOfferId: string;
+  onRewardPresented: (offerId: string) => void;
   onChooseReward: (offerId: string, cardInstanceId: string) => void;
   onPlayCard: (cardInstanceId: string, landmarkId?: string, targetSeatId?: string) => void;
 }) {
@@ -69,9 +85,10 @@ export function ClaimCardsPanel({
     );
   }
 
-  const rewardChoices = room.ownClaimReward
-    ? <ClaimRewardChoices offer={room.ownClaimReward} busy={busy} onChoose={onChooseReward} />
-    : null;
+  const offer = room.ownClaimReward;
+  if (offer) return <ClaimRewardChoices key={offer.offerId} offer={offer} busy={busy}
+    canDeal={dealOfferId === offer.offerId} onPresented={() => onRewardPresented(offer.offerId)}
+    onChoose={onChooseReward} />;
   const card = room.ownHand.find((item) => item.instanceId === selectedCardId);
   if (!card) {
     return (
@@ -80,9 +97,8 @@ export function ClaimCardsPanel({
           <h2>Kartu</h2>
           <span class="rb-badge">{room.ownHand.length}</span>
         </div>
-        {rewardChoices}
         {room.ownHand.length === 0 ? (
-          !rewardChoices && <p>Kunci atau rebut landmark untuk menarik kartu.</p>
+          <p>Kunci atau rebut landmark untuk menarik kartu.</p>
         ) : (
           <div class="cg-card-stack">
             {room.ownHand.map((item) => {
@@ -136,7 +152,6 @@ export function ClaimCardsPanel({
       </div>
       <p>{card.description}</p>
       <CardInfo title={card.title} description={card.description} rules={claimCardRules(card.effect)} />
-      {rewardChoices}
       {rivals.length > 0 && (
         <div class="sg-picks" aria-label="Pilih lawan">
           {rivals.map((seat) => (

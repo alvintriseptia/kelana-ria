@@ -30,6 +30,7 @@ Use the full issue and the relevant guidance. Follow the packet's source, test, 
 - Keep player and Studio controls tactile and readable. Use existing art and shape plus color to signal state, keep touch targets usable, and test zero horizontal overflow at 390 × 844. Keep each MapLibre instance mounted and update its data in place.
 - Remove replaced pre-release flows, code, tests and UI copy. Preserve data privacy, verified rule gates, and the normal entry points for supported behavior.
 - Reuse the existing claim and PR when resuming a stopped session. Keep dirty, interrupted, or blocked work recoverable on its branch.
+- Activate cards only from Kartu. Keep card details and play controls there, including Ganti Tantangan, Veto, and Randomize. Keep challenge and answer panels focused on the current task.
 
 Record GitHub delivery evidence and separate optional efficiency telemetry with the [Factory baseline](docs/qa/factory-efficiency-baseline.md).
 

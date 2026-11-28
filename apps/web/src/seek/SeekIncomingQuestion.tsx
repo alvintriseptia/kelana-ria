@@ -1,12 +1,9 @@
 import type {
-  SeekCardInstance,
   SeekEngineQuestion,
   SeekEngineRoomView,
   SeekPublicBoard,
 } from "@kelana-ria/contracts";
 import type { Signal } from "@preact/signals";
-import { CardInfo } from "../card-info";
-import { seekCardRules } from "../card-rules";
 import type { PreparedPhoto } from "../photo-capture";
 import { PhotoCaptureWidget } from "../ui/PhotoCaptureWidget";
 import { SeekDeadline, SeekQuestionArt, SeekSlotAlert } from "./SeekShared";
@@ -17,7 +14,6 @@ export function SeekIncomingQuestion({
   question,
   selectedAnswer,
   pois,
-  alternatives,
   photoDraft,
   inlineError,
   busy,
@@ -27,13 +23,11 @@ export function SeekIncomingQuestion({
   onSelectPhotoFile,
   onClearPhoto,
   onSubmitPhoto,
-  onPlayAlternativeCard,
 }: {
   room: SeekEngineRoomView;
   question: SeekEngineQuestion;
   selectedAnswer: string;
   pois: SeekPublicBoard["pois"];
-  alternatives: SeekCardInstance[];
   photoDraft: { prepared: PreparedPhoto | null; processing: boolean; uploading: boolean } | null;
   inlineError: SeekInlineError;
   busy: boolean;
@@ -43,7 +37,6 @@ export function SeekIncomingQuestion({
   onSelectPhotoFile: (file: File | undefined) => void;
   onClearPhoto: () => void;
   onSubmitPhoto: (questionId: string) => void;
-  onPlayAlternativeCard: (cardInstanceId: string, primitive: string) => void;
 }) {
   const answer = question.privateComputedAnswer;
   const choices: [string, string][] =
@@ -144,25 +137,6 @@ export function SeekIncomingQuestion({
           </button>
         </>
       )}
-
-      <div class="sg-picks">
-        {alternatives.map((card) => (
-          <div key={card.instanceId} class="sg-card-alternative">
-            <button
-              type="button"
-              class="sg-pick"
-              data-action="play-card"
-              data-instance={card.instanceId}
-              data-primitive={card.effect.primitive}
-              disabled={busy}
-              onClick={() => onPlayAlternativeCard(card.instanceId, card.effect.primitive)}
-            >
-              {card.title}
-            </button>
-            <CardInfo title={card.title} description={card.description} rules={seekCardRules(card.effect)} />
-          </div>
-        ))}
-      </div>
 
       <SeekSlotAlert error={inlineError} slot="answer-photo" />
       <SeekSlotAlert error={inlineError} slot="answer-field" />

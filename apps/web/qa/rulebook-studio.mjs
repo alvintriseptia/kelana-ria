@@ -249,11 +249,11 @@ async function checkAutomaticValidation(page, state, result, { source = "main", 
   const originalViewport = page.viewportSize();
   await page.setViewportSize({ width: 320, height: 640 });
   const trigger = page.locator(`[data-validate-from="${source}"]`);
-  const feedback = page.locator(`[data-validation-feedback="${source}"]`);
+  const feedback = page.getByRole("region", { name: "Hasil validasi" });
   const waitForFeedbackInViewport = async () => page.waitForFunction(el => {
     const { top, bottom } = el.getBoundingClientRect();
     return top >= 0 && bottom <= innerHeight;
-  }, await feedback.locator("p").elementHandle(), { timeout: 5_000 });
+  }, await feedback.locator(":scope > p").elementHandle(), { timeout: 5_000 });
   const live = page.locator("#st-validation-announcement");
   const liveNode = await live.elementHandle();
   assert.equal(await live.getAttribute("role"), "status");
@@ -291,6 +291,7 @@ async function checkAutomaticValidation(page, state, result, { source = "main", 
     release();
     await feedback.filter({ hasText: result }).waitFor();
     assert.equal(await feedback.getAttribute("data-state"), state);
+    assert.equal(await page.locator("[data-validation-feedback]").count(), 1);
     await waitForFeedbackInViewport();
     assert.match(await live.textContent(), result);
     const messages = await announced.evaluate(value => value.messages);
@@ -1064,9 +1065,8 @@ try {
   await checkAutomaticValidation(page, "failed", /Draf belum bisa diperiksa/, { source: "footer" });
   assert.equal(await validationIssues.count(), previousIssueCount);
   await checkAutomaticValidation(page, "findings", /Validator menemukan \d+ masalah/);
-  await page.getByRole("button", { name: "Lihat temuan", exact: true }).click();
-  assert.equal(await page.locator("#st-validation-issues:focus").count(), 1);
-  await page.getByRole("button", { name: /Lompat & Perbaiki/ }).click();
+  assert.match(await page.getByRole("region", { name: "Hasil validasi" }).innerText(), /radius zona sembunyi antara 100 dan 5\.000 meter/i);
+  await validationIssues.first().press("Enter");
   await page.waitForSelector("#ed-zone:focus");
   assert.equal(await page.inputValue("#ed-zone"), "10");
 
@@ -1223,7 +1223,7 @@ try {
   await page.fill("#ed-new-zone-name", "Kemang");
   await page.fill("#ed-new-zone-label", "KM");
   await clickAndWaitStudioSave(page, 'button[data-map-action="add-zone"]');
-  await page.locator("[data-map-validation] summary").click();
+  await page.locator("[data-map-validation] > summary").click();
   await page.locator('button[data-jump-zone="kemang"]').press("Enter");
   assert.equal(await page.inputValue("#ed-zone-name"), "Kemang");
   await page.click('button[data-map-tab="primary"]');

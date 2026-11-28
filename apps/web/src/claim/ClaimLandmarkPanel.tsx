@@ -478,7 +478,6 @@ export function ClaimActiveAttempt({
   inlineError,
   busy,
   onChooseShotTier,
-  onSwapChallenge,
   onBailChallenge,
   onSelectPhotoFile,
   onClearPhoto,
@@ -496,7 +495,6 @@ export function ClaimActiveAttempt({
   inlineError: ClaimInlineError;
   busy: boolean;
   onChooseShotTier: (landmarkId: string, tier: "standard" | "bold") => void;
-  onSwapChallenge: (cardInstanceId: string, landmarkId: string) => void;
   onBailChallenge: (landmarkId: string) => void;
   onSelectPhotoFile: (targetId: string, file: File | undefined, isCurse: boolean) => void;
   onClearPhoto: (targetId: string) => void;
@@ -509,7 +507,6 @@ export function ClaimActiveAttempt({
   const { room, publicBoard } = payload;
   const challengePayload = attempt.challenge.payload;
   const leaf = getActiveLeaf(attempt);
-  const swapCard = room.ownHand.find((c) => c.effect.primitive === "swap_challenge");
   const lmName =
     publicBoard.landmarks.find((l) => l.id === attempt.landmarkId)?.name ?? attempt.landmarkId;
 
@@ -560,7 +557,7 @@ export function ClaimActiveAttempt({
               disabled={busy}
               onClick={() => onChooseShotTier(attempt.landmarkId, "bold")}
             >
-              Ekstra (+1 Kartu)
+              Ekstra
             </button>
           </div>
         </>
@@ -584,20 +581,6 @@ export function ClaimActiveAttempt({
       ) : null}
 
       <div class="rb-actions">
-        {swapCard && (
-          <button
-            type="button"
-            class="secondary"
-            data-action="play-card"
-            data-instance={swapCard.instanceId}
-            data-primitive="swap_challenge"
-            data-landmark={attempt.landmarkId}
-            disabled={busy}
-            onClick={() => onSwapChallenge(swapCard.instanceId, attempt.landmarkId)}
-          >
-            Ganti Tantangan
-          </button>
-        )}
         <button
           type="button"
           class="secondary"
