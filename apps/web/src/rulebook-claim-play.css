@@ -113,8 +113,9 @@
 }
 .cg-card-stack { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .cg-reward-options { display: grid; gap: 6px; margin-bottom: 10px; }
-.cg-reward-options button { display: grid; gap: 3px; min-height: 44px; text-align: left; }
-.cg-reward-options span { font-weight: normal; overflow-wrap: anywhere; }
+.cg-reward-option { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: start; }
+.cg-reward-option .sg-pick { display: grid; gap: 3px; min-height: 44px; text-align: left; }
+.cg-reward-option .sg-pick span { font-weight: normal; overflow-wrap: anywhere; }
 .cg-tactic {
   display: grid;
   align-content: start;

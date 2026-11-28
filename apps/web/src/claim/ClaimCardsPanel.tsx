@@ -1,4 +1,6 @@
 import type { ClaimRewardOffer } from "@kelana-ria/contracts";
+import { CardInfo } from "../card-info";
+import { claimCardRules } from "../card-rules";
 import { cardLabels, cardTargets, type ClaimRoomPayload } from "./types";
 
 function ClaimRewardChoices({ offer, busy, onChoose }: {
@@ -11,19 +13,21 @@ function ClaimRewardChoices({ offer, busy, onChoose }: {
       <h3 id="cg-reward-title">Pilih satu kartu hadiah</h3>
       <div class="cg-reward-options">
         {offer.cards.map((item) => (
-          <button
-            key={item.instanceId}
-            type="button"
-            class="sg-pick"
-            data-action="choose-claim-reward"
-            aria-label={`Simpan ${item.title}`}
-            aria-describedby={`cg-reward-${item.instanceId}`}
-            disabled={busy}
-            onClick={() => onChoose(offer.offerId, item.instanceId)}
-          >
-            <strong>{item.title}</strong>
-            <span id={`cg-reward-${item.instanceId}`}>{item.description}</span>
-          </button>
+          <div key={item.instanceId} class="cg-reward-option">
+            <button
+              type="button"
+              class="sg-pick"
+              data-action="choose-claim-reward"
+              aria-label={`Simpan ${item.title}`}
+              aria-describedby={`cg-reward-${item.instanceId}`}
+              disabled={busy}
+              onClick={() => onChoose(offer.offerId, item.instanceId)}
+            >
+              <strong>{item.title}</strong>
+              <span id={`cg-reward-${item.instanceId}`}>{item.description}</span>
+            </button>
+            <CardInfo title={item.title} description={item.description} rules={claimCardRules(item.effect)} />
+          </div>
         ))}
       </div>
     </section>
@@ -131,6 +135,7 @@ export function ClaimCardsPanel({
         </button>
       </div>
       <p>{card.description}</p>
+      <CardInfo title={card.title} description={card.description} rules={claimCardRules(card.effect)} />
       {rewardChoices}
       {rivals.length > 0 && (
         <div class="sg-picks" aria-label="Pilih lawan">

@@ -1,0 +1,23 @@
+.card-info-button {
+  justify-self: start;
+  min-width: 44px;
+  min-height: 44px;
+  color: #104a40;
+  background: #f6fbf7;
+}
+.card-info-dialog {
+  max-height: 85dvh;
+  overflow: auto;
+  padding: 14px;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+  color: #183c32;
+  background: #f6fbf7;
+}
+.card-info-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.card-info-header h2 { margin: 0; }
+.card-info-dialog p { margin: 8px 0 12px; }
+.card-info-dialog dl { grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 0; padding: 0; border: 0; }
+.card-info-dialog dl div { border-top: 1px solid #adbfaf; padding-top: 8px; }
+.card-info-dialog dt { font-weight: 800; }
+.card-info-dialog dd { margin: 2px 0 0; }

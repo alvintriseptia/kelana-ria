@@ -1,5 +1,7 @@
 import type { HideSeekQuestionFamily, SeekCardInstance } from "@kelana-ria/contracts";
 import type { Signal } from "@preact/signals";
+import { CardInfo } from "../card-info";
+import { seekCardRules } from "../card-rules";
 import { useEffect, useRef } from "preact/hooks";
 import { formatRelativeAge, freshnessBucket } from "../room-activity";
 import { DraftStudioLink } from "../ui/DraftStudioLink";
@@ -128,24 +130,27 @@ export function SeekRewardCard({
     </>
   );
 
-  if (action) {
-    return (
-      <button
-        type="button"
-        class="sg-reward-card"
-        data-action={action}
-        data-instance={card.instanceId}
-        data-primitive={primitive}
-        aria-pressed={selected ? "true" : "false"}
-        disabled={disabled}
-        onClick={onClick}
-      >
-        {content}
-      </button>
-    );
-  }
-
-  return <article class="sg-reward-card">{content}</article>;
+  return (
+    <div class="sg-reward-entry">
+      {action ? (
+        <button
+          type="button"
+          class="sg-reward-card"
+          data-action={action}
+          data-instance={card.instanceId}
+          data-primitive={primitive}
+          aria-pressed={selected ? "true" : "false"}
+          disabled={disabled}
+          onClick={onClick}
+        >
+          {content}
+        </button>
+      ) : (
+        <article class="sg-reward-card">{content}</article>
+      )}
+      <CardInfo title={card.title} description={card.description} rules={seekCardRules(card.effect)} />
+    </div>
+  );
 }
 
 export function SeekRoomMenu({

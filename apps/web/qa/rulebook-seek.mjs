@@ -4,6 +4,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
+import { verifyCardInfo } from "./card-info.mjs";
 import { catalogUrl, openEdition } from "./catalog.mjs";
 import { contrastRatio } from "./contrast.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
@@ -424,6 +425,42 @@ async function refreshSeekRoom(page) {
   // Reload keeps the same offer and deadline without replaying the deal.
   const activeOffer = async () => (await (await pageCreator.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`)).json()).deck.activeDraw;
   const offered = await activeOffer();
+  // Present two cards taken from the actual published edition to make the info checks deterministic.
+  // The real server offer remains active and unchanged throughout this read-only test.
+  const bonus = exportedPack.deck.cards.find(card => card.effect.primitive === "time_bonus");
+  const curse = exportedPack.deck.cards.find(card => card.title === "Kutukan Barista Buyout");
+  assert.ok(bonus && curse && offered.cards.length >= 2);
+  const roomEndpoint = `**/api/rulebooks/rooms/${roomCode}`;
+  await pageCreator.route(roomEndpoint, async route => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (payload.deck.activeDraw) {
+      payload.deck.activeDraw.cards = [bonus, curse].map(({ id, ...card }, index) => ({
+        ...card, cardId: id, instanceId: offered.cards[index].instanceId,
+      }));
+    }
+    await route.fulfill({ response, json: payload });
+  });
+  await pageCreator.setViewportSize({ width: 320, height: 640 });
+  await pageCreator.reload();
+  const bonusAmount = bonus.effect.minutes === undefined ? `${bonus.effect.percentOfRawTime}%` : `${bonus.effect.minutes} menit`;
+  await verifyCardInfo(pageCreator, bonus.title, [new RegExp(bonusAmount), /skor waktu sembunyi/], { keyboard: true });
+  const discardCost = curse.effect.curse.castingCosts.find(cost => cost.type === "discard_cards");
+  assert.ok(discardCost);
+  const clearCondition = curse.effect.curse.clearCondition;
+  assert.equal(clearCondition.type, "photo_challenge");
+  await verifyCardInfo(pageCreator, curse.title, [
+    /Pencari pada giliran ini/,
+    new RegExp(`Buang ${discardCost.count} kartu lain`),
+    new RegExp(`disetujui otomatis setelah ${clearCondition.autoApproveMs / 60_000} menit`),
+  ], {
+    screenshot: path.join(results, "rulebook-seek-card-info.png"),
+  });
+  assert.equal(await pageCreator.locator('button[data-action="choose-draw"][aria-pressed="true"]').count(), 0);
+  assert.equal(await pageG2.locator(".card-info-button").count(), 0);
+  assert.deepEqual(await activeOffer(), offered);
+  await pageCreator.unroute(roomEndpoint);
+  await pageCreator.setViewportSize({ width: 390, height: 844 });
   await pageCreator.reload();
   const cardChoice = pageCreator.locator('button[data-action="choose-draw"]').first();
   await cardChoice.waitFor();
