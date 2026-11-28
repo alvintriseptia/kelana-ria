@@ -415,6 +415,9 @@ async function refreshSeekRoom(page) {
   await hiderCodeTab.press("Enter");
   assert.equal((await hiderCodeValue.textContent()).trim(), firstFoundCode);
   await hiderHandTab.click();
+  assert.equal(await pageCreator.locator('[data-action="answer-pending"]').count(), 0);
+  await pageCreator.getByRole("button", { name: "Jawab", exact: true }).press("Enter");
+  assert.equal(await pageCreator.locator('[data-action="play-card"]').count(), 0);
   await pageCreator.click('button[data-answer="no"]');
   assert.equal(await pageCreator.locator('button[data-action="answer-pending"]').isDisabled(), true);
   assert.equal(await pageCreator.locator('[data-correct="false"]').isVisible(), true);

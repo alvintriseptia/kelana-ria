@@ -1,35 +1,5 @@
 import { animate } from "motion";
-import { motionAllowed, motionEaseOut, motionPresets } from "../game-motion";
-
-// Cards in flight are decorative backs. The real cards remain keyboard operable.
-export function animateSeekDraw(
-  back: HTMLElement,
-  face: HTMLElement,
-  source: HTMLElement | null,
-  index: number,
-): () => void {
-  if (!motionAllowed()) return () => {};
-  const target = back.getBoundingClientRect();
-  const origin = source?.getBoundingClientRect();
-  const x = origin ? origin.left + (origin.width - target.width) / 2 - target.left : 0;
-  const y = origin ? origin.top + (origin.height - target.height) / 2 - target.top : 22;
-  const delay = index * 0.055;
-  const deal = 0.23;
-  const flip = 0.14;
-  const control = animate([
-    [back, { x: [x, 0], y: [y, 0], scale: [0.55, 1] }, { ...motionPresets.tactile, duration: deal, at: delay }],
-    [back, { transformPerspective: 520, rotateY: [0, 90], opacity: [1, 0] }, { duration: flip, at: delay + deal, ease: "easeIn" }],
-    [face, { opacity: [0, 0] }, { duration: delay + deal + flip, at: 0 }],
-    [face, { transformPerspective: 520, rotateY: [-90, 0], opacity: [0, 1] }, { duration: flip, ease: motionEaseOut, at: delay + deal + flip }],
-  ]);
-  return () => {
-    control.stop();
-    face.style.removeProperty("opacity");
-    face.style.removeProperty("transform");
-    back.style.removeProperty("opacity");
-    back.style.removeProperty("transform");
-  };
-}
+import { motionAllowed, motionPresets } from "../game-motion";
 
 export type SeekCardFlight = { start: DOMRect; kept: boolean };
 

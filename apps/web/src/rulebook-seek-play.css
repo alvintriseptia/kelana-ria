@@ -603,7 +603,6 @@
 .sg-pick-status { display: block; margin-top: 3px; font-size: .72rem; font-weight: 750; }
 .sg-reward-grid[data-count="2"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .sg-reward-entry { display: grid; grid-template-rows: 1fr auto; gap: 4px; min-width: 0; height: 100%; }
-.sg-card-alternative { display: flex; gap: 4px; }
 .sg-reward-art { background-image: url("./assets/seek-rewards.webp"); }
 .sg-reward-card[aria-pressed="true"] { outline: 2px solid var(--sg-teal); outline-offset: -2px; background: #e7f8bf; }
 .sg-reward-copy strong { font: 700 1.35rem/1.03 "Barlow Condensed", sans-serif; }

@@ -114,7 +114,6 @@ type CloneFields = { templatePackId: string; packId: string; title: string; byli
 type DraftValidation = { ok: boolean; errors: RulebookValidationIssue[] };
 type ValidationSource = "main" | "footer";
 type ValidationFeedback = {
-  source: ValidationSource;
   state: "pending" | "passed" | "findings" | "failed";
   message: string;
 };
@@ -431,17 +430,54 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }
   }
 
-  function syncValidationFeedback() {
-    const message = validationFeedback?.message ?? "";
-    const announcement = root.querySelector("#st-validation-announcement");
-    if (announcement && announcement.textContent !== message) announcement.textContent = message;
-    for (const slot of root.querySelectorAll<HTMLElement>("[data-validation-feedback]")) {
-      const feedback = validationFeedback?.source === slot.dataset.validationFeedback ? validationFeedback : null;
-      slot.hidden = !feedback;
-      slot.dataset.state = feedback?.state ?? "";
-      slot.querySelector("p")!.textContent = feedback?.message ?? "";
-      slot.querySelector("button")!.hidden = feedback?.state !== "findings";
+  function validationMessage(issue: RulebookValidationIssue, label: string): string {
+    if (issue.path === "geography.hidingZoneRadiusMeters") return "Atur radius zona sembunyi antara 100 dan 5.000 meter.";
+    if (issue.code === "empty-zone") {
+      const name = /"([^"]+)"/.exec(issue.message)?.[1];
+      return name ? `Tambahkan landmark ke zona ${name} atau hapus zona tersebut.` : "Tambahkan landmark ke zona yang masih kosong.";
     }
+    if (/^unverified-osm/.test(issue.code)) return "Periksa titik ini di lokasi dan simpan catatan verifikasinya.";
+    if (/^(?:unverified-ai|unedited-ai|unreviewed-challenge|osm-verification-note)/.test(issue.code)) {
+      return "Periksa item ini di lapangan, isi catatan yang sebenarnya, lalu tandai sudah diverifikasi.";
+    }
+    if (issue.code === "invalid-answer-key") return "Periksa kunci jawaban dan pastikan jawaban yang benar dapat dipilih.";
+    if (issue.code.endsWith("outside-boundary")) return "Pindahkan titik ini ke dalam batas area permainan.";
+    if (issue.code === "invalid-boundary") return "Buat batas area dengan minimal tiga koordinat yang valid.";
+    if (issue.code === "missing-attributions") return "Tambahkan sumber data peta yang digunakan.";
+    if (issue.code === "invalid-player-range") return "Sesuaikan batas minimum dan maksimum jumlah pemain.";
+    if (issue.code === "duplicate-zone-id") return "Gunakan pengenal yang berbeda untuk setiap zona.";
+    return `Periksa pengaturan di bagian ${label}.`;
+  }
+
+  function syncValidationFeedback() {
+    const feedback = validationFeedback;
+    const errors = validationErrors;
+    const state = feedback?.state ?? (errors.length ? "findings" : "");
+    const message = feedback?.message ?? (errors.length ? `Ada ${errors.length} masalah yang perlu diperbaiki.` : "");
+    const announcement = root.querySelector("#st-validation-announcement");
+    if (announcement && announcement.textContent !== (feedback?.message ?? "")) {
+      announcement.textContent = feedback?.message ?? "";
+    }
+    const result = root.querySelector<HTMLElement>("[data-validation-feedback]");
+    if (!result) return;
+    const details = result.querySelector<HTMLDetailsElement>("[data-map-validation]");
+    result.hidden = !state;
+    result.dataset.state = state;
+    result.querySelector("p")!.textContent = message;
+    const issueSlot = result.querySelector<HTMLElement>("[data-validation-issues]")!;
+    issueSlot.innerHTML = errors.length ? `
+      ${step === 2 ? `<details data-map-validation ${details?.open ? "open" : ""}><summary>Temuan (${errors.length})</summary>` : ""}
+      ${state === "failed" || state === "pending" ? "<p>Temuan dari pemeriksaan terakhir</p>" : ""}
+      <ul id="st-validation-issues" class="studio-validation-issues" aria-label="Kesalahan validasi">
+      ${errors.map(error => {
+        const fieldVerification = /^(?:unverified-(?:osm|ai)|unedited-ai|unreviewed-challenge|osm-verification-note)/.test(error.code);
+        const target = resolveValidationJump(error.path, format, fieldVerification);
+        const zone = error.code === "empty-zone" ? /"([^"]+)"/.exec(error.message)?.[1] ?? "" : "";
+        return `<li><div>${escapeText(validationMessage(error, target.label))}</div>
+          <button type="button" class="secondary" data-jump-path="${escapeText(error.path)}" data-jump-zone="${escapeText(zone)}"
+            ${fieldVerification ? "data-field-verification" : ""}>${escapeText(`Lompat & Perbaiki (${target.label})`)} →</button>
+          <details class="st-validation-detail"><summary>Detail teknis</summary><small>${escapeText(error.message)}</small></details></li>`;
+      }).join("")}</ul>${step === 2 ? "</details>" : ""}` : "";
   }
 
   function setValidationFeedback(feedback: ValidationFeedback | null) {
@@ -451,7 +487,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (feedback) {
       requestAnimationFrame(() => {
         if (signal.aborted || validationFeedback !== feedback) return;
-        const message = root.querySelector(`[data-validation-feedback="${feedback.source}"] p`);
+        const message = root.querySelector("[data-validation-feedback] p");
         if (!message) return;
         const { top, bottom } = message.getBoundingClientRect();
         if (top < 0 || bottom > window.innerHeight) message.scrollIntoView({ block: "center" });
@@ -514,9 +550,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         if (onValidation) {
           onValidation(res.validation);
         } else {
+          validationFeedback = null;
           statusMsg = successMessage ?? (res.validation?.ok
             ? "Draf tersimpan dan lolos validator otomatis."
-            : "Draf tersimpan dengan kesalahan validasi.");
+            : "Draf tersimpan.");
         }
         if (mapSave) savingMap = false;
         else savingForm = false;
@@ -541,7 +578,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if (!active || !isEditable(active) || validationFeedback?.state === "pending") return;
     const restoreFocus = document.activeElement === trigger;
     const { pack, snapshot } = applyFormEdits(active);
-    const pending: ValidationFeedback = { source, state: "pending", message: "Memeriksa draf…" };
+    const pending: ValidationFeedback = { state: "pending", message: "Memeriksa draf…" };
     statusMsg = "";
     errorMsg = "";
     setValidationFeedback(pending);
@@ -549,11 +586,11 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     await persistDraft(pack, snapshot, undefined, undefined, result => { report = result; });
     if (signal.aborted || validationFeedback !== pending) return;
     if (!report) {
-      setValidationFeedback({ source, state: "failed", message: "Draf belum bisa diperiksa. Coba lagi." });
+      setValidationFeedback({ state: "failed", message: "Draf belum bisa diperiksa. Coba lagi." });
     } else if (report.ok) {
-      setValidationFeedback({ source, state: "passed", message: "Draf lolos validator otomatis." });
+      setValidationFeedback({ state: "passed", message: "Draf lolos validator otomatis." });
     } else {
-      setValidationFeedback({ source, state: "findings", message: `Validator menemukan ${report.errors.length} masalah pada draf.` });
+      setValidationFeedback({ state: "findings", message: `Validator menemukan ${report.errors.length} masalah pada draf.` });
     }
     if (restoreFocus && document.activeElement === document.body) {
       root.querySelector<HTMLButtonElement>(`[data-validate-from="${source}"]`)?.focus({ preventScroll: true });
@@ -1590,11 +1627,12 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     return renderSeekStep3(active.pack, seekStep3, editable, statusMsg, savingForm || busy);
   }
 
-  function renderValidationFeedback(source: ValidationSource): string {
-    return `<div class="studio-validation-feedback" data-validation-feedback="${source}" hidden>
+  function renderValidationResult(): string {
+    return `<section class="studio-validation-feedback" data-validation-feedback aria-labelledby="st-validation-title" hidden>
+      <h4 id="st-validation-title">Hasil validasi</h4>
       <p></p>
-      <button type="button" class="secondary" data-validation-findings hidden>Lihat temuan</button>
-    </div>`;
+      <div data-validation-issues></div>
+    </section>`;
   }
 
   function renderStep4(active?: StudioVersionRecord): string {
@@ -1616,12 +1654,11 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         ${editable ? `<button type="button" class="secondary" data-action="save-draft" data-validate-from="main" ${validating ? "disabled" : ""}>Jalankan Validator Otomatis</button>` : ""}
         ${editable ? `<button type="button" class="primary" data-action="submit-draft">Ajukan untuk Tinjauan</button>` : ""}
       </div>
-      ${editable ? renderValidationFeedback("main") : ""}
+      ${renderValidationResult()}
       ${dryRunSummary ? `<p role="status" class="rb-badge">${escapeText(dryRunSummary)}</p>` : ""}
       <div class="rb-sticky-footer">
         <button type="button" class="secondary" data-step="3">← Aturan</button>
         ${editable ? `<button type="button" class="secondary" data-action="save-draft" data-validate-from="footer" ${validating ? "disabled" : ""}>Validasi</button>` : "<span></span>"}
-        ${editable ? renderValidationFeedback("footer") : ""}
       </div>
     </div>
 
@@ -1630,8 +1667,12 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
 
   function render() {
     for (const unmount of studioPanelUnmounts.splice(0)) unmount();
+    const mapFindingsOpen = root.querySelector<HTMLDetailsElement>("[data-map-validation]")?.open;
     renderShell();
     if (signal.aborted) return;
+    syncValidationFeedback();
+    const mapFindings = root.querySelector<HTMLDetailsElement>("[data-map-validation]");
+    if (mapFindingsOpen && mapFindings) mapFindings.open = true;
     for (const host of root.querySelectorAll<HTMLElement>("[data-studio-provenance]")) {
       const record = reviewVersions.find(item => `${item.packId}@${item.version}` === host.dataset.studioProvenance);
       if (record) studioPanelUnmounts.push(mountPreact(host, () => renderStudioProvenance(record)));
@@ -1789,14 +1830,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       home: "Studio Kreator", format: "Pilih format permainan", template: "Pilih templat", import: "Impor game",
       editor: active?.pack.meta.title ?? "Editor draf", review: hasReviewAccess() ? "Panel Admin" : "Tinjauan Editorial",
     }[view];
-    const showingMapIssues = headerSlot.querySelector<HTMLDetailsElement>("[data-map-validation]")?.open;
-    const issues = validationErrors.length ? `<ul id="st-validation-issues" class="rb-errors" aria-label="Kesalahan validasi" tabindex="-1">${validationErrors.map(error => {
-      const fieldVerification = /^(?:unverified-(?:osm|ai)|unedited-ai|unreviewed-challenge|osm-verification-note)/.test(error.code);
-      const target = resolveValidationJump(error.path, format, fieldVerification);
-      const zone = error.code === "empty-zone" ? /"([^"]+)"/.exec(error.message)?.[1] ?? "" : "";
-      return `<li><div>${escapeText(error.message)}</div>
-        <button type="button" class="secondary" data-jump-path="${escapeText(error.path)}" data-jump-zone="${escapeText(zone)}" ${fieldVerification ? "data-field-verification" : ""}>Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button></li>`;
-    }).join("")}</ul>` : "";
     const saveInfo = editorSaveStatusInfo();
     const showMoreMenu = !authRequired && view !== "review";
 
@@ -1819,8 +1852,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         : view === "template" || view === "import" ? `<p class="studio-context">${escapeText(formatLabels[format])}</p>` : ""}
       ${statusMsg && !(view === "editor" && step === 3) ? `<p role="status">${escapeText(statusMsg)}</p>` : ""}
       ${errorMsg ? `<p role="alert" class="rb-errors">${escapeText(errorMsg)}</p>` : ""}
-      ${issues && step === 2 ? `<details data-map-validation ${showingMapIssues ? "open" : ""}>
-        <summary>${validationErrors.length} hal perlu diperiksa</summary>${issues}</details>` : issues}
+      ${view !== "editor" || step !== 4 ? renderValidationResult() : ""}
     </div>`;
 
     if (authRequired && view !== "review") {
@@ -1907,7 +1939,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             ? renderStep3(active)
             : renderStep4(active);
     restoreOpenAccordions(bodySlot);
-    if (step === 4) syncValidationFeedback();
   }
 
   function applyFormEdits(active: StudioVersionRecord): { pack: StudioPack; snapshot: GeoSnapshot } {
@@ -3310,10 +3341,6 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       void runAutomaticValidation(validationSource, btn);
       return;
     }
-    if (btn.hasAttribute("data-validation-findings")) {
-      root.querySelector<HTMLElement>("#st-validation-issues")?.focus();
-      return;
-    }
     if (!action) return;
 
     const moreMenu = btn.closest<HTMLDetailsElement>("details.studio-more-menu");
@@ -3507,10 +3534,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           return;
         }
         validationErrors = res.validation?.errors ?? [];
-        errorMsg =
-          res.error === "validation-failed"
-            ? "Perbaiki kesalahan validasi di atas sebelum membuka ruang uji draf."
-            : res.error ?? "Gagal membuka ruang uji draf.";
+        if (res.error === "validation-failed" && validationErrors.length) {
+          errorMsg = "";
+          validationFeedback = { state: "findings", message: "Perbaiki temuan berikut sebelum membuka ruang uji draf." };
+        } else {
+          validationFeedback = null;
+          errorMsg = res.error ?? "Gagal membuka ruang uji draf.";
+        }
         render();
         return;
       }
@@ -3531,7 +3561,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           await refresh();
         } else {
           validationErrors = res.validation?.errors ?? [];
-          errorMsg = res.error ?? "Gagal mengajukan draf.";
+          errorMsg = res.validation?.errors.length ? "" : res.error ?? "Gagal mengajukan draf.";
+          validationFeedback = null;
           render();
         }
         return;

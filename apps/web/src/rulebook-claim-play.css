@@ -112,10 +112,11 @@
   padding: 7px 10px;
 }
 .cg-card-stack { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-.cg-reward-options { display: grid; gap: 6px; margin-bottom: 10px; }
-.cg-reward-option { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; align-items: start; }
-.cg-reward-option .sg-pick { display: grid; gap: 3px; min-height: 44px; text-align: left; }
-.cg-reward-option .sg-pick span { font-weight: normal; overflow-wrap: anywhere; }
+.cg-reward-draw { display: grid; gap: 9px; }
+.cg-reward-draw .sg-reward-card { overflow-wrap: anywhere; }
+.cg-reward-draw .sg-reward-art { background-size: 300% 200%; }
+.cg-reward-draw .sg-reward-copy strong { font-size: 1.12rem; }
+.cg-reward-draw .sg-reward-entry > button { justify-self: stretch; }
 .cg-tactic {
   display: grid;
   align-content: start;

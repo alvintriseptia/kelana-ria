@@ -762,6 +762,9 @@ class SeekController {
       const openIncoming =
         incoming && (currentPanel === null || currentPanel === "hand" || currentPanel === "question");
       if (openDraw || openIncoming) {
+        this.panelSig.value = openDraw ? "hand" : "question";
+        this.pendingFocusPanelTitle = true;
+      } else if (isHider && currentPanel === "question" && !nextPending) {
         this.panelSig.value = "hand";
         this.pendingFocusPanelTitle = true;
       }
@@ -2155,7 +2158,7 @@ class SeekController {
     if (this.busySig.peek() || this.actionPending) return;
     const current = this.panelSig.peek();
     const target = next === current ? null : next;
-    if (target === "found-code") this.pendingFocusPanelTitle = true;
+    if (target === "found-code" || target === "question") this.pendingFocusPanelTitle = true;
     this.panelSig.value = target;
     if (target === "activity") {
       queueMicrotask(() => {
@@ -2883,6 +2886,19 @@ function SeekActiveGame({
           </SeekDockSheet>
 
           <nav class="sg-nav" aria-label="Aksi permainan">
+            {isHider && room.questions.some(question => question.status === "pending") && (
+              <button
+                type="button"
+                data-action="game-panel"
+                data-panel="question"
+                aria-pressed={panel === "question"}
+                disabled={busy}
+                onClick={() => ctrl.handleTogglePanel("question")}
+              >
+                <span class="sg-nav-icon" aria-hidden="true">✦</span>
+                Jawab
+              </button>
+            )}
             <button
               type="button"
               data-action="game-panel"

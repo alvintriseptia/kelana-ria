@@ -135,11 +135,16 @@ try {
 
   // The player must choose a target before a map-targeted card can be played.
   await pageSolo.getByRole("button", { name: "Kartu", exact: true }).click();
-  const soloOffers = pageSolo.locator('[data-action="choose-claim-reward"]');
+  const soloOffers = pageSolo.locator('[data-action="select-claim-reward"]');
+  await soloOffers.first().waitFor();
   assert.equal(await soloOffers.count(), 3);
+  await pageSolo.locator('.sg-offer[data-game-motion^="draw:"]').first().waitFor();
+  assert.equal(await pageSolo.locator('[data-action="choose-claim-reward"]').isDisabled(), true);
+  await soloOffers.first().press("Enter");
+  assert.equal(await soloOffers.first().getAttribute("aria-pressed"), "true");
   await pageSolo.setViewportSize({ width: 320, height: 640 });
   assert.ok(await pageSolo.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  assert.ok((await soloOffers.first().boundingBox()).height >= 44);
+  assert.ok(await soloOffers.first().evaluate((button) => button.offsetHeight >= 44));
   await pageSolo.screenshot({ path: path.join(results, "rulebook-claim-reward-320.png") });
   await pageSolo.setViewportSize({ width: 390, height: 844 });
   await clickAndWaitPost(pageSolo, '[data-action="choose-claim-reward"]');
@@ -376,8 +381,12 @@ try {
   }
   await pageP2.reload();
   await pageP2.getByRole("button", { name: "Kartu", exact: true }).click();
-  const rewardOptions = pageP2.locator('[data-action="choose-claim-reward"]');
+  const rewardOptions = pageP2.locator('[data-action="select-claim-reward"]');
+  await rewardOptions.first().waitFor();
   assert.equal(await rewardOptions.count(), 3);
+  assert.equal(await pageP2.locator('.sg-offer[data-game-motion^="draw:"]').count(), 0);
+  assert.equal(await pageP2.locator('[data-action="choose-claim-reward"]').isDisabled(), true);
+  await rewardOptions.first().click();
   assert.deepEqual((await readRoom(pageP2)).ownClaimReward, stealOffer);
   const keepRequestPromise = pageP2.waitForRequest(request =>
     request.method() === "POST" && request.url().endsWith("/api/rulebooks")
@@ -895,6 +904,45 @@ try {
   await author({ type: "pause-version", packId: fixture.meta.packId, version: 2, reason: "Edisi latihan selesai" });
   await pageCreator.goto(`${baseUrl}/?edition=${fixture.meta.packId}&version=2`);
   await pageCreator.getByRole("alert").filter({ hasText: "Edisi ini tidak tersedia" }).waitFor();
+
+  // Use a private draft with a deterministic reward deck to exercise the live swap effect.
+  const swapPackId = "pack-claim-swap-qa";
+  const swapDraft = (await author({
+    type: "clone-official", templatePackId: "official-jakarta-compact-claim",
+    packId: swapPackId, title: "Uji Ganti Tantangan", byline: "Studio QA", priceIdr: 0,
+  })).record;
+  swapDraft.pack.tacticalDeck.cards = swapDraft.pack.tacticalDeck.cards.filter(card => card.effect.primitive === "swap_challenge");
+  const savedSwap = await author({ type: "save-draft", pack: swapDraft.pack, snapshot: swapDraft.snapshot });
+  assert.equal(savedSwap.validation.ok, true, JSON.stringify(savedSwap.validation.errors));
+  const swapCode = (await author({ type: "start-draft-playtest", packId: swapPackId, version: 1, hostName: "Kreator QA" })).roomCode;
+  await pageCreator.goto(`${baseUrl}/?play=rulebook-claim&room=${swapCode}`);
+  await pageCreator.getByTestId("draft-playtest-badge").waitFor();
+  await pageCreator.setViewportSize({ width: 320, height: 640 });
+  for (const action of ["sim-start-checkin", "mark-ready", "start-match"]) {
+    await clickAndWaitPost(pageCreator, `button[data-action="${action}"]`);
+  }
+  await checkIn(pageCreator, "m-bloc");
+  await pageCreator.fill("#claim-input-answer", "2");
+  await clickAndWaitPost(pageCreator, 'button[data-action="submit-input"]');
+  await pageCreator.getByRole("button", { name: "Kartu", exact: true }).click();
+  await pageCreator.locator('[data-action="select-claim-reward"]').first().press("Enter");
+  await clickAndWaitPost(pageCreator, 'button[data-action="choose-claim-reward"]');
+  await pageCreator.getByRole("button", { name: "Tantangan", exact: true }).click();
+  await checkIn(pageCreator, "taman-ayodya");
+  const attempt = pageCreator.getByTestId("active-challenge-modal");
+  await attempt.waitFor();
+  const previous = await attempt.locator("h3").innerText();
+  assert.doesNotMatch(await attempt.innerText(), /Ganti Tantangan/);
+  assert.equal(await attempt.locator('[data-action="play-card"], .card-info-button').count(), 0);
+  await pageCreator.getByRole("button", { name: "Kartu", exact: true }).press("Enter");
+  await pageCreator.getByRole("button", { name: /Ganti Tantangan/ }).press("Enter");
+  const swapAction = pageCreator.locator('[data-action="play-card"]');
+  assert.equal(await swapAction.getAttribute("data-landmark"), "taman-ayodya");
+  assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await clickAndWaitPost(pageCreator, '[data-action="play-card"]');
+  await pageCreator.getByRole("button", { name: "Tantangan", exact: true }).press("Enter");
+  assert.notEqual(await attempt.locator("h3").innerText(), previous);
+  await pageCreator.screenshot({ path: path.join(results, "rulebook-claim-swap-320.png") });
   await ctxCreator.close();
 
   // Live multiplayer Claim rival presence (SSE event: presence, freshness/stale cues, check-in fallback, polling fallback, activity timestamps, 390x844 & 320x640)

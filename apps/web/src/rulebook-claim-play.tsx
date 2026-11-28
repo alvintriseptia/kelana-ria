@@ -176,6 +176,7 @@ function ClaimPlayApp({
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const drawerScoreRef = useRef<HTMLSpanElement | null>(null);
   const cardsTabRef = useRef<HTMLButtonElement | null>(null);
+  const newRewardOfferRef = useRef("");
   const activityHostRef = useRef<HTMLElement | null>(null);
 
   function currentSurface(): PlayerErrorSurface {
@@ -802,7 +803,13 @@ function ClaimPlayApp({
         roomEventsRef.current?.markSynced();
         return;
       }
-      const switchedRoom = prevLive?.room.code !== payload.room.code;
+      const switchedRoom = prevLive?.room.code !== payload.room.code || prevLive?.room.seatId !== payload.room.seatId;
+      const offerId = payload.room.ownClaimReward?.offerId ?? "";
+      if (switchedRoom || !offerId) {
+        newRewardOfferRef.current = "";
+      } else if (prevLive?.room.ownClaimReward?.offerId !== offerId) {
+        newRewardOfferRef.current = offerId;
+      }
       batch(() => {
         if (
           selectedCardIdSig.value &&
@@ -2435,6 +2442,10 @@ function ClaimPlayApp({
                   });
                 });
               }}
+              dealOfferId={folded ? "" : newRewardOfferRef.current}
+              onRewardPresented={(offerId) => {
+                if (newRewardOfferRef.current === offerId) newRewardOfferRef.current = "";
+              }}
               onChooseReward={(offerId, cardInstanceId) => {
                 runBusyAction("choose-claim-reward", "landmark-checkin", offerId, async () => {
                   if (await postRoomAction({ type: "choose-claim-reward", offerId, cardInstanceId })) {
@@ -2493,11 +2504,6 @@ function ClaimPlayApp({
                     onChooseShotTier={(landmarkId, tier) => {
                       runBusyAction("choose-shot-tier", "landmark-checkin", landmarkId, async () => {
                         await postRoomAction({ type: "choose-shot-tier", landmarkId, tier });
-                      });
-                    }}
-                    onSwapChallenge={(cardInstanceId, landmarkId) => {
-                      runBusyAction("play-card", "landmark-checkin", landmarkId, async () => {
-                        await postRoomAction({ type: "play-card", cardInstanceId, landmarkId });
                       });
                     }}
                     onBailChallenge={(landmarkId) => {
