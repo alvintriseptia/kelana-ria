@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import context_packet
+import delivery
 
 REPO = "alvintriseptia/kelana-ria"
 FLOW = ".github/workflows/factory.yml"
@@ -160,7 +161,7 @@ def green(run, head, source, jobs):
             and run.get("head_repository", {}).get("full_name") == REPO
             and run.get("head_sha") == head and run.get("head_branch") == source
             and run.get("status") == "completed" and run.get("conclusion") == "success"
-            and any(job["name"] == "factory" for job in jobs)
+            and delivery.FACTORY_JOBS <= {job["name"] for job in jobs}
             and all(job["conclusion"] == "success" for job in jobs))
 
 
@@ -212,10 +213,7 @@ def merge(root, number, base, reviewed_sha):
     issue = match[1]
     if not re.search(rf"(?im)^Closes #{issue}\s*$", pull["body"] or ""):
         raise ValueError("PR must link the claimed issue")
-    ticket = api(f"issues/{issue}")
-    labels = {v["name"] for v in ticket["labels"]}
-    if ticket["state"] != "open" or "ready" not in labels or "blocked" in labels:
-        raise ValueError("Linked issue must still be open and ready")
+    delivery.require_ready(api, int(issue), dependencies)
     head = pull["head"]["sha"]
     git(root, "fetch", "-q", f"https://github.com/{REPO}.git", f"refs/pull/{number}/head")
     if git(root, "rev-parse", "FETCH_HEAD").decode().strip() != head:
@@ -267,9 +265,10 @@ def main():
         if name == "merge":
             sub.add_argument("reviewed_sha", help="Full commit SHA of the inspected diff")
     context_packet.register(commands)
+    delivery.register(commands)
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
-    if context_packet.dispatch(args, root, api, dependencies):
+    if context_packet.dispatch(args, root, api, dependencies) or delivery.dispatch(args, root, sys.modules[__name__]):
         return
     base = current_main(root)
     if args.command == "pickup":
@@ -283,5 +282,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, RuntimeError, subprocess.CalledProcessError) as error:
+    except (ValueError, RuntimeError, OSError, subprocess.CalledProcessError) as error:
         sys.exit(str(error))

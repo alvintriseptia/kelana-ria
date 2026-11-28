@@ -118,7 +118,7 @@ class MergeTests(unittest.TestCase):
                "head_branch": "agent/issue-2", "status": "completed", "conclusion": "success",
                "head_sha": "new", "head_repository": {"full_name": agent.REPO},
                "pull_requests": [{"number": 16, "base": {"sha": "base"}, "head": {"sha": "new"}}]}
-        results = {"pulls/16": pull, "issues/2": {"state": "open", "labels": [{"name": "ready"}]},
+        results = {"pulls/16": pull, "issues/2": {"state": "open", "body": "## Dependencies\n\nNone", "labels": [{"name": "ready"}]},
                    "git/ref/heads/main": {"object": {"sha": "base"}},
                    "pulls/16/merge": {"merged": True, "sha": "merged"},
                    "git/commits/merged": {"parents": [{"sha": "base"}]}}
@@ -126,7 +126,8 @@ class MergeTests(unittest.TestCase):
         links = {"totalCount": 1, "nodes": [{"number": 2, "repository": {"nameWithOwner": agent.REPO}}]}
         with patch.object(agent, "api", side_effect=lambda path, **kw: results[path]) as api, \
              patch.object(agent, "git", side_effect=[b"", b"new", b"base"]), \
-             patch.object(agent, "pages", side_effect=[[run], [{"name": "factory", "conclusion": "success"}]]), \
+             patch.object(agent, "pages", side_effect=[[run], [{"name": "factory", "conclusion": "success"},
+                                                        {"name": "workspace", "conclusion": "success"}]]), \
              patch.object(agent, "routine_scope", return_value=True), \
              patch.object(agent, "closing_issues", return_value=links), \
              patch.object(subprocess, "check_output", return_value=json.dumps(reviews)):
@@ -150,7 +151,9 @@ class MergeTests(unittest.TestCase):
         run = {"path": ".github/workflows/factory.yml", "event": "pull_request",
                "head_sha": "abc", "status": "completed", "conclusion": "success",
                "head_repository": {"full_name": agent.REPO}, "head_branch": "agent/issue-1"}
-        self.assertTrue(agent.green(run, "abc", "agent/issue-1", [{"name": "factory", "conclusion": "success"}]))
+        jobs = [{"name": name, "conclusion": "success"} for name in ("factory", "workspace")]
+        self.assertTrue(agent.green(run, "abc", "agent/issue-1", jobs))
+        self.assertFalse(agent.green(run, "abc", "agent/issue-1", jobs[:1]))
         for sha, jobs in [("old", [{"name": "factory", "conclusion": "success"}]),
                           ("abc", []), ("abc", [{"name": "factory", "conclusion": "skipped"}])]:
             self.assertFalse(agent.green(run, sha, "agent/issue-1", jobs))
