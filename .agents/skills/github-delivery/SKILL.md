@@ -26,3 +26,7 @@ When creating new work from a design or planning session, file the plan directly
 - Use the four headings from `.github/ISSUE_TEMPLATE/work.yml`: `## Outcome`, `## Dependencies`, `## Requirements`, and `## Verification`.
 - Keep `## Dependencies` strictly to `None` or comma-separated issue numbers (for example `#35` or `#35, #36`) with no extra prose under that heading so `factory/agent.py` can parse it.
 - Apply `ready` and `priority:1` or `priority:2` labels (or `blocked` when awaiting external human input) so the factory queue can claim work in order.
+
+## Record delivery evidence
+
+Record timing, CI attempts and observable usage with the [Factory efficiency baseline](../../../docs/qa/factory-efficiency-baseline.md). Report unavailable counters as null and byte measurements separately from tokens.
