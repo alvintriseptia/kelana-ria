@@ -177,6 +177,10 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
         prompts.push({ id: `claim-effect-${curse.castAt}`, kind: "curse", text: "Ada efek aktif. Lihat cara menyelesaikannya.", panel: "review",
           ...(curse.expiresAt === null ? {} : { deadline: curse.expiresAt }) });
       }
+      if (room.ownClaimReward) {
+        prompts.push({ id: `claim-reward-${room.ownClaimReward.offerId}`, kind: "draw",
+          text: "Pilih satu kartu hadiah.", panel: "cards" });
+      }
     }
     return view(room.seatId, nextPrompt(prompts));
   }

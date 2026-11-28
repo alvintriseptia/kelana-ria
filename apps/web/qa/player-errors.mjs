@@ -285,7 +285,7 @@ try {
   assert.equal(await mapCanvas.evaluate((el) => el.isConnected), true, "MapLibre canvas stays mounted");
   await page.screenshot({ path: path.join(results, "errors-out-of-range.png") });
 
-  // Lock m-bloc with valid GPS ("2") to draw a tactical card into hand
+  // Lock m-bloc with valid GPS ("2"), then keep a tactical reward.
   await setGeoResult(page, { latitude: mBloc.latitude, longitude: mBloc.longitude, timestamp: now });
   await Promise.all([
     page.waitForResponse((r) => r.url().includes("/api/rulebooks") && r.request().method() === "POST"),
@@ -298,11 +298,16 @@ try {
     page.click('button[data-action="submit-input"]'),
   ]);
   await page.waitForFunction(() => document.body.textContent.includes("1/4 terkunci"));
+  await page.getByRole("button", { name: "Kartu", exact: true }).click();
+  const rewards = page.locator('[data-action="choose-claim-reward"]');
+  assert.equal(await rewards.count(), 3);
+  await rewards.first().click();
+  await page.locator(".cg-tactic").waitFor();
 
   // Check drawn tactical card; if it needs a claimed/active landmark (instant_lock / swap_challenge),
   // check in at taman-ayodya so that landmark is eligible right away!
   const postLockState = await (await ctxClaim.request.get(`${baseUrl}/api/rulebooks/rooms/${claimRoomCode}`)).json();
-  let drawnCard = postLockState.room.ownHand[0];
+  const drawnCard = postLockState.room.ownHand[0];
   assert.ok(drawnCard, "Locking m-bloc must draw a tactical card");
   const isPinTargeted = drawnCard.effect.primitive !== "swap_challenge";
   if (drawnCard.effect.primitive === "instant_lock" || drawnCard.effect.primitive === "swap_challenge") {

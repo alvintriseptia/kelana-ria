@@ -189,7 +189,7 @@ export type ClaimPublicListing = {
   zones: { id: string; name: string; label: string; landmarkCount: number }[];
   landmarkCount: number;
   challengePrimitives: string[];
-  tacticalDeckSummary: { enabled: boolean; totalCards: number; maxHandSize: number; drawTriggers: ClaimRulebookPack["tacticalDeck"]["drawTriggers"] };
+  tacticalDeckSummary: Pick<ClaimRulebookPack["tacticalDeck"], "enabled" | "maxHandSize" | "claimRewardDrawCount" | "drawTriggers"> & { totalCards: number };
   cardExamples: PublicCardExample[];
   publishedAt: number;
 };
@@ -351,7 +351,9 @@ export function toPublicClaimListing(record: StoredRulebookRecord): ClaimPublicL
     landmarkCount: pack.geography.landmarks.filter((lm) => lm.zoneId === z.id).length,
   }));
   const totalCards = pack.tacticalDeck.cards.reduce((sum, c) => sum + c.copies, 0);
-  const example = pack.tacticalDeck.enabled ? pack.tacticalDeck.cards.find(card => card.copies > 0) : undefined;
+  const examples = pack.tacticalDeck.enabled
+    ? pack.tacticalDeck.cards.filter(card => card.copies > 0).slice(0, pack.tacticalDeck.claimRewardDrawCount ?? 1)
+    : [];
   return {
     packId: record.packId,
     version: record.version,
@@ -381,9 +383,10 @@ export function toPublicClaimListing(record: StoredRulebookRecord): ClaimPublicL
       enabled: pack.tacticalDeck.enabled,
       totalCards,
       maxHandSize: pack.tacticalDeck.maxHandSize,
+      claimRewardDrawCount: pack.tacticalDeck.claimRewardDrawCount,
       drawTriggers: pack.tacticalDeck.drawTriggers,
     },
-    cardExamples: example ? [{ title: example.title, description: example.description, kind: "tactical" }] : [],
+    cardExamples: examples.map(({ title, description }) => ({ title, description, kind: "tactical" })),
     publishedAt: record.publishedAt ?? record.updatedAt,
   };
 }

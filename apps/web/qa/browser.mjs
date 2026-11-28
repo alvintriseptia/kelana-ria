@@ -154,8 +154,16 @@ async function verifyClaimPractice(page, results, mode, hasDeck = true) {
   const cardLesson = dialog.getByRole('button', { name: 'Lihat kartu latihan' });
   if (hasDeck) {
     await cardLesson.click();
+    await dialog.getByRole('heading', { name: 'Pilih kartu latihan' }).waitFor();
+    assert.match(await dialog.innerText(), /Tarik 3 kartu, simpan 1/);
+    const confirm = dialog.getByRole('button', { name: 'Simpan 1 kartu' });
+    assert.equal(await confirm.isDisabled(), true);
+    const firstCard = dialog.getByRole('button', { name: 'Balik kartu 1' });
+    await tabTo(page, firstCard);
+    await page.keyboard.press('Enter');
+    await dialog.getByRole('button', { name: 'Pilih Intip Tantangan' }).click();
+    await confirm.click();
     await dialog.getByRole('heading', { name: 'Kartu di tangan' }).waitFor();
-    assert.match(await dialog.innerText(), /Kamu mengunci landmark dan dapat 1 kartu/);
     const hand = dialog.getByRole('region', { name: 'Kartu latihan' });
     assert.deepEqual(await hand.locator('strong').allTextContents(), ['Intip Tantangan']);
     await assertCleanUiCopy(page, `claim practice card (${mode})`);

@@ -615,6 +615,9 @@ export function validateClaimRulebook(
   if (!deck || typeof deck !== "object") {
     addError("invalid-deck", "tacticalDeck", "tacticalDeck config is required.");
   } else if (deck.enabled) {
+    if (deck.claimRewardDrawCount !== undefined && (!isPositiveInt(deck.claimRewardDrawCount) || deck.claimRewardDrawCount > 6)) {
+      addError("invalid-claim-reward-draw", "tacticalDeck.claimRewardDrawCount", "tacticalDeck.claimRewardDrawCount must be in 1..6.");
+    }
     if (!isPositiveInt(deck.maxHandSize) || deck.maxHandSize < 1 || deck.maxHandSize > 4) {
       addError("invalid-hand-limit", "tacticalDeck.maxHandSize", "tacticalDeck.maxHandSize must be in 1..4.");
     }

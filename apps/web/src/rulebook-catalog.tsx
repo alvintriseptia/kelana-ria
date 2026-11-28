@@ -125,6 +125,7 @@ export type CatalogEdition = {
         enabled: boolean;
         totalCards: number;
         maxHandSize: number;
+        claimRewardDrawCount?: number;
         drawTriggers?: { onLock: boolean; onSteal: boolean; onBoldChallenge: boolean };
       };
     }

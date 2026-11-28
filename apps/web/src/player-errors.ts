@@ -516,6 +516,12 @@ const ERROR_CATALOG: Record<string, CatalogEntry> = {
     tone: "warn",
     staleTarget: true,
   },
+  "claim-reward-unavailable": {
+    message: "Pilihan hadiah ini sudah berubah. Periksa kartu yang tersedia.",
+    placement: "toast",
+    tone: "warn",
+    staleTarget: true,
+  },
   "card-not-in-hand": {
     message: "Kartu itu sudah tidak ada di tanganmu. Pilih kartu lain yang masih tersedia.",
     placement: "toast",

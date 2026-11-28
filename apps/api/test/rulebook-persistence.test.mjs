@@ -86,6 +86,7 @@ test("Claim the City solo & group rooms, catalogRooms idempotency, photos, and a
   let photoAutoApproveAt;
   let groupDeadline;
   let soloDeadline;
+  let soloReward;
   let priorGuestActivitySeq;
   let priorStateRev;
   let photoLandmarkId;
@@ -110,6 +111,12 @@ test("Claim the City solo & group rooms, catalogRooms idempotency, photos, and a
       const soloStarted = act(store, soloCode, hostSolo, T0 + 2000, { type: "start" });
       soloDeadline = soloStarted.room.deadline;
       assert.equal(soloStarted.room.phase, "active");
+      const mBlok = store.viewRoom(soloCode, hostSolo, T0 + 2000).publicBoard.landmarks.find(landmark => landmark.id === "m-bloc");
+      act(store, soloCode, hostSolo, T0 + 3000, { type: "check-in-landmark", landmarkId: mBlok.id, fix: fixAt(mBlok, T0 + 3000) });
+      const lock = act(store, soloCode, hostSolo, T0 + 4000, { type: "submit-challenge", landmarkId: mBlok.id, inputValue: "2" });
+      assert.equal(lock.error, undefined);
+      soloReward = lock.room.ownClaimReward;
+      assert.equal(soloReward.cards.length, 3);
 
       // Start group room on official free pack
       const groupCreated = store.createFreeRoomFromRulebook(
@@ -195,6 +202,13 @@ test("Claim the City solo & group rooms, catalogRooms idempotency, photos, and a
       assert.equal(soloView.room.phase, "active");
       assert.equal(soloView.room.deadline, soloDeadline);
       assert.equal(soloView.room.isSolo, true);
+      assert.deepEqual(soloView.room.ownClaimReward, soloReward);
+      const keep = act(restarted, soloCode, hostSolo, T0 + 16_000, {
+        type: "choose-claim-reward", offerId: soloReward.offerId, cardInstanceId: soloReward.cards[0].instanceId,
+      });
+      assert.equal(keep.error, undefined);
+      assert.equal(keep.room.ownClaimReward, undefined);
+      assert.deepEqual(keep.room.ownHand, [soloReward.cards[0]]);
 
       // 3. Group room seats, deadline, pending photo review, photo BLOB, and activity notices survive restart
       const rivalView = restarted.viewRoom(groupCode, guestGroup, T0 + 15_000);
