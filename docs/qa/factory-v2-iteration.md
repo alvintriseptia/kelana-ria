@@ -34,3 +34,19 @@ python3 factory/agent.py verify --profile factory
 ```
 
 The context rehearsal reads the fixed pre-V2 product revision with three workloads. The optimized path counts the issue packet, the full applicable guidance at the current revision, targeted excerpts from the same code and QA files, and linked PRD sections. GitHub setup and packet construction sit outside the excerpt-read timer. The historical baseline has PR timing and CI attempts. Current context and verification rehearsals require zero model inference.
+
+## Measured rollout evidence
+
+| Matched workload | V1 full reads | V2 packet, guidance and excerpts | V1 Git reads | V2 guidance and excerpt Git reads |
+| --- | ---: | ---: | ---: | ---: |
+| Copy/CSS, #205 | 45,842 B | 41,416 B | 8 | 10 |
+| Studio, #209 | 300,526 B | 42,182 B | 8 | 10 |
+| Contract/map, #231 | 180,436 B | 51,887 B | 10 | 11 |
+
+These runs used the same product files at `39e39ed`, with V2 guidance at `e2d778c`. All targeted needles matched. Local V1 reads took 0.013–0.017 s. V2 guidance and excerpt reads after packet preparation took 0.018–0.020 s. The packet has additional GitHub and Git indexing work. The comparison demonstrates lower visible byte volume, with extra setup and reads in some cases.
+
+Factory verification passed 39 tests. The V2 wrapper executed the same Factory command, retained 5,297 B of output and emitted a 319 B summary in a 1.92 s check. Tests and fixtures cover priority/dependencies, required Factory jobs and current reviewed head, separate domain profiles, retained context, dirty worktree recovery, repeated-error advice, and same-branch and same-PR resume. The fixture merge exercises the routine policy. The live #235 delivery exercised prepare, publish, CI and cleanup on its own claimed branch. [V1 baseline](factory-efficiency-baseline.md) · [Live #235 checks](https://github.com/alvintriseptia/kelana-ria/actions/runs/46127670421)
+
+CLI capability was checked with Codex CLI 0.172.0-alpha.2 using `codex --config 'model_reasoning_effort="medium"' --help` and the corresponding `"high"` invocation. The local check demonstrates acceptance of the configuration flag, and the official guide documents behavior with eligible models. Cloud uses the manual workflow when the relevant control is unavailable.
+
+Successful matched product deliveries, repair-count improvements and allowance savings remain unmeasured. The matched outcomes here are deterministic context and verification rehearsals. For a live comparison, take isolated before/after allowance readings within the same reset window, use the same client, plan, model, effort and complexity cohort, and record outcomes, CI results, retries and elapsed time. Use the proxy protocol where allowance remains unavailable. Treat the 25–40% target as a hypothesis. [Allowance protocol](factory-efficiency-baseline.md#supported-telemetry)
