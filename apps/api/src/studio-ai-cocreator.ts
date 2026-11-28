@@ -17,7 +17,7 @@ type AttemptOutcome = "accepted" | "invalid-output" | "timeout" | "network-error
 type FallbackReason = "unconfigured" | Exclude<AttemptOutcome, "accepted">;
 
 export type StudioAiEvidenceEvent = {
-  kind: "studio-ai-suggest";
+  kind: "studio-ai-suggest" | "studio-ai-chat";
   provider: "Cloudflare Workers AI";
   mode: ProviderEvidenceMode;
   format: StudioAiSuggestRequest["format"];
@@ -41,6 +41,19 @@ export type StudioAiOptions = {
   now?: () => number;
   budgetMs?: number;
   onEvent?: (event: StudioAiEvidenceEvent) => void;
+};
+
+type Generation<T> = { ok: true; data: T } | { ok: false; reason: FallbackReason };
+
+type GenerationInput<T> = {
+  kind: StudioAiEvidenceEvent["kind"];
+  format: StudioAiEvidenceEvent["format"];
+  userMessage: string;
+  systemPrompt: (retry: boolean) => string;
+  decode: (raw: Record<string, unknown> | undefined, providerSecrets: readonly string[]) => T | undefined;
+  ragMetrics: StudioRagMetrics;
+  startedAt?: number;
+  timeLimitMs?: number;
 };
 
 type SuggestResult =
@@ -97,16 +110,21 @@ export function createStudioAiCoCreator(
   const sanitizeReference = (value: string, privateValues: readonly string[] = []) =>
     redactStudioKnowledge(value, [...providerSecrets, ...privateValues]);
 
-  async function suggest(creator: string, input: unknown, privateValues: string[] = [], scope?: StudioDraftScope): Promise<SuggestResult> {
-    const startedAt = now();
+  function rateLimit(creator: string, startedAt: number): number | undefined {
     for (const [key, window] of windows) if (window.until <= startedAt) windows.delete(key);
     const window = windows.get(creator) ?? { until: startedAt + windowMs, count: 0 };
     if (window.count >= maxRequests || (!windows.has(creator) && windows.size >= 2048)) {
-      return { ok: false, status: 429, error: "rate-limited", retryAfter: Math.ceil((window.until - startedAt) / 1000) };
+      return Math.max(1, Math.ceil((window.until - startedAt) / 1000));
     }
     window.count++;
     windows.set(creator, window);
+    return undefined;
+  }
 
+  async function suggest(creator: string, input: unknown, privateValues: string[] = [], scope?: StudioDraftScope): Promise<SuggestResult> {
+    const startedAt = now();
+    const retryAfter = rateLimit(creator, startedAt);
+    if (retryAfter !== undefined) return { ok: false, status: 429, error: "rate-limited", retryAfter };
     const secrets = [...providerSecrets, creator, ...privateValues];
     const parsed = parseStudioAiRequest(input, secrets);
     if (!parsed) return { ok: false, status: 400, error: "invalid-request" };
@@ -143,10 +161,19 @@ export function createStudioAiCoCreator(
       if (!result) throw new Error("Invalid Studio suggestion template");
       return result;
     }
-    if (!endpoint) return fallback("unconfigured");
+    const generated = await generate({
+      kind: "studio-ai-suggest", format: request.format, userMessage: providerInput, ragMetrics, startedAt,
+      systemPrompt: retry => systemPrompt(request, platformContext, retry),
+      decode: raw => reply(raw?.suggestions),
+    });
+    return generated.ok ? generated.data : fallback(generated.reason);
+  }
+
+  async function generate<T>(input: GenerationInput<T>): Promise<Generation<T>> {
+    if (!endpoint) return { ok: false, reason: "unconfigured" };
 
     // A single deadline covers both attempts and response bodies, even if an injected fetch ignores abort.
-    const deadline = startedAt + budgetMs;
+    const deadline = (input.startedAt ?? now()) + Math.min(budgetMs, input.timeLimitMs ?? budgetMs);
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_resolve, reject) => {
@@ -158,11 +185,11 @@ export function createStudioAiCoCreator(
     const expired = () => controller.signal.aborted || now() >= deadline;
     try {
       for (let attempt = 1; attempt <= 2; attempt++) {
-        if (expired()) return fallback("timeout");
+        if (expired()) return { ok: false, reason: "timeout" };
         const attemptStarted = now();
         let outcome: AttemptOutcome = "invalid-output";
         let httpStatus: number | null = null;
-        let accepted: SuggestResult | undefined;
+        let accepted: T | undefined;
         try {
           const response = await Promise.race([fetchImpl(endpoint, {
             method: "POST",
@@ -170,8 +197,8 @@ export function createStudioAiCoCreator(
             headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${apiToken}` },
             body: JSON.stringify({
               messages: [
-                { role: "system", content: systemPrompt(request, platformContext, attempt > 1) },
-                { role: "user", content: providerInput },
+                { role: "system", content: input.systemPrompt(attempt > 1) },
+                { role: "user", content: input.userMessage },
               ],
               temperature: 0.2,
               max_tokens: 2_800,
@@ -183,8 +210,8 @@ export function createStudioAiCoCreator(
             outcome = "http-error";
           } else {
             const raw: unknown = await Promise.race([response.json(), timeout]);
-            accepted = reply(parseWorkersAiResult(raw)?.suggestions);
-            if (accepted) outcome = "accepted";
+            accepted = input.decode(parseWorkersAiResult(raw), providerSecrets);
+            if (accepted !== undefined) outcome = "accepted";
           }
         } catch (error) {
           if (error instanceof SuggestionTimeout || (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name))) {
@@ -195,19 +222,22 @@ export function createStudioAiCoCreator(
         }
         if (expired()) outcome = "timeout";
         options.onEvent?.({
-          kind: "studio-ai-suggest", provider: "Cloudflare Workers AI", mode, format: request.format,
+          kind: input.kind, provider: "Cloudflare Workers AI", mode, format: input.format,
           endpoint: redactedEndpoint, model: redactedModel, attempt, httpStatus, outcome,
-          durationMs: Math.max(0, now() - attemptStarted), ragMetrics, redacted: true,
+          durationMs: Math.max(0, now() - attemptStarted), ragMetrics: input.ragMetrics, redacted: true,
         });
-        if (outcome === "accepted" && accepted) return accepted;
-        if (outcome !== "invalid-output" && outcome !== "accepted") return fallback(outcome);
+        if (outcome === "accepted" && accepted !== undefined) return { ok: true, data: accepted };
+        if (outcome !== "invalid-output" && outcome !== "accepted") return { ok: false, reason: outcome };
       }
-      return fallback("invalid-output");
+      return { ok: false, reason: "invalid-output" };
     } finally {
       clearTimeout(timer);
       controller.abort();
     }
   }
 
-  return { mode: endpoint ? "live" as const : "template-fallback" as const, suggest, sanitizeReference };
+  return {
+    mode: endpoint ? "live" as const : "template-fallback" as const,
+    model: redactedModel, providerMode: mode, suggest, generate, rateLimit, sanitizeReference,
+  };
 }

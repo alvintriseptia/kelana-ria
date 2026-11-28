@@ -466,6 +466,7 @@ if (import.meta.main) {
     demoVideoYoutubeId: process.env.DEMO_VIDEO_YOUTUBE_ID,
     osmPoi: {
       overpassApiUrl: process.env.OVERPASS_API_URL,
+      nominatimApiUrl: process.env.NOMINATIM_API_URL,
       mode: process.env.OSM_POI_MODE === "fixture" ? "fixture" : "live",
     },
     healthMeta: { aiMode: providers.aiMode, routeMode: providers.routeMode },

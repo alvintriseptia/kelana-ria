@@ -2593,6 +2593,12 @@ export function rulebookStore(
     listPublicRecaps: (packId?: string, editionVersion?: number) => recaps.listPublic(packId, editionVersion),
     creatorStudio,
     ownedStudioDraft,
+    loadStudioChatDraft: (credential: string, packId: string, version: number) => {
+      const record = getRecord(packId, version);
+      return record?.ownerHash === digest(credential) && !record.isOfficial &&
+        (record.status === "draft" || record.status === "changes-requested")
+        ? record : undefined;
+    },
     studioKnowledge,
     ingestStudioDoc: (credential: string, packId: string, version: number, input: Parameters<typeof studioKnowledge.ingestStudioDoc>[1]) =>
       transact(() => {

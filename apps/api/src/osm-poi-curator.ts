@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { setTimeout as wait } from "node:timers/promises";
 import type {
-  GeoCoordinate, StudioPoiCandidate, StudioPoiCategory, StudioPoiCurateRequest, StudioPoiCurateResponse,
+  GeoAttribution, GeoCoordinate, StudioPoiCandidate, StudioPoiCategory, StudioPoiCurateRequest, StudioPoiCurateResponse,
+  StudioResolvedPinpoint,
 } from "@kelana-ria/contracts";
 import { haversineMeters, isValidCoordinate, pointInPolygon, pointOnSegment } from "./seek-engine/rulebook-validator.js";
 
@@ -22,12 +24,17 @@ const windowMs = 60_000;
 const cacheLimit = 64;
 const elementLimit = 320;
 const maxAreaKm2 = 250;
+const defaultOverpassUrl = "https://overpass-api.de/api/interpreter";
+const osmAttributionNotice = "© OpenStreetMap contributors (ODbL)";
 
 export type OsmPoiCuratorOptions = {
   overpassApiUrl?: string;
-  mode?: "live" | "fixture";
+  nominatimApiUrl?: string;
+  mode?: "live" | "fixture" | "recorded-rehearsal";
   fetchImpl?: typeof fetch;
   now?: () => number;
+  /** Recorded Nominatim search results keyed by the queried place name. */
+  recordedResults?: Readonly<Record<string, readonly unknown[]>>;
 };
 
 type NormalizedRequest = StudioPoiCurateRequest & { categories: StudioPoiCategory[]; limit: number };
@@ -147,20 +154,28 @@ function cleanText(value: unknown, limit = 100): string | undefined {
   return value.replace(/[\u0000-\u001F\u007F<>]/g, " ").replace(/\s+/g, " ").trim().slice(0, limit) || undefined;
 }
 
+function allowsPublicUse(tags: Record<string, unknown>): boolean {
+  return !["private", "no", "customers", "residents", "members", "permit", "official"].includes(cleanText(tags.access)?.toLowerCase() ?? "") &&
+    tags.military === undefined && tags.landuse !== "military" && tags.building !== "residential" &&
+    tags.disused !== "yes" && tags.abandoned !== "yes";
+}
+
+function osmCategory(tags: Record<string, unknown>, requested = categoryNames): StudioPoiCategory | undefined {
+  return requested.find(key => categories[key].some(([tag, ...values]: TagRule) =>
+    typeof tags[tag] === "string" && values.includes(tags[tag])));
+}
+
 function normalizeElement(raw: unknown, requested: StudioPoiCategory[]): SourcePoint | undefined {
   if (!isRecord(raw) || (raw.type !== "node" && raw.type !== "way" && raw.type !== "relation") ||
       typeof raw.id !== "number" || !Number.isSafeInteger(raw.id) || raw.id <= 0 || !isRecord(raw.tags)) return;
   const tags = raw.tags;
-  if (["private", "no", "customers", "residents", "members", "permit", "official"].includes(cleanText(tags.access)?.toLowerCase() ?? "") ||
-      tags.military !== undefined || tags.landuse === "military" || tags.building === "residential" ||
-      tags.disused === "yes" || tags.abandoned === "yes") return;
+  if (!allowsPublicUse(tags)) return;
 
   const coordinates = raw.type === "node" ? raw : isRecord(raw.center) ? raw.center : undefined;
   const point = { latitude: coordinates?.lat, longitude: coordinates?.lon };
   if (!isValidCoordinate(point)) return;
   const name = cleanText(tags.name);
-  const category = requested.find(key => categories[key].some(([tag, ...values]: TagRule) =>
-    typeof tags[tag] === "string" && values.includes(tags[tag])));
+  const category = osmCategory(tags, requested);
   if (!name || !category) return;
 
   const safeTags: Record<string, string> = {};
@@ -233,7 +248,7 @@ function projectCandidates(points: SourcePoint[], request: NormalizedRequest): S
 export function createOsmPoiCurator(options: OsmPoiCuratorOptions = {}) {
   const now = options.now ?? Date.now;
   const fetchImpl = options.fetchImpl ?? fetch;
-  const url = options.overpassApiUrl?.trim() || "https://overpass-api.de/api/interpreter";
+  const url = options.overpassApiUrl?.trim() || defaultOverpassUrl;
   const windows = new Map<string, { until: number; count: number }>();
   const cache = new Map<string, { expiresAt: number; retrievedAt: string; points: SourcePoint[] }>();
 
@@ -254,12 +269,14 @@ export function createOsmPoiCurator(options: OsmPoiCuratorOptions = {}) {
     function reply(points: SourcePoint[], mode: StudioPoiCurateResponse["mode"], date: string, fallbackReason?: StudioPoiCurateResponse["fallbackReason"]): CurateResult {
       return { ok: true, data: {
         mode, ...(fallbackReason ? { fallbackReason } : {}),
-        attribution: { source: "OpenStreetMap Overpass API", license: "ODbL 1.0", retrievedAt: date, notice: "© OpenStreetMap contributors (ODbL)" },
+        attribution: { source: "OpenStreetMap Overpass API", license: "ODbL 1.0", retrievedAt: date, notice: osmAttributionNotice },
         candidates: projectCandidates(points, request),
       } };
     }
 
-    if (options.mode === "fixture") return reply(fixturePoints(request), "recorded-rehearsal", retrievedAt, "fixture-mode");
+    if (options.mode === "fixture" || options.mode === "recorded-rehearsal") {
+      return reply(fixturePoints(request), "recorded-rehearsal", retrievedAt, "fixture-mode");
+    }
     const bbox = Object.values(bounds(request.boundaryPolygon)).map(value => value.toFixed(3));
     // Include the shape so different polygons with the same bbox cannot share incomplete results.
     const quantizedShape = request.boundaryPolygon.map(p => [p.latitude.toFixed(6), p.longitude.toFixed(6)]);
@@ -290,4 +307,231 @@ export function createOsmPoiCurator(options: OsmPoiCuratorOptions = {}) {
   }
 
   return { curate };
+}
+
+export type ResolvePlaceNamesFromOsmInput = Pick<StudioPoiCurateRequest,
+  "boundaryPolygon" | "startPoint" | "zones" | "existingPoints"> & {
+    cityLabel: string;
+    places: readonly { clientKey: string; name: string }[];
+  };
+
+export type ResolvePlaceNamesFromOsmOptions = OsmPoiCuratorOptions & {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
+const placeNameLimit = 15;
+const placeNameTimeoutMs = 10_000;
+const nominatimMatchLimit = 8;
+const placeNameUserAgent = "KelanaRia-Studio/1.0 (+https://github.com/alvintriseptia/kelana-ria)";
+const placeNameHeaders = { "user-agent": placeNameUserAgent, accept: "application/json" };
+
+type OsmSearchPoint = GeoCoordinate & Pick<StudioResolvedPinpoint, "category" | "accessHint" | "publicHoursHint"> & {
+  osmId: string;
+  names: string[];
+};
+type SearchBounds = ReturnType<typeof bounds>;
+
+const placeSearchCaches = new WeakMap<typeof fetch, Map<string, { expiresAt: number; points: OsmSearchPoint[] }>>();
+let publicNominatimNextRequest = 0;
+
+function nominatimUrl(options: OsmPoiCuratorOptions): string | undefined {
+  return options.nominatimApiUrl?.trim() || process.env.NOMINATIM_API_URL?.trim() || undefined;
+}
+
+export function osmPlaceNameAttribution(now = Date.now(), options: OsmPoiCuratorOptions = {}): GeoAttribution {
+  const source = options.mode === "fixture" || options.mode === "recorded-rehearsal"
+    ? "OpenStreetMap Nominatim (recorded rehearsal)"
+    : nominatimUrl(options) ? "OpenStreetMap Nominatim" : "OpenStreetMap Overpass API";
+  return { source, license: "ODbL 1.0", retrievedAt: new Date(now).toISOString(), notice: osmAttributionNotice };
+}
+
+function placeNameKey(name: string): string {
+  return cleanText(name, 160)?.normalize("NFKC").toLowerCase() ?? "";
+}
+
+function placeSearchBounds(polygon: GeoCoordinate[]): SearchBounds | undefined {
+  if (polygon.length < 3 || polygon.length > 500 || !polygon.every(isValidCoordinate) || areaKm2(polygon) <= 0) return;
+  const { south, north, west, east } = bounds(polygon);
+  if (north - south > 1 || east - west > 1) return;
+  // A five-kilometer margin lets the creator see nearby stops outside the authored polygon.
+  const latPadding = 5 / 111;
+  const lonPadding = latPadding / Math.max(0.1, Math.cos(Math.max(Math.abs(south), Math.abs(north)) * Math.PI / 180));
+  return { south: Math.max(-90, south - latPadding), north: Math.min(90, north + latPadding),
+    west: Math.max(-180, west - lonPadding), east: Math.min(180, east + lonPadding) };
+}
+
+function osmSearchPoint(type: unknown, id: unknown, coordinates: { lat?: unknown; lon?: unknown },
+  labels: Record<string, unknown>, tags: Record<string, unknown>): OsmSearchPoint | undefined {
+  if (type !== "node" && type !== "way" && type !== "relation") return;
+  if (typeof id !== "number" || !Number.isSafeInteger(id) || id <= 0 || !allowsPublicUse(tags)) return;
+  if (["house", "apartments", "detached", "semidetached_house", "terrace", "dormitory"].includes(String(tags.building)) ||
+      tags.place === "house" || tags.boundary === "administrative") return;
+
+  const decimal = (value: unknown) => typeof value === "string" && /^-?\d+(?:\.\d+)?$/.test(value) ? Number(value) : value;
+  const point = { latitude: decimal(coordinates.lat), longitude: decimal(coordinates.lon) };
+  if (!isValidCoordinate(point)) return;
+  const names = Object.entries(labels).flatMap(([key, value]) =>
+    /^(?:name(?::[a-z-]+)?|official_name|alt_name|short_name)$/i.test(key) && typeof value === "string"
+      ? value.split(";").map(placeNameKey).filter(Boolean) : []);
+  if (!names.length) return;
+
+  const category = osmCategory(tags);
+  const accessHint = cleanText(tags.access)?.toLowerCase();
+  const publicHoursHint = cleanText(tags.opening_hours, 160);
+  return {
+    ...point, osmId: `${type}/${id}`, names,
+    ...(category ? { category } : {}),
+    ...(accessHint === "yes" || accessHint === "public" || accessHint === "permissive" ? { accessHint } : {}),
+    ...(publicHoursHint ? { publicHoursHint } : {}),
+  };
+}
+
+function normalizeNominatimResults(data: unknown): OsmSearchPoint[] {
+  if (!Array.isArray(data) || data.length > nominatimMatchLimit) throw new Error("Invalid Nominatim search response");
+  return data.flatMap(raw => {
+    if (!isRecord(raw)) return [];
+    const country = isRecord(raw.address) ? raw.address.country_code : undefined;
+    if (country !== undefined && country !== "id") return [];
+    const category = raw.category ?? raw.class;
+    const tags = { ...(typeof category === "string" ? { [category]: raw.type } : {}), ...(isRecord(raw.extratags) ? raw.extratags : {}) };
+    const names = { name: raw.name, ...(isRecord(raw.namedetails) ? raw.namedetails : {}) };
+    const point = osmSearchPoint(raw.osm_type, raw.osm_id, raw, names, tags);
+    return point ? [point] : [];
+  });
+}
+
+function overpassNameQuery(names: string[], { south, west, north, east }: SearchBounds): string {
+  const labelPattern = "^(name(:.*)?|official_name|alt_name|short_name)$";
+  const nameAlternatives = names.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const namePattern = `(^|;[[:space:]]*)(${nameAlternatives})([[:space:]]*;|$)`;
+  const bbox = [south, west, north, east].map(value => value.toFixed(6)).join(",");
+  return `[out:json][timeout:8];area["ISO3166-1"="ID"]["admin_level"="2"]->.indonesia;` +
+    `nwr[~${JSON.stringify(labelPattern)}~${JSON.stringify(namePattern)},i](area.indonesia)(${bbox});out center ${elementLimit};`;
+}
+
+async function searchOsm(fetchImpl: typeof fetch, fetchUrl: URL | string, signal: AbortSignal, now: () => number,
+  overpassQuery?: string): Promise<OsmSearchPoint[]> {
+  const key = JSON.stringify([String(fetchUrl), overpassQuery]);
+  let cache = placeSearchCaches.get(fetchImpl);
+  if (!cache) {
+    cache = new Map();
+    placeSearchCaches.set(fetchImpl, cache);
+  }
+  const cached = cache.get(key);
+  if (cached && cached.expiresAt > now()) return cached.points;
+
+  if (fetchUrl instanceof URL && fetchUrl.hostname === "nominatim.openstreetmap.org") {
+    // The public service permits one request per second across the application.
+    const timestamp = Date.now();
+    const delay = Math.max(0, publicNominatimNextRequest - timestamp);
+    if (delay >= placeNameTimeoutMs) return [];
+    publicNominatimNextRequest = timestamp + delay + 1_000;
+    if (delay) await wait(delay, undefined, { signal });
+  }
+  signal.throwIfAborted();
+  const response = await fetchImpl(fetchUrl, {
+    signal, headers: placeNameHeaders,
+    ...(overpassQuery ? { method: "POST", body: new URLSearchParams({ data: overpassQuery }) } : {}),
+  });
+  if (!response.ok) throw new Error("OSM place search failed");
+  const data: unknown = await response.json();
+  signal.throwIfAborted();
+
+  let points: OsmSearchPoint[];
+  if (overpassQuery) {
+    if (!isRecord(data) || !Array.isArray(data.elements) || data.remark || data.elements.length >= elementLimit) {
+      throw new Error("Incomplete Overpass place search response");
+    }
+    points = data.elements.flatMap(raw => {
+      if (!isRecord(raw) || !isRecord(raw.tags)) return [];
+      const coordinates = raw.type === "node" ? raw : isRecord(raw.center) ? raw.center : {};
+      const point = osmSearchPoint(raw.type, raw.id, coordinates, raw.tags, raw.tags);
+      return point ? [point] : [];
+    });
+  } else {
+    points = normalizeNominatimResults(data);
+  }
+  cache.delete(key);
+  cache.set(key, { expiresAt: now() + ttl, points });
+  if (cache.size > cacheLimit) cache.delete(cache.keys().next().value!);
+  return points;
+}
+
+function nominatimQuery(base: string, name: string, city: string | undefined, { west, north, east, south }: SearchBounds): URL {
+  const url = new URL(base);
+  if (url.pathname === "/") url.pathname = "/search";
+  const params = {
+    q: city ? `${name}, ${city}` : name, format: "jsonv2", addressdetails: "1", namedetails: "1", extratags: "1",
+    countrycodes: "id", bounded: "1", limit: String(nominatimMatchLimit),
+    viewbox: [west, north, east, south].map(value => value.toFixed(6)).join(","),
+  };
+  for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+  return url;
+}
+
+export async function resolvePlaceNamesFromOsm(input: ResolvePlaceNamesFromOsmInput,
+  options: ResolvePlaceNamesFromOsmOptions = {}): Promise<StudioResolvedPinpoint[]> {
+  const requested = input.places.map(({ clientKey, name }) => ({ clientKey, name, status: "unresolved" } as const));
+  const scope = placeSearchBounds(input.boundaryPolygon);
+  if (!scope || options.signal?.aborted || !requested.length) return requested;
+
+  const names = requested.slice(0, placeNameLimit).map(place => cleanText(place.name, 160) ?? "");
+  const queries = new Map(names.filter(Boolean).map(name => [placeNameKey(name), name]));
+  const resultsByName = new Map<string, OsmSearchPoint[]>();
+  if (!queries.size) return requested;
+  if (options.mode === "fixture" || options.mode === "recorded-rehearsal") {
+    for (const [name, results] of Object.entries(options.recordedResults ?? {})) {
+      const key = placeNameKey(name);
+      if (queries.has(key) && Array.isArray(results) && results.length <= nominatimMatchLimit) {
+        resultsByName.set(key, normalizeNominatimResults(results));
+      }
+    }
+  } else {
+    const fetchImpl = options.fetchImpl ?? fetch;
+    const now = options.now ?? Date.now;
+    const configuredNominatim = nominatimUrl(options);
+    const controller = new AbortController();
+    const timeoutMs = Math.min(placeNameTimeoutMs, Math.max(1, options.timeoutMs ?? placeNameTimeoutMs));
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+    let resolveAbort: () => void;
+    const aborted = new Promise<void>(resolve => { resolveAbort = resolve; });
+    signal.addEventListener("abort", resolveAbort!, { once: true });
+
+    try {
+      if (configuredNominatim) {
+        const city = cleanText(input.cityLabel);
+        const searches = Array.from(queries, async ([key, name]) => {
+          const points = await searchOsm(fetchImpl, nominatimQuery(configuredNominatim, name, city, scope), signal, now);
+          resultsByName.set(key, points);
+        });
+        await Promise.race([Promise.allSettled(searches), aborted]);
+      } else {
+        // Only place names and the authored area leave the server. Draft metadata and GPS stay local.
+        const query = overpassNameQuery([...queries.values()].sort(), scope);
+        const lookup = searchOsm(fetchImpl, options.overpassApiUrl?.trim() || defaultOverpassUrl, signal, now, query)
+          .then(points => { for (const key of queries.keys()) resultsByName.set(key, points); });
+        await Promise.race([lookup, aborted]);
+      }
+    } catch {
+      // Unavailable or incomplete results leave the creator free to pin manually.
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", resolveAbort!);
+    }
+  }
+
+  return requested.map((place, index) => {
+    const key = placeNameKey(names[index] ?? "");
+    const matches = new Map((resultsByName.get(key) ?? []).filter(point =>
+      point.names.includes(key) && point.latitude >= scope.south && point.latitude <= scope.north &&
+      point.longitude >= scope.west && point.longitude <= scope.east).map(point => [point.osmId, point]));
+    if (matches.size !== 1) return place;
+    const { names: _names, ...point } = matches.values().next().value!;
+    if (!pointInPolygon(point, input.boundaryPolygon)) return { ...place, ...point, status: "outside_boundary" };
+    const suggestedZoneId = nearestZone(point, input.zones);
+    return { ...place, ...point, status: "resolved", source: "osm-curated", fieldVerified: false,
+      ...(suggestedZoneId ? { suggestedZoneId } : {}) };
+  });
 }
