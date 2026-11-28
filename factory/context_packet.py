@@ -95,6 +95,15 @@ def commit_sha(root, ref):
     return git(root, "rev-parse", "--verify", "--end-of-options", f"{ref}^{{commit}}").decode().strip()
 
 
+def local_base(root, head, main_sha):
+    for ref in (main_sha, "refs/remotes/origin/main"):
+        try:
+            return git(root, "merge-base", head, ref).decode().strip()
+        except subprocess.CalledProcessError:
+            continue
+    return None
+
+
 class Index:
     def __init__(self, root, ref):
         self.root = root
@@ -184,7 +193,7 @@ def collect_packet(root, number, ref, explicit, limit, request, parse_dependenci
     dependency_numbers = parse_dependencies(issue.get("body"))
     index = Index(root, ref)
     main_sha = request("git/ref/heads/main")["object"]["sha"]
-    base_sha = git(root, "merge-base", index.sha, "refs/remotes/origin/main").decode().strip()
+    base_sha = local_base(root, index.sha, main_sha)
     evidence = []
     for dependency in dependency_numbers:
         url = f"{REPO_URL}/issues/{dependency}"

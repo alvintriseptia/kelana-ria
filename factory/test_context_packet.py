@@ -75,6 +75,8 @@ class ContextTests(unittest.TestCase):
             git("commit", "-qm", "map symbol")
             new = cp.Index(root, "HEAD")
             self.assertNotEqual(old.sha, new.sha)
+            self.assertIsNone(cp.local_base(root, new.sha, "a" * 40))
+            self.assertEqual(cp.local_base(root, new.sha, old.sha), old.sha)
             self.assertEqual(cp.Index(root, old.sha).candidates("map"), [])
             self.assertEqual(new.candidates("map"), ["apps/web/src/board-map.ts"])
             self.assertEqual(new.symbols("apps/web/src/board-map.ts"), [{"name": "mountBoard", "line": 1}])
