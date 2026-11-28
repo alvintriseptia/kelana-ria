@@ -51,3 +51,24 @@ Standardize motion by surface:
 Honor `prefers-reduced-motion: reduce` (`motionAllowed()`) with immediate reveals, zero `[data-game-motion]` replay flashes, skipped `GameFxOverlay` visuals, and clear static selected states. Make card pop-ups and dialogs keyboard operable, give them clear accessible names, and place or restore focus appropriately. Announce significant results and actionable deadlines. Ensure touch targets and labels remain usable outdoors.
 
 For changed flows, verify the normal path, reduced motion, and keyboard use. Exercise rapid taps, rejected or expired choices, reconnect after confirmation, and duplicate game updates where relevant. Play feedback once per new committed event (`data-game-motion="${kind}:${sequence}"`). Confirm the UI remains readable at 390 × 844 and 320 × 640, the map stays mounted, the final visible state matches the server, and the player can still act if motion is disabled. Follow the [mobile PWA verification steps](SKILL.md) for tests and evidence.
+
+## Active gameplay concept
+
+Open the [clickable Claim the City and Hide & Seek prototype](../../../docs/qa/gameplay-concept/README.md) for the screen hierarchy, existing role controls, and phone-size reference frames. The practice edition tests long place names, a collapsed board, card targeting, and retry. Use live room data for rules, scores and eligibility during production implementation. Preserve the current tab names and use the same place actions in the map and its list fallback.
+
+| Event | Motion target | Static state and recovery |
+| --- | --- | --- |
+| Primary action | Brief press and release, 80–180 ms. Keep optional spark local. | Button press acknowledges input. Show pending separately. |
+| Inspect or choose a card | Lift 4–8 px and settle, 120–220 ms. | Outline, check mark and pressed state. Keep confirm reachable. |
+| Private reward arrives | Stagger backs, reveal and settle in offer order, 350–650 ms total. | Display faces immediately with reduced motion. On reconnect, restore the offer and selection without replaying a deal. |
+| Keep or cast | Move kept card toward its hand or legal target, then confirm briefly, 200–450 ms. | Update the actual hand and target. Restore pending inputs or show an expired offer. |
+| Claim, lock or steal | Pop the pin and stamp its shape, 250–600 ms. Keep the delta under 1.2 s. | Owner, state shape and objective progress update on confirmation. |
+| Zone changes hands | Pulse the affected area, 300–650 ms. Keep the banner under 1.9 s. | Zone state, owner label and announcement. |
+| Score or time changes | Animate the confirmed delta and count toward the authoritative value, 200–450 ms. | Show the final value immediately. |
+| Radar and other map clues | Dashed pre-send geometry. Use a short wave on a confirmed deduction, 250–500 ms. | Label and distinguish preview, awaiting answer and confirmed geometry. Keep the hidden position private. |
+| Question or answer | Press, pending text, then a brief stamp once the room confirms, 150–400 ms. | Label what is pending, record the result and keep the retry action available. |
+| Role or phase changes | Badge or compact banner transition, 250–500 ms. | Update the HUD and role-specific controls immediately. |
+| Sheet opens or switches | Translate and settle, 150–280 ms. | Keep the map mounted. Restore focus and panel scroll position. |
+| Rejected or expired action | Brief outline or restrained shake, 180–320 ms. | Show a recovery message and retain the valid parts of the selection. |
+
+Run motion from local input or a new committed sequence as specified above. Duplicate events, rollback, offline recovery and initial hydration hydrate semantic state. Use a single transient result at a time and clear decorative effects when reduced motion changes. Keep the board and menus available while effects run.

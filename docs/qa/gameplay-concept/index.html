@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#153d34">
+  <title>Latihan Kelana Ria</title>
+  <link rel="icon" href="../../../apps/web/public/icons/icon-192.png">
+  <link rel="stylesheet" href="concept.css">
+  <script src="concept.js" defer></script>
+</head>
+<body>
+  <main class="game" aria-label="Latihan Kelana Ria">
+    <header class="hud">
+      <span class="role-mark" id="role-mark" aria-hidden="true"></span>
+      <div class="hud-title"><h1 id="role"></h1><p id="phase"></p></div>
+      <div class="clock"><small id="clock-label"></small><strong id="clock"></strong></div>
+      <details class="more">
+        <summary aria-label="Menu lainnya">⋯</summary>
+        <div class="menu">
+          <p>Kontrol simulasi</p>
+          <button data-action="start-claim">Claim the City</button>
+          <button data-action="start-seek">Hide &amp; Seek</button>
+          <button data-action="switch-role" id="switch-role" hidden></button>
+          <button data-action="reject">Tolak aksi berikutnya</button>
+          <button data-action="connection" id="connection-toggle">Simulasi luring</button>
+          <button data-action="map-error" id="map-error">Simulasi peta gagal</button>
+          <button data-action="expire" id="expire" hidden>Kedaluwarsakan kartu</button>
+          <label class="motion-toggle"><input type="checkbox" id="reduced"> Kurangi gerak</label>
+          <button data-action="reset">Mulai ulang latihan</button>
+        </div>
+      </details>
+    </header>
+
+    <section class="objective" aria-label="Tujuan ronde">
+      <div>
+        <small id="edition">Kota Arunika</small>
+        <p id="goal"></p>
+      </div>
+      <div class="progress" id="progress"></div>
+    </section>
+
+    <section class="board" aria-label="Papan latihan">
+      <div class="map" id="map">
+        <svg class="map-art" viewBox="0 0 390 440" preserveAspectRatio="none" aria-hidden="true">
+          <defs>
+            <pattern id="park" width="13" height="13" patternUnits="userSpaceOnUse">
+              <circle cx="4" cy="5" r="1.4" fill="#8daf7c" opacity=".65"/>
+            </pattern>
+            <pattern id="hatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(36)">
+              <path d="M0 0v8" stroke="#154f47" stroke-width="2.1" opacity=".48"/>
+            </pattern>
+          </defs>
+          <path fill="#d9e6cc" d="M0 0h390v440H0z"/>
+          <path fill="#c4d9ac" d="M10 6H135l44 48-58 86L9 110zM13 287l97 5 34 83-52 65H0v-111zM330 319l60-27v148h-94z"/>
+          <path fill="url(#park)" d="M10 6H135l44 48-58 86L9 110zM13 287l97 5 34 83-52 65H0v-111zM330 319l60-27v148h-94z"/>
+          <g class="zone-paint" id="zones">
+            <path id="zone-west" d="M17 104l69-43 95 33 12 90-76 56-93-32z"/>
+            <path id="zone-east" d="M229 198l84-57 62 42-9 89-81 39-62-55z"/>
+          </g>
+          <g fill="#cedcbc" stroke="#aabc9d" stroke-width="1">
+            <path d="M202 34l44 10-5 32-45-11zM249 47l45 10-9 29-42-9zM218 103l55 11-7 31-57-10zM115 254l49-25 19 38-54 20zM146 305l48-24 15 33-46 25zM158 355l46-19 13 30-47 22zM294 350l27-34 34 26-33 38zM212 346l32-18 16 41-36 14zM278 104l36-12 18 25-35 16zM42 243l45 6-3 30-44-4z"/>
+          </g>
+          <g stroke="#a8ba9e" fill="none" stroke-width="2">
+            <path d="M-5 52Q83 98 173 110T397 103M-5 141q130 19 177 89t220 35M-5 374q79 16 141-33t272-17M106 0q43 84 14 180T140 444M268 0q-49 92-37 180t27 260M355 0q-39 106-23 190t-31 254"/>
+          </g>
+          <path d="M313-16C288 65 355 110 332 174S182 251 203 326s69 82 71 135" fill="none" stroke="#7caaad" stroke-width="41"/>
+          <path d="M313-16C288 65 355 110 332 174S182 251 203 326s69 82 71 135" fill="none" stroke="#bce7f0" stroke-width="34"/>
+          <g stroke="#f8f8ec" fill="none" stroke-width="7">
+            <path d="M-8 102q81 23 186 39t222 13M-8 214q124 31 227-31t180-26M-10 342q136 37 213-59l202-70M71-8q27 80 8 174t38 276M172-8q25 108-23 240t65 215"/>
+          </g>
+          <path d="M-6 308 Q94 323 136 224T268 113q71-10 125-37" fill="none" stroke="#a04a18" stroke-width="3" stroke-dasharray="8 7"/>
+          <path d="M-6 308 Q94 323 136 224T268 113q71-10 125-37" fill="none" stroke="#ffce55" stroke-width="1.25" stroke-dasharray="8 7"/>
+          <g fill="#fffef7" stroke="#6b5736" stroke-width="2">
+            <circle cx="64" cy="303" r="5"/><circle cx="151" cy="188" r="5"/><circle cx="269" cy="114" r="5"/><circle cx="366" cy="88" r="5"/>
+          </g>
+          <g id="radar" hidden>
+            <ellipse class="radar-area" cx="200" cy="218" rx="98" ry="103"/>
+            <path class="radar-cross" d="M200 111v17m0 180v17m-103-107h17m172 0h17"/>
+          </g>
+        </svg>
+
+        <div id="map-points"></div>
+        <p class="map-label west" id="west-label">Teras Pesisir</p>
+        <p class="map-label east" id="east-label">Lorong Pasar</p>
+        <p class="map-label river">Sungai Sagara</p>
+        <div id="map-fx" aria-hidden="true"></div>
+      </div>
+      <div class="board-list" id="board-list" hidden></div>
+      <div class="board-top">
+        <span class="board-chip" id="map-status"></span>
+        <button class="mini" id="view-button" data-action="map-view">Daftar</button>
+      </div>
+      <div class="board-bottom">
+        <small class="legend" id="legend"></small>
+        <small class="attribution">Peta ilustrasi · Data latihan</small>
+      </div>
+    </section>
+
+    <div id="announcement" class="message" role="status" aria-live="polite" hidden></div>
+    <div class="dock">
+      <section id="sheet" class="sheet" aria-label="Panel permainan" hidden></section>
+      <nav id="tabs" class="tabs" aria-label="Menu permainan"></nav>
+    </div>
+  </main>
+</body>
+</html>
