@@ -101,3 +101,8 @@ local rehearsals. The signed-in curator endpoint receives a drawn polygon and
 returns attributed suggestions that require field verification before submission.
 The start position, existing draft points and zones are used locally. If live
 curation is unavailable, the response labels its suggestions as synthetic.
+
+Studio AI chat resolves guide place names through a bounded Overpass search.
+Set `NOMINATIM_API_URL` to use a configured Nominatim instance. When place
+lookup is unavailable, the API returns names for manual placement. Draft
+proposals require creator selection and field review before publication.

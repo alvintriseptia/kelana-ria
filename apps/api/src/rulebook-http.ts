@@ -20,11 +20,13 @@ import type { PlaySeekCardParams } from "./seek-engine/deck-engine.js";
 import type { GeoSeedRequest } from "./seek-engine/geo-seeder.js";
 import type { RoomStreamEvent, rulebookStore, StoredRulebookRecord } from "./rulebook-store.js";
 import { createStudioAiCoCreator } from "./studio-ai-cocreator.js";
+import { createStudioAiChat } from "./studio-ai-chat.js";
 import { maxStudioKnowledgeBody, parseStudioDocument } from "./studio-document-parser.js";
 
 const cookieName = "kelana_rulebook";
 const SSE_KEEPALIVE_MS = 20_000;
 const knowledgePath = "/api/rulebooks/studio/knowledge";
+const chatPath = "/api/rulebooks/studio/ai-chat";
 const privateResponse = { "Cache-Control": "private, no-store" };
 
 type Store = ReturnType<typeof rulebookStore>;
@@ -63,6 +65,7 @@ export function rulebookHandler(
   studioAi = createStudioAiCoCreator({ now }, store.studioKnowledge.retrieveStudioContext),
 ): RulebookRequestHandler {
   const poiCurator = createOsmPoiCurator({ ...osmPoiOptions, now });
+  const chat = createStudioAiChat(studioAi, store.studioKnowledge, { ...osmPoiOptions, now }, now);
   const activeSseStreams = new Set<() => void>();
 
   function resolveQaFix(action: Record<string, unknown>, roomCode: string, cred: string, ts: number): boolean {
@@ -380,8 +383,10 @@ export function rulebookHandler(
     }
     const isStudioSuggestion = path === "/api/rulebooks/studio/ai-suggest";
     const isKnowledgeIngest = path === knowledgePath + "/ingest";
-    const studioCreator = isStudioSuggestion || isKnowledgeIngest ? requireSignedIn(request, response, now()) : null;
-    if ((isStudioSuggestion || isKnowledgeIngest) && !studioCreator) return;
+    const isStudioChat = path === chatPath;
+    const isPrivateStudioPost = isStudioSuggestion || isKnowledgeIngest || isStudioChat;
+    const studioCreator = isPrivateStudioPost ? requireSignedIn(request, response, now()) : null;
+    if (isPrivateStudioPost && !studioCreator) return;
     if (!hasJsonBody(request)) {
       json(response, 415, { error: "invalid-request" });
       return;
@@ -405,6 +410,18 @@ export function rulebookHandler(
         credential(request, AUTH_SESSION_COOKIE) ?? "",
         credential(request, cookieName) ?? "",
       ];
+      if (isStudioChat) {
+        const input = studioDraftInput(body.packId, body.version);
+        if (!input) return json(response, 400, { error: "invalid-request" }, privateResponse);
+        const draft = store.loadStudioChatDraft(studioCreator.cred, input.packId, input.version);
+        if (!draft) return json(response, 403, { error: "owner-only" }, privateResponse);
+        const retryAfter = studioAi.rateLimit(studioCreator.user.userId, now());
+        if (retryAfter !== undefined) return json(response, 429, { error: "rate-limited" },
+          { ...privateResponse, "Retry-After": String(retryAfter) });
+        const result = await chat(draft, body, privateValues);
+        return result.ok ? json(response, 200, result.data, privateResponse)
+          : json(response, result.status, { error: result.error }, privateResponse);
+      }
       let scope;
       if (isKnowledgeIngest || body.packId !== undefined || body.version !== undefined) {
         const draft = studioDraftInput(body.packId, body.version);
