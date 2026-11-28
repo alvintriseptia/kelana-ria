@@ -8,6 +8,7 @@ from pathlib import Path
 
 import context_packet
 import delivery
+import workflow
 
 REPO = "alvintriseptia/kelana-ria"
 FLOW = ".github/workflows/factory.yml"
@@ -266,9 +267,12 @@ def main():
             sub.add_argument("reviewed_sha", help="Full commit SHA of the inspected diff")
     context_packet.register(commands)
     delivery.register(commands)
+    workflow.register(commands)
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
-    if context_packet.dispatch(args, root, api, dependencies) or delivery.dispatch(args, root, sys.modules[__name__]):
+    if (context_packet.dispatch(args, root, api, dependencies)
+            or delivery.dispatch(args, root, sys.modules[__name__])
+            or workflow.dispatch(args, root, api, dependencies)):
         return
     base = current_main(root)
     if args.command == "pickup":

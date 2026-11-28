@@ -32,3 +32,5 @@ Use the full issue and the relevant guidance. Follow the packet's source, test, 
 - Reuse the existing claim and PR when resuming a stopped session. Keep dirty, interrupted, or blocked work recoverable on its branch.
 
 Record GitHub delivery evidence and separate optional efficiency telemetry with the [Factory baseline](docs/qa/factory-efficiency-baseline.md).
+
+Use the [Factory V2 iteration guide](docs/qa/factory-v2-iteration.md) for execution profiles, checkpointing, repeated-failure recovery, and the end-of-iteration report.
