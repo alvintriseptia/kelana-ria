@@ -13,12 +13,13 @@ import type {
   SeekEngineAction,
   SeekMapPreviewRequest,
 } from "@kelana-ria/contracts";
-import { ensureAdmin } from "./auth-http.js";
+import { AUTH_SESSION_COOKIE, ensureAdmin } from "./auth-http.js";
 import { credential, hasJsonBody, isObject, json, requestBody, setCredential } from "./http.js";
 import type { MidtransNotificationPayload } from "./midtrans-adapter.js";
 import type { PlaySeekCardParams } from "./seek-engine/deck-engine.js";
 import type { GeoSeedRequest } from "./seek-engine/geo-seeder.js";
 import type { RoomStreamEvent, rulebookStore, StoredRulebookRecord } from "./rulebook-store.js";
+import { createStudioAiCoCreator } from "./studio-ai-cocreator.js";
 
 const cookieName = "kelana_rulebook";
 const SSE_KEEPALIVE_MS = 20_000;
@@ -51,6 +52,7 @@ export function rulebookHandler(
   resolveUser?: ResolveUserFn,
   allowSandboxAuthOtp = false,
   osmPoiOptions: OsmPoiCuratorOptions = {},
+  studioAi = createStudioAiCoCreator({ now }),
 ): RulebookRequestHandler {
   const poiCurator = createOsmPoiCurator({ ...osmPoiOptions, now });
   const activeSseStreams = new Set<() => void>();
@@ -351,12 +353,16 @@ export function rulebookHandler(
       json(response, 405, { error: "method-not-allowed" });
       return;
     }
+    const isStudioSuggestion = path === "/api/rulebooks/studio/ai-suggest";
+    const studioCreator = isStudioSuggestion ? requireSignedIn(request, response, now()) : null;
+    if (isStudioSuggestion && !studioCreator) return;
     if (!hasJsonBody(request)) {
       json(response, 415, { error: "invalid-request" });
       return;
     }
     const photoUpload = path === "/api/rulebooks/seek-photo" || path === "/api/rulebooks/claim-photo";
-    const raw = await requestBody(request, photoUpload ? maxBase64Length + 1024 : 512 * 1024);
+    const bodyLimit = isStudioSuggestion ? 32 * 1024 : 512 * 1024;
+    const raw = await requestBody(request, photoUpload ? maxBase64Length + 1024 : bodyLimit);
     if (raw === undefined) return json(response, 413, { error: "invalid-request" });
     let body: unknown;
     try {
@@ -365,6 +371,17 @@ export function rulebookHandler(
       return json(response, 400, { error: "invalid-request" });
     }
     if (!isObject(body)) return json(response, 400, { error: "invalid-request" });
+
+    if (studioCreator) {
+      const result = await studioAi.suggest(studioCreator.user.userId, body, [
+        studioCreator.user.email,
+        credential(request, AUTH_SESSION_COOKIE) ?? "",
+        credential(request, cookieName) ?? "",
+      ]);
+      if (result.ok) return json(response, 200, result.data, { "Cache-Control": "private, no-store" });
+      return json(response, result.status, { error: result.error },
+        result.status === 429 ? { "Retry-After": String(result.retryAfter) } : undefined);
+    }
 
     const ts = now();
 

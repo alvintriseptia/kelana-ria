@@ -1,5 +1,7 @@
 export { createOsmPoiCurator } from "./osm-poi-curator.js";
 import type { OsmPoiCuratorOptions } from "./osm-poi-curator.js";
+import { createStudioAiCoCreator, studioAiOptionsFromEnv, type StudioAiOptions } from "./studio-ai-cocreator.js";
+export { createStudioAiCoCreator, studioAiOptionsFromEnv } from "./studio-ai-cocreator.js";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -303,6 +305,7 @@ export type GameServerOptions = {
   adminEmails?: string[];
   demoVideoYoutubeId?: string | null;
   osmPoi?: OsmPoiCuratorOptions;
+  studioAi?: StudioAiOptions;
 };
 
 export function createSoloServer({
@@ -321,6 +324,7 @@ export function createSoloServer({
   adminEmails = [],
   demoVideoYoutubeId = null,
   osmPoi,
+  studioAi,
 }: GameServerOptions = {}) {
   const auth = authStore(databasePath, { adminEmails });
   const resolvedEmailAdapter =
@@ -335,6 +339,7 @@ export function createSoloServer({
     onAuthenticated: (guestCredential, accountPrincipal, ts) =>
       rulebooks.migrateOwner(guestCredential, accountPrincipal, ts).migrated,
   });
+  const studioCoCreator = createStudioAiCoCreator({ ...studioAi, now: studioAi?.now ?? now });
   const handleRulebooks = rulebookHandler(
     rulebooks,
     now,
@@ -344,6 +349,7 @@ export function createSoloServer({
     handleAuth.resolveUser,
     allowSandboxAuthOtp,
     osmPoi,
+    studioCoCreator,
   );
   const handleMap = mapHandler(mapProxy);
   const handleStatic = staticDir ? staticHandler(staticDir) : undefined;
@@ -357,6 +363,7 @@ export function createSoloServer({
           ok: true,
           aiMode: healthMeta?.aiMode ?? "prepared-fallback",
           routeMode: healthMeta?.routeMode ?? "prepared-fallback",
+          studioAiMode: studioCoCreator.mode,
           mapMode,
           staticWeb: Boolean(handleStatic),
           allowSimulatedLocation: Boolean(allowSimulatedLocation),
@@ -460,6 +467,7 @@ if (import.meta.main) {
       mode: process.env.OSM_POI_MODE === "fixture" ? "fixture" : "live",
     },
     healthMeta: { aiMode: providers.aiMode, routeMode: providers.routeMode },
+    studioAi: studioAiOptionsFromEnv(process.env),
     mapProxy: {
       geoapifyApiKey: process.env.GEOAPIFY_API_KEY,
       geoapifyMapsBaseUrl: process.env.GEOAPIFY_MAPS_BASE_URL,
