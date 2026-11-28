@@ -330,10 +330,7 @@ function extractJsonObject(rawText: string): Record<string, unknown> | undefined
   return undefined;
 }
 
-export function parseWorkersAiEditionResponse(
-  payload: unknown,
-  request: EditionGeneratorRequest,
-): ProposedProviderEdition | undefined {
+export function parseWorkersAiResult(payload: unknown): Record<string, unknown> | undefined {
   if (!payload || typeof payload !== "object") return undefined;
   const envelope = payload as Record<string, unknown>;
   if (envelope.success === false) return undefined;
@@ -352,7 +349,7 @@ export function parseWorkersAiEditionResponse(
     const firstChoice = envelope.choices[0] as Record<string, unknown> | undefined;
     const message = firstChoice?.message as Record<string, unknown> | undefined;
     content = message?.content ?? firstChoice?.text;
-  } else if (envelope.checkpoints !== undefined) {
+  } else {
     content = envelope;
   }
 
@@ -362,6 +359,14 @@ export function parseWorkersAiEditionResponse(
   } else if (content && typeof content === "object" && !Array.isArray(content)) {
     parsed = content as Record<string, unknown>;
   }
+  return parsed;
+}
+
+export function parseWorkersAiEditionResponse(
+  payload: unknown,
+  request: EditionGeneratorRequest,
+): ProposedProviderEdition | undefined {
+  const parsed = parseWorkersAiResult(payload);
   if (!parsed) return undefined;
 
   const checkpoints = Array.isArray(parsed.checkpoints)

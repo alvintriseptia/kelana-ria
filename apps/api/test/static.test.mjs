@@ -28,6 +28,7 @@ test("GET /api/health reports operational modes without leaking secrets", async 
     ok: true,
     aiMode: "prepared-fallback",
     routeMode: "prepared-fallback",
+    studioAiMode: "template-fallback",
     mapMode: "geoapify-vector",
     staticWeb: false,
     allowSimulatedLocation: false,
