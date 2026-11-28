@@ -391,10 +391,12 @@ async function exerciseAiStudio(page, adminStorageState) {
   const savedChallenge = (await saved.json()).record.pack.challenges.landmarkChallenges[imported.id][0];
   assert.equal(savedChallenge.reviewed, false);
   assert.equal(savedChallenge.aiProvenance.source, "template-fallback");
-  await claimPanel.getByRole("button", { name: "Pakai & Sunting" }).first().press("Enter");
+  const editIdea = claimPanel.getByRole("button", { name: "Pakai & Sunting" })
+    .and(claimPanel.locator("button:enabled")).first();
+  await editIdea.press("Enter");
+  await page.locator("[data-ai-answer]:focus").waitFor();
   assert.equal(await page.locator("#ed-chal-reviewed").isChecked(), false);
   assert.ok(await page.locator("#ed-chal-title").inputValue());
-  await page.locator("[data-ai-answer]:focus").waitFor();
   await Promise.all([saveResponse("save-draft"), page.locator('button[data-c3-action="add-challenge"]').click()]);
   await go(4);
   assert.match(await checklist.innerText(), /Lokasi OSM · 0\/1 terverifikasi.*Ide AI · 0\/2 terverifikasi/s);

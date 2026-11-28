@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import context_packet
+
 REPO = "alvintriseptia/kelana-ria"
 FLOW = ".github/workflows/factory.yml"
 
@@ -264,8 +266,11 @@ def main():
         sub.add_argument("number", type=int)
         if name == "merge":
             sub.add_argument("reviewed_sha", help="Full commit SHA of the inspected diff")
+    context_packet.register(commands)
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
+    if context_packet.dispatch(args, root, api, dependencies):
+        return
     base = current_main(root)
     if args.command == "pickup":
         pickup(base)
