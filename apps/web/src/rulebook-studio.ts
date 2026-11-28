@@ -1681,6 +1681,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           const { id, name, zoneId, transitSummary, accessNotes, publicHours, osmCategory, osmTags } = landmark;
           request = {
             format: "claim-the-city", cityLabel: pack.meta.cityLabel, theme, pattern, primitive: claimStep3.challengePrimitive,
+            packId: draft.packId, version: draft.version,
             landmark: {
               id, name, transitSummary, accessNotes, publicHours, osmCategory, osmTags,
               zoneName: pack.geography.zones.find(zone => zone.id === zoneId)?.name ?? zoneId,
@@ -1693,6 +1694,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           }
           request = {
             format: "hide-and-seek", cityLabel: pack.meta.cityLabel, targetFamily, theme, availablePoiCategories,
+            packId: draft.packId, version: draft.version,
             stationNames: draft.snapshot.stations.slice(0, 20).map(point => point.name),
             poiSamples: draft.snapshot.pois.filter(point => availablePoiCategories.includes(point.category)).slice(0, 24)
               .map(({ id, name, category }) => ({ id, name, category })),

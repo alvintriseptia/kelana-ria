@@ -4,7 +4,8 @@ import type {
   ClaimLeafChallengePayload,
   StudioAiProvenance,
   StudioAiSuggestRequest,
-  StudioAiSuggestResponse,
+  StudioAiSuggestionSet,
+  StudioAiSeekSuggestion,
   StudioObservationPattern,
   StudioPoiCategory,
 } from "@kelana-ria/contracts";
@@ -220,7 +221,7 @@ export function parseStudioAiSuggestions(
   raw: unknown,
   provenance: Provenance,
   secrets: readonly string[],
-): StudioAiSuggestResponse | undefined {
+): StudioAiSuggestionSet | undefined {
   const labels = new Set((request.format === "claim-the-city" ? request.existingTitles : request.existingLabels)?.map(key));
   const read: CopyReader = (value, min, max) => {
     const result = text(value, min, max, secrets);
@@ -256,9 +257,9 @@ export function parseStudioAiSuggestions(
           payload: claimPayload(item.payload, request.primitive, read),
         };
       });
-      return { mode: provenance.mode, format: request.format, suggestions };
+      return { format: request.format, suggestions };
     }
-    const suggestions = list<Extract<StudioAiSuggestResponse, { format: "hide-and-seek" }>["suggestions"][number]>(raw, count, count, value => {
+    const suggestions = list<StudioAiSeekSuggestion>(raw, count, count, value => {
       const item = object(value);
       const label = name(item.label);
       const base = { id: itemId(`${request.cityLabel}:${request.targetFamily}`, label), label };
@@ -281,7 +282,7 @@ export function parseStudioAiSuggestions(
           return { family, item: { ...base, radiusMeters: number(item.radiusMeters, 50, 5_000, true), poiCategory: poiCategory() } };
       }
     });
-    return { mode: provenance.mode, format: request.format, suggestions };
+    return { format: request.format, suggestions };
   } catch (error) {
     if (error instanceof InvalidSuggestion) return undefined;
     throw error;

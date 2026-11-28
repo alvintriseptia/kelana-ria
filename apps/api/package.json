@@ -11,7 +11,8 @@
   },
   "dependencies": {
     "@kelana-ria/contracts": "0.0.0",
-    "sharp": "0.35.5"
+    "sharp": "0.35.5",
+    "unpdf": "2.2.3"
   },
   "devDependencies": {
     "@types/node": "24.19.2"

@@ -57,11 +57,30 @@ export type StudioPoiCurateResponse = {
 
 export type StudioObservationPattern = "see_and_explain" | "compare_features" | "read_connection" | "record_detail";
 
+export type StudioRagMetrics = {
+  retrievedChunks: number;
+  platformChunks: number;
+  docChunks: number;
+  sourceChars: number;
+  injectedChars: number;
+  estimatedTokensSaved: number;
+  budgetCapped: boolean;
+};
+
+export type StudioKnowledgeDocSummary = {
+  docId: string;
+  title: string;
+  chunkCount: number;
+  totalChars: number;
+  previewHeadings: string[];
+  createdAt: string;
+};
+
 export type StudioAiSuggestRequest = {
   cityLabel: string;
   theme?: string;
   count?: number;
-} & (
+} & ({ packId?: never; version?: never } | { packId: string; version: number }) & (
   | {
     format: "claim-the-city";
     landmark: {
@@ -90,10 +109,12 @@ export type StudioAiSeekSuggestion =
   | { family: "measuring"; item: MeasuringQuestionItem }
   | { family: "tentacles"; item: TentaclesQuestionItem };
 
-export type StudioAiSuggestResponse = {
+export type StudioAiSuggestResponse = StudioAiSuggestionSet & {
   mode: StudioAiProvenance["mode"];
   fallbackReason?: string;
-} & (
+  ragMetrics: StudioRagMetrics;
+};
+
+export type StudioAiSuggestionSet =
   | { format: "claim-the-city"; suggestions: StudioAiClaimSuggestion[] }
-  | { format: "hide-and-seek"; suggestions: StudioAiSeekSuggestion[] }
-);
+  | { format: "hide-and-seek"; suggestions: StudioAiSeekSuggestion[] };
