@@ -190,7 +190,7 @@ export function seekCardRules(card: HideSeekCardEffect): CardRules {
       return {
         timing: seekTiming,
         target: "Pencari pada giliran ini.",
-        effect: [blocking, ...modifiers].filter(Boolean).join(" ") || "Berikan tugas kutukan kepada pencari.",
+        effect: [blocking, ...modifiers].filter(Boolean).join(" ") || "Terapkan kutukan sesuai syarat berakhir di bawah.",
         ends: curseClearText(clearCondition),
         cost: [spendCard, ...costs].join(" "),
       };

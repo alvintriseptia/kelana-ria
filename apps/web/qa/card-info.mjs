@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 export async function verifyCardInfo(page, title, checks, { keyboard = false, screenshot } = {}) {
   const trigger = page.getByRole("button", { name: `Info ${title}`, exact: true }).first();
-  await trigger.waitFor();
+  await trigger.click({ trial: true });
   const triggerBounds = await trigger.boundingBox();
   assert.ok(triggerBounds.width >= 44 && triggerBounds.height >= 44);
   if (keyboard) await trigger.press("Enter");
