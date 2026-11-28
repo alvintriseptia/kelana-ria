@@ -339,7 +339,9 @@ export function createSoloServer({
     onAuthenticated: (guestCredential, accountPrincipal, ts) =>
       rulebooks.migrateOwner(guestCredential, accountPrincipal, ts).migrated,
   });
-  const studioCoCreator = createStudioAiCoCreator({ ...studioAi, now: studioAi?.now ?? now });
+  const studioCoCreator = createStudioAiCoCreator(
+    { ...studioAi, now: studioAi?.now ?? now }, rulebooks.studioKnowledge.retrieveStudioContext,
+  );
   const handleRulebooks = rulebookHandler(
     rulebooks,
     now,

@@ -14,15 +14,18 @@ import type {
   SeekMapPreviewRequest,
 } from "@kelana-ria/contracts";
 import { AUTH_SESSION_COOKIE, ensureAdmin } from "./auth-http.js";
-import { credential, hasJsonBody, isObject, json, requestBody, setCredential } from "./http.js";
+import { credential, hasJsonBody, isId, isObject, json, requestBody, setCredential } from "./http.js";
 import type { MidtransNotificationPayload } from "./midtrans-adapter.js";
 import type { PlaySeekCardParams } from "./seek-engine/deck-engine.js";
 import type { GeoSeedRequest } from "./seek-engine/geo-seeder.js";
 import type { RoomStreamEvent, rulebookStore, StoredRulebookRecord } from "./rulebook-store.js";
 import { createStudioAiCoCreator } from "./studio-ai-cocreator.js";
+import { maxStudioKnowledgeBody, parseStudioDocument } from "./studio-document-parser.js";
 
 const cookieName = "kelana_rulebook";
 const SSE_KEEPALIVE_MS = 20_000;
+const knowledgePath = "/api/rulebooks/studio/knowledge";
+const privateResponse = { "Cache-Control": "private, no-store" };
 
 type Store = ReturnType<typeof rulebookStore>;
 type ResolveUserFn = (request: IncomingMessage, response?: ServerResponse, currentNow?: number) => AuthUser | null;
@@ -32,6 +35,11 @@ type RulebookRequestHandler = ((request: IncomingMessage, response: ServerRespon
 
 function studioRecord({ ownerHash: _ownerHash, ...record }: StoredRulebookRecord) {
   return record;
+}
+
+function studioDraftInput(packId: unknown, version: unknown) {
+  return isId(packId) && typeof version === "number" && Number.isSafeInteger(version) && version >= 1
+    ? { packId, version } : undefined;
 }
 
 function normalizeRoomCode(raw: unknown): string {
@@ -52,7 +60,7 @@ export function rulebookHandler(
   resolveUser?: ResolveUserFn,
   allowSandboxAuthOtp = false,
   osmPoiOptions: OsmPoiCuratorOptions = {},
-  studioAi = createStudioAiCoCreator({ now }),
+  studioAi = createStudioAiCoCreator({ now }, store.studioKnowledge.retrieveStudioContext),
 ): RulebookRequestHandler {
   const poiCurator = createOsmPoiCurator({ ...osmPoiOptions, now });
   const activeSseStreams = new Set<() => void>();
@@ -109,6 +117,23 @@ export function rulebookHandler(
 
   async function handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<void> {
     const path = url.pathname;
+    if (request.method === "GET" && path === knowledgePath) {
+      const signedIn = requireSignedIn(request, response, now());
+      if (!signedIn) return;
+      const draft = studioDraftInput(url.searchParams.get("packId"), Number(url.searchParams.get("version")));
+      if (!draft) return json(response, 400, { error: "invalid-request" });
+      const scope = store.ownedStudioDraft(signedIn.cred, draft.packId, draft.version);
+      if (!scope) return json(response, 403, { error: "owner-only" });
+      return json(response, 200, { ok: true, docs: store.studioKnowledge.listStudioDocs(scope) }, privateResponse);
+    }
+    if (request.method === "DELETE" && path.startsWith(knowledgePath + "/")) {
+      const signedIn = requireSignedIn(request, response, now());
+      if (!signedIn) return;
+      const docId = path.slice(knowledgePath.length + 1);
+      if (!isId(docId)) return json(response, 400, { error: "invalid-request" });
+      if (!store.deleteStudioDoc(signedIn.cred, docId)) return json(response, 403, { error: "owner-only" });
+      return json(response, 200, { ok: true }, privateResponse);
+    }
     if (request.method === "GET" && path === "/api/rulebooks/catalog") {
       const ts = now();
       const user = resolveUser?.(request, response, ts) ?? null;
@@ -354,14 +379,15 @@ export function rulebookHandler(
       return;
     }
     const isStudioSuggestion = path === "/api/rulebooks/studio/ai-suggest";
-    const studioCreator = isStudioSuggestion ? requireSignedIn(request, response, now()) : null;
-    if (isStudioSuggestion && !studioCreator) return;
+    const isKnowledgeIngest = path === knowledgePath + "/ingest";
+    const studioCreator = isStudioSuggestion || isKnowledgeIngest ? requireSignedIn(request, response, now()) : null;
+    if ((isStudioSuggestion || isKnowledgeIngest) && !studioCreator) return;
     if (!hasJsonBody(request)) {
       json(response, 415, { error: "invalid-request" });
       return;
     }
     const photoUpload = path === "/api/rulebooks/seek-photo" || path === "/api/rulebooks/claim-photo";
-    const bodyLimit = isStudioSuggestion ? 32 * 1024 : 512 * 1024;
+    const bodyLimit = isKnowledgeIngest ? maxStudioKnowledgeBody : isStudioSuggestion ? 32 * 1024 : 512 * 1024;
     const raw = await requestBody(request, photoUpload ? maxBase64Length + 1024 : bodyLimit);
     if (raw === undefined) return json(response, 413, { error: "invalid-request" });
     let body: unknown;
@@ -373,12 +399,40 @@ export function rulebookHandler(
     if (!isObject(body)) return json(response, 400, { error: "invalid-request" });
 
     if (studioCreator) {
-      const result = await studioAi.suggest(studioCreator.user.userId, body, [
+      const privateValues = [
+        studioCreator.user.userId,
         studioCreator.user.email,
         credential(request, AUTH_SESSION_COOKIE) ?? "",
         credential(request, cookieName) ?? "",
-      ]);
-      if (result.ok) return json(response, 200, result.data, { "Cache-Control": "private, no-store" });
+      ];
+      let scope;
+      if (isKnowledgeIngest || body.packId !== undefined || body.version !== undefined) {
+        const draft = studioDraftInput(body.packId, body.version);
+        if (!draft) return json(response, 400, { error: "invalid-request" });
+        scope = store.ownedStudioDraft(studioCreator.cred, draft.packId, draft.version);
+        if (!scope) return json(response, 403, { error: "owner-only" });
+      }
+      if (isKnowledgeIngest && scope) {
+        if (typeof body.title !== "string" || !body.title.trim() || body.title.length > 120) {
+          return json(response, 400, { error: "invalid-document" });
+        }
+        const parsed = await parseStudioDocument(body);
+        if (!parsed.ok) return json(response, parsed.status, { error: parsed.error, message: parsed.message });
+        const result = store.ingestStudioDoc(studioCreator.cred, scope.packId, scope.version, {
+          title: studioAi.sanitizeReference(body.title, privateValues),
+          text: studioAi.sanitizeReference(parsed.text, privateValues),
+          now: now(),
+        });
+        if (!result) return json(response, 403, { error: "owner-only" });
+        if (!result.ok) {
+          const status = { "document-limit": 409, "document-too-large": 413, "invalid-document": 400 }[result.error];
+          return json(response, status, { error: result.error });
+        }
+        return json(response, 200, result, privateResponse);
+      }
+      if (scope && body.format !== scope.format) return json(response, 400, { error: "invalid-request" });
+      const result = await studioAi.suggest(studioCreator.user.userId, body, privateValues, scope);
+      if (result.ok) return json(response, 200, result.data, privateResponse);
       return json(response, result.status, { error: result.error },
         result.status === 429 ? { "Retry-After": String(result.retryAfter) } : undefined);
     }

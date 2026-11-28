@@ -51,6 +51,7 @@ import {
 import { sanitizeSeekPhoto } from "./seek-photo.js";
 import { loadOfficialClaimPacks, loadOfficialSeekPacks } from "./official-packs.js";
 import { createRoomActivity } from "./rulebook-activity.js";
+import { createStudioRagStore } from "./studio-rag-store.js";
 import { claimMatchRecap, rulebookRecapStore, seekMatchRecap, type ShareRecapOptions } from "./rulebook-recaps.js";
 import {
   deserializeLiveSession,
@@ -487,6 +488,17 @@ export function rulebookStore(
       payload TEXT NOT NULL
     );
   `);
+
+  const studioKnowledge = createStudioRagStore(db);
+  const ownVersion = db.prepare(`
+    SELECT format FROM rulebook_versions WHERE pack_id = ? AND version = ? AND owner_hash = ? AND is_official = 0
+  `);
+  function ownedStudioDraft(credential: string, packId: string, version: number) {
+    const ownerHash = digest(credential);
+    const record = ownVersion.get(packId, version, ownerHash) as { format: RulebookFormat } | undefined;
+    if (!record) return undefined;
+    return { ownerHash, packId, version, format: record.format };
+  }
 
   const officialSeekLoaded = loadOfficialSeekPacks(options.officialPacksDir);
   const officialClaimLoaded = loadOfficialClaimPacks(options.officialPacksDir);
@@ -994,6 +1006,7 @@ export function rulebookStore(
       if (rec.status !== "draft" && rec.status !== "changes-requested") {
         return { ok: false, status: 400, error: "invalid-status" };
       }
+      studioKnowledge.clearStudioDocs({ ownerHash, packId, version });
       deleteVersionStmt.run(packId, version);
       const closedPlaytestRooms: string[] = [];
       for (const [code, session] of liveRooms.entries()) {
@@ -2579,6 +2592,14 @@ export function rulebookStore(
     readPublicRecap: (shareId: string) => recaps.getPublic(shareId),
     listPublicRecaps: (packId?: string, editionVersion?: number) => recaps.listPublic(packId, editionVersion),
     creatorStudio,
+    ownedStudioDraft,
+    studioKnowledge,
+    ingestStudioDoc: (credential: string, packId: string, version: number, input: Parameters<typeof studioKnowledge.ingestStudioDoc>[1]) =>
+      transact(() => {
+        const scope = ownedStudioDraft(credential, packId, version);
+        return scope && studioKnowledge.ingestStudioDoc(scope, input);
+      }),
+    deleteStudioDoc: (credential: string, docId: string) => studioKnowledge.deleteStudioDoc(digest(credential), docId),
     listOrders: () => (listOrdersStmt.all() as { payload: string }[]).map((r) => JSON.parse(r.payload) as PackOrderSummary),
     listEarnings,
     getPassByRoomCode,

@@ -122,6 +122,10 @@ test("Workers AI fenced JSON produces sanitized Claim drafts for all six primiti
     assertUnverified(item, "ai-co-creator", "recorded-rehearsal");
     assert.equal(JSON.parse(sent.messages[1].content).primitive, primitive);
     assert.match(sent.messages[0].content, /physical observation/);
+    assert.ok(result.data.ragMetrics.platformChunks > 0);
+    assert.equal(result.data.ragMetrics.docChunks, 0);
+    assert.ok(result.data.ragMetrics.estimatedTokensSaved > 0);
+    assert.ok(result.data.ragMetrics.injectedChars < result.data.ragMetrics.sourceChars);
   }
 });
 
@@ -306,7 +310,7 @@ test("HTTP requires sign-in, projects public fields, redacts telemetry and limit
     assert.ok(!JSON.stringify(health.body).includes(secret));
   }
   assert.deepEqual(events.map(event => event.outcome), Array(10).fill("accepted"));
-  assert.ok(events.every(event => event.endpoint.includes("[REDACTED_ACCOUNT]") && event.redacted));
+  assert.ok(events.every(event => event.endpoint.includes("[REDACTED_ACCOUNT]") && event.redacted && event.ragMetrics.estimatedTokensSaved > 0));
   const blocked = await creator.post(endpoint, claim);
   assert.equal(blocked.status, 429);
   assert.equal(blocked.headers.get("retry-after"), "60");
