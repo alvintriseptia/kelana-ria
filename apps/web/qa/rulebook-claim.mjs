@@ -9,6 +9,7 @@ import { catalogUrl, openEdition } from "./catalog.mjs";
 import { contrastRatio } from "./contrast.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
+import { exerciseInviteConfirmation } from "./rulebook-invite.mjs";
 import { moderateAdminPack, openAdminPanel, signInQaContext, startDraft } from "./studio-navigation.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -285,14 +286,12 @@ try {
   assert.ok(codeMatch, "Claim room code should be visible");
   const roomCode = codeMatch[1];
 
-  const ctxP2 = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const ctxP2 = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
   const pageP2 = await ctxP2.newPage();
-  await pageP2.goto(inviteHref, { waitUntil: "networkidle" });
-  await pageP2.waitForSelector("#rb-claim-join-code");
-  assert.equal(await pageP2.inputValue("#rb-claim-join-code"), roomCode, "Invite URL should prefill room code");
-  await pageP2.fill("#rb-claim-join-name", "Dina");
-  await clickAndWaitPost(pageP2, 'button[data-action="join-room"]');
-  await pageP2.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+  await exerciseInviteConfirmation(pageP1, pageP2, {
+    name: "Dina",
+    screenshot: path.join(results, "rulebook-claim-invite-confirmation.png"),
+  });
 
   const ctxP3 = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pageP3 = await ctxP3.newPage();

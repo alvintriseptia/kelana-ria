@@ -581,7 +581,7 @@ function QrModalView({
       onClose={onClose}
     >
       <p class="lobby-dialog-body">
-        Arahkan kamera ponsel teman ke kode QR ini untuk langsung masuk ke <strong>{title}</strong>.
+        Arahkan kamera ponsel teman ke kode QR ini untuk membuka undangan ke <strong>{title}</strong>.
       </p>
       <div class="lobby-qr-box">
         <div dangerouslySetInnerHTML={{ __html: qrSvg }} />

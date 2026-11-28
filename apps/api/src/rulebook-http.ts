@@ -289,6 +289,19 @@ export function rulebookHandler(
       return;
     }
 
+    const inviteRoute = /^\/api\/rulebooks\/rooms\/([^/]+)\/invite$/.exec(path);
+    if (request.method === "GET" && inviteRoute) {
+      let roomCode: string;
+      try {
+        roomCode = normalizeRoomCode(decodeURIComponent(inviteRoute[1]));
+      } catch {
+        return json(response, 404, { error: "room-not-found" });
+      }
+      const cred = resolveWriteCred(request, response, now());
+      const invite = store.viewRoomInvite(roomCode, cred);
+      return invite ? json(response, 200, invite) : json(response, 404, { error: "room-not-found" });
+    }
+
     if (request.method === "GET" && path.startsWith("/api/rulebooks/rooms/")) {
       const roomCode = decodeURIComponent(path.slice("/api/rulebooks/rooms/".length));
       const ts = now();

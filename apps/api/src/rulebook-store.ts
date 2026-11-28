@@ -673,6 +673,11 @@ export function rulebookStore(
     return row ? (JSON.parse(row.payload) as StoredRulebookRecord) : undefined;
   }
 
+  function getPassByRoomCode(roomCode: string): RulebookRoomPass | undefined {
+    const row = getPassByCodeStmt.get(roomCode) as { payload: string } | undefined;
+    return row ? (JSON.parse(row.payload) as RulebookRoomPass) : undefined;
+  }
+
   const liveRooms = new Map<string, LiveSession>();
   const roomSubscribers = new Map<string, Set<{ onEvent: (event: RoomStreamEvent) => void; onClose?: () => void }>>();
   const presenceMetaByRoom = new Map<string, Map<string, { lastPingAt: number; lastBroadcastAt: number }>>();
@@ -2244,6 +2249,33 @@ export function rulebookStore(
     liveRooms.set(roomCode, session);
   }
 
+  function viewRoomInvite(roomCode: string, credential: string): {
+    status: "open" | "member" | "full" | "closed";
+    format: RulebookFormat;
+    title?: string;
+  } | undefined {
+    const session = liveRooms.get(roomCode);
+    if (!session) {
+      const pass = getPassByRoomCode(roomCode);
+      if (!pass) return undefined;
+      return {
+        status: "closed",
+        format: pass.format,
+        title: pass.draftPlaytest ? undefined : getRecord(pass.packId, pass.version)?.pack.meta.title,
+      };
+    }
+    const { format, match, pass } = session;
+    const credHash = digest(credential);
+    const seatId = session.format === "claim-the-city"
+      ? findClaimEngineSeat(session.match, credHash)
+      : findSeekEngineSeat(session.match, credHash);
+    const title = !pass.draftPlaytest || seatId ? match.pack.meta.title : undefined;
+    if (seatId) return { status: "member", format, title };
+    if (match.phase !== "lobby") return { status: "closed", format, title };
+    if (match.seats.length >= pass.maxPlayers) return { status: "full", format, title };
+    return { status: "open", format, title };
+  }
+
   function viewRoom(
     roomCode: string,
     credential: string,
@@ -2549,10 +2581,7 @@ export function rulebookStore(
     creatorStudio,
     listOrders: () => (listOrdersStmt.all() as { payload: string }[]).map((r) => JSON.parse(r.payload) as PackOrderSummary),
     listEarnings,
-    getPassByRoomCode: (roomCode: string) => {
-      const row = getPassByCodeStmt.get(roomCode) as { payload: string } | undefined;
-      return row ? (JSON.parse(row.payload) as RulebookRoomPass) : undefined;
-    },
+    getPassByRoomCode,
     cloneOfficialTemplate,
     saveDraft,
     submitDraft,
@@ -2574,6 +2603,7 @@ export function rulebookStore(
     viewRoomPhoto,
     playCardInRoom,
     deckActionInRoom,
+    viewRoomInvite,
     viewRoom,
     subscribeRoom,
     roomTime,

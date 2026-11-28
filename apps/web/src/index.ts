@@ -125,27 +125,62 @@ async function showRoute(focusHeading = false) {
     return;
   }
   setup.replaceChildren();
-  const format = rulebookSeek ? "Hide & Seek" : "Claim the City";
-  document.title = rulebookStudio ? "Studio Kreator · Kelana Ria" : `${format} · Kelana Ria`;
-  play.innerHTML = `<p class="catalog-loading" role="status">Membuka permainan…</p>`;
+  async function mountGame(gameMode: string | null) {
+    const studio = gameMode === "rulebook-studio";
+    const format = gameMode === "rulebook-seek" ? "Hide & Seek" : "Claim the City";
+    document.title = studio ? "Studio Kreator · Kelana Ria" : `${format} · Kelana Ria`;
+    play.innerHTML = '<p class="catalog-loading" role="status">Membuka permainan…</p>';
+    try {
+      const mount = gameMode === "rulebook-seek"
+        ? (await import("./rulebook-seek-play")).mountRulebookSeekPlay
+        : gameMode === "rulebook-claim"
+          ? (await import("./rulebook-claim-play")).mountRulebookClaimPlay
+          : (await import("./rulebook-studio")).mountRulebookStudio;
+      if (currentNavigation === navigation) unmountPlay = mount(play, returnToSetup);
+    } catch {
+      if (currentNavigation !== navigation) return;
+      play.innerHTML = `<h1>${studio ? "Studio Kreator" : format}</h1>
+        <p class="intro" role="alert">Permainan belum bisa dibuka. Periksa koneksi lalu coba lagi.</p>
+        <button id="play-reload" class="secondary" type="button">Coba lagi</button>
+        <button id="play-back" class="secondary" type="button">Kembali ke katalog</button>`;
+      const { signal } = routeEvents;
+      const retry = () => location.reload();
+      play.querySelector<HTMLButtonElement>("#play-reload")!.addEventListener("click", retry, { signal });
+      play.querySelector<HTMLButtonElement>("#play-back")!.addEventListener("click", returnToSetup, { signal });
+      window.addEventListener("online", retry, { once: true, signal });
+    }
+  }
+
+  const roomCode = params.get("room");
+  if (roomCode === null || rulebookStudio) {
+    await mountGame(mode);
+    return;
+  }
+  document.title = "Undangan bermain · Kelana Ria";
+  play.innerHTML = '<p class="catalog-loading" role="status">Memeriksa undangan…</p>';
   try {
-    const mount = rulebookSeek
-      ? (await import("./rulebook-seek-play")).mountRulebookSeekPlay
-      : rulebookClaim
-        ? (await import("./rulebook-claim-play")).mountRulebookClaimPlay
-        : (await import("./rulebook-studio")).mountRulebookStudio;
-    if (currentNavigation === navigation) unmountPlay = mount(play, returnToSetup);
+    const { mountRulebookInvite } = await import("./rulebook-invite");
+    if (currentNavigation !== navigation) return;
+    unmountPlay = mountRulebookInvite(play, {
+      roomCode,
+      format: rulebookSeek ? "hide-and-seek" : "claim-the-city",
+      open(format, code) {
+        if (currentNavigation !== navigation) return;
+        unmountPlay?.();
+        unmountPlay = undefined;
+        const selected = format === "hide-and-seek" ? "rulebook-seek" : "rulebook-claim";
+        params.set("play", selected);
+        params.set("room", code);
+        params.delete("launch");
+        params.delete("pack");
+        history.replaceState(history.state, "", url);
+        void mountGame(selected);
+      },
+      cancel: returnToSetup,
+    });
   } catch {
     if (currentNavigation !== navigation) return;
-    play.innerHTML = `<h1>${rulebookStudio ? "Studio Kreator" : format}</h1>
-      <p class="intro" role="alert">Permainan belum bisa dibuka. Periksa koneksi lalu coba lagi.</p>
-      <button id="play-reload" class="secondary" type="button">Coba lagi</button>
-      <button id="play-back" class="secondary" type="button">Kembali ke katalog</button>`;
-    const { signal } = routeEvents;
-    const retry = () => location.reload();
-    play.querySelector<HTMLButtonElement>("#play-reload")!.addEventListener("click", retry, { signal });
-    play.querySelector<HTMLButtonElement>("#play-back")!.addEventListener("click", returnToSetup, { signal });
-    window.addEventListener("online", retry, { once: true, signal });
+    play.innerHTML = '<p role="alert">Undangan belum bisa dibuka.</p><a href="/catalog">Kembali ke katalog</a>';
   }
 }
 

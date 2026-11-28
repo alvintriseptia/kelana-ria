@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { exerciseInviteConfirmation, exerciseUnavailableInvite } from "./rulebook-invite.mjs";
 import path from "node:path";
 import { mkdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -49,6 +50,33 @@ try {
   await pageRoot.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
   const rootInvite = await pageRoot.getAttribute('[data-testid="invite-link"]', "href");
   assert.ok(rootInvite && rootInvite.includes("room=RB-"), "Catalog launch should create Hide & Seek room with invite link");
+
+  const unavailableContext = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block" });
+  const unavailableGuest = await unavailableContext.newPage();
+  try {
+    const missingInvite = new URL(rootInvite);
+    missingInvite.searchParams.set("room", "RB-NOTFOUND");
+    await exerciseUnavailableInvite(unavailableGuest, missingInvite.href, "missing", /Ruang tidak ditemukan/);
+
+    const rootCode = new URL(rootInvite).searchParams.get("room");
+    for (const name of ["Nia", "Laras", "Joko"]) {
+      const filler = await browser.newContext();
+      try {
+        const join = await filler.request.post(`${baseUrl}/api/rulebooks`, { data: { type: "join-room", roomCode: rootCode, name } });
+        assert.equal(join.status(), 200);
+      } finally {
+        await filler.close();
+      }
+    }
+    await exerciseUnavailableInvite(unavailableGuest, rootInvite, "full", /Ruang sudah penuh/);
+
+    await pageRoot.getByTestId("lobby-leave-btn").click();
+    await pageRoot.getByTestId("confirm-dialog-submit").click();
+    await pageRoot.getByRole("heading", { name: "Pilih permainan", level: 1 }).waitFor();
+    await exerciseUnavailableInvite(unavailableGuest, rootInvite, "closed", /Ruang sudah ditutup/);
+  } finally {
+    await unavailableContext.close();
+  }
   await ctxRoot.close();
 
   // 1. Creator opens Studio from /catalog, selects Hide & Seek, clones Official pack, exercises 4-step stepper + JSON export/import + revision note + publish
@@ -165,12 +193,10 @@ try {
   const ctxG2 = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: "block", recordVideo });
   const pageG2 = await ctxG2.newPage();
   pageG2.setDefaultTimeout(20_000);
-  await pageG2.goto(`${baseUrl}/?play=rulebook-seek`, { waitUntil: "networkidle" });
-  await assertCleanUiCopy(pageG2, "seek catalog");
-  await pageG2.fill("#rb-join-code", roomCode);
-  await pageG2.fill("#rb-join-name", "Pencari 1");
-  await pageG2.click('button[data-action="join-room"]');
-  await pageG2.waitForFunction(() => document.body.textContent.includes("Ruang Tunggu"));
+  await exerciseInviteConfirmation(pageCreator, pageG2, {
+    name: "Pencari 1",
+    screenshot: path.join(results, "rulebook-seek-invite-confirmation.png"),
+  });
 
   // #150: Invited guest in Seek lobby sees first-match cue strip, Outdoor Readiness check, and ? Panduan without leaving room
   const seekLobbyCue = pageG2.locator('[data-testid="phase-cue-strip"][data-cue-key="seek-lobby"]');
@@ -198,6 +224,7 @@ try {
   const pageG3 = await ctxG3.newPage();
   pageG3.setDefaultTimeout(20_000);
   await pageG3.goto(`${baseUrl}/?play=rulebook-seek`, { waitUntil: "networkidle" });
+  await assertCleanUiCopy(pageG3, "seek catalog");
   await pageG3.fill("#rb-join-code", roomCode);
   await pageG3.fill("#rb-join-name", "Pencari 2");
   await pageG3.click('button[data-action="join-room"]');

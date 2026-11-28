@@ -83,6 +83,7 @@ import { MapHost } from "./ui/MapHost";
 import { mountPreact } from "./ui/mount";
 import { PhaseCueStrip } from "./ui/PhaseCueStrip";
 import "./rulebook-seek-play.css";
+import { RestoreRulebookRoom } from "./ui/RestoreRulebookRoom";
 import "./rulebook-claim-play.css";
 
 function ClaimPlayApp({
@@ -708,7 +709,7 @@ function ClaimPlayApp({
     history.replaceState(history.state, "", url);
   }
 
-  async function refreshRoom(allowInvitePrompt = false, background = false) {
+  async function refreshRoom(background = false) {
     const code = roomCodeSig.value;
     if (!code) return;
     const req = ++refreshSeqRef.current;
@@ -757,7 +758,7 @@ function ClaimPlayApp({
       if (!board) {
         cachedBoardRef.current = null;
         roomEtagRef.current = null;
-        return refreshRoom(allowInvitePrompt, background);
+        return refreshRoom(background);
       }
       cachedBoardRef.current = { code, board };
       const etag = headers.get("etag");
@@ -834,11 +835,6 @@ function ClaimPlayApp({
       roomEventsRef.current?.markSynced();
     } else if (background) {
       return;
-    } else if (allowInvitePrompt) {
-      batch(() => {
-        statusMsgSig.value = `Undangan ruang ${code} terdeteksi. Masukkan namamu lalu tekan Gabung Ruang.`;
-        inlineErrorSig.value = null;
-      });
     } else {
       reportError(
         { error: data.error ?? "room-not-found", status },
@@ -917,7 +913,7 @@ function ClaimPlayApp({
       }
     }
     if (roomCodeSig.value) {
-      await refreshRoom(true);
+      await refreshRoom();
     }
   }
 
@@ -1015,7 +1011,7 @@ function ClaimPlayApp({
         toastRef.current?.clear();
         toastRef.current?.resetDedupe();
       }
-      await refreshRoom(false, false).catch(() => {});
+      await refreshRoom().catch(() => {});
       return succeeded;
     } catch (error) {
       if (lifetime.signal.aborted) return false;
@@ -1170,7 +1166,7 @@ function ClaimPlayApp({
         toastRef.current?.clear();
         toastRef.current?.resetDedupe();
       }
-      await refreshRoom(false, false).catch(() => {});
+      await refreshRoom().catch(() => {});
     } catch (error) {
       if (lifetime.signal.aborted) return;
       const resolved = reportError(
@@ -1519,7 +1515,7 @@ function ClaimPlayApp({
           : null;
       },
       isBusy: () => busySig.value,
-      onSync: () => refreshRoom(false, true),
+      onSync: () => refreshRoom(true),
       onPresence: (positions: ClaimSeatPosition[], eventNow: number) => {
         const live = liveSig.value;
         if (
@@ -1728,6 +1724,10 @@ function ClaimPlayApp({
     );
   }
 
+  if (!live && roomCodeSig.value) {
+    return <RestoreRulebookRoom error={inlineErrorSig.value?.message} onBack={onBack} />;
+  }
+
   if (!live) {
     return (
       <ClaimCatalogView
@@ -1775,7 +1775,7 @@ function ClaimPlayApp({
               roomCodeSig.value = codeInput;
               toastRef.current?.clear();
               toastRef.current?.resetDedupe();
-              await refreshRoom(false, false);
+              await refreshRoom();
             } else {
               reportError(
                 { error: res.error ?? "room-not-found", status },
@@ -1826,7 +1826,7 @@ function ClaimPlayApp({
               });
               toastRef.current?.clear();
               toastRef.current?.resetDedupe();
-              await refreshRoom(false, false);
+              await refreshRoom();
             } else {
               reportError(
                 { error: res.error ?? "invalid-request", status },
@@ -1867,7 +1867,7 @@ function ClaimPlayApp({
               });
               toastRef.current?.clear();
               toastRef.current?.resetDedupe();
-              await refreshRoom(false, false);
+              await refreshRoom();
             } else {
               reportError(
                 { error: res.error ?? "invalid-request", status },
@@ -1887,7 +1887,7 @@ function ClaimPlayApp({
             });
             toastRef.current?.clear();
             toastRef.current?.resetDedupe();
-            await refreshRoom(false, false);
+            await refreshRoom();
           });
         }}
         onBuyPack={(packId, version) => {
@@ -1962,7 +1962,7 @@ function ClaimPlayApp({
                 joinCodeSig.value = res.pass!.roomCode;
                 statusMsgSig.value = `Pembayaran lunas! Ruang ${res.pass!.roomCode} terbuka.`;
               });
-              await refreshRoom(false, false);
+              await refreshRoom();
             } else if (status === 401 || res.error === "auth-required") {
               openAuthModal({
                 reason: "Masuk dengan email agar paket tersimpan permanen di akunmu.",
@@ -2060,7 +2060,7 @@ function ClaimPlayApp({
                 "landmark-checkin",
               );
             } else {
-              await refreshRoom(false, false);
+              await refreshRoom();
             }
           });
         }}
@@ -2170,7 +2170,7 @@ function ClaimPlayApp({
         }}
         onRefresh={() => {
           runBusyAction("refresh", "lobby", undefined, async () => {
-            await refreshRoom(false, false);
+            await refreshRoom();
           });
         }}
         onNavigateCatalog={handleNavigateCatalog}
@@ -2282,7 +2282,7 @@ function ClaimPlayApp({
         }}
         onRefresh={() => {
           runBusyAction("refresh", "landmark-checkin", undefined, async () => {
-            await refreshRoom(false, false);
+            await refreshRoom();
           });
         }}
         onNavigateCatalog={handleNavigateCatalog}
@@ -2355,7 +2355,7 @@ function ClaimPlayApp({
                     "landmark-checkin",
                   );
                 } else {
-                  await refreshRoom(false, false);
+                  await refreshRoom();
                 }
               });
             }}
