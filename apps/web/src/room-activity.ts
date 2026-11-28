@@ -107,7 +107,7 @@ export function createRoomActivityUi(
   function chooseAlert(events: RoomActivityEvent[], viewer: Viewer) {
     const eligible = events.filter(event => event.alert && viewer.now - event.at <= freshMs &&
       (event.turn === undefined || event.turn === viewer.turnNumber));
-    return eligible.at(-1);
+    return eligible.filter(event => event.kind === "photo-clue").at(-1) ?? eligible.at(-1);
   }
 
   function update(viewer?: Viewer, feed?: RoomActivityFeed) {
@@ -137,7 +137,9 @@ export function createRoomActivityUi(
 
     if (!viewer.outcome && !prompt) {
       const alert = chooseAlert(fresh, viewer);
-      if (fresh.length > 1 && (alert || fresh.some(event => viewer.now - event.at > freshMs))) {
+      if (alert?.kind === "photo-clue") {
+        present(alert, alert.turn);
+      } else if (fresh.length > 1 && (alert || fresh.some(event => viewer.now - event.at > freshMs))) {
         present({ id: "catch-up", kind: "round-start", panel: "board", text: "Ada beberapa perubahan. Lihat aktivitas terbaru." }, viewer.turnNumber);
       } else if (alert) {
         present(alert, alert.turn);

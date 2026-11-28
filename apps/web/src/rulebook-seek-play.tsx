@@ -167,6 +167,7 @@ class SeekController {
   pendingCardFlights: SeekCardFlight[] = [];
   pendingRoleMotion: number | null = null;
   pendingFocusPanelTitle = false;
+  readonly photoClueFocusSig = signal<number | null>(null);
   pendingLivePayload: SeekRoomPayload | null = null;
   catalogLaunching = false;
 
@@ -215,7 +216,17 @@ class SeekController {
     this.activityUi = createRoomActivityUi(
       this.lifecycle.signal,
       (notice) => {
-        if (!this.liveSig.peek() || this.busySig.peek()) return;
+        const room = this.liveSig.peek()?.room;
+        if (!room || this.busySig.peek()) return;
+        if (notice !== "activity" && notice.kind === "photo-clue" && notice.clueIndex !== undefined &&
+            room.role === "seeker" && room.questions[notice.clueIndex]?.photoId) {
+          const { clueIndex } = notice;
+          batch(() => {
+            this.photoClueFocusSig.value = clueIndex;
+            this.panelSig.value = "history";
+          });
+          return;
+        }
         this.panelSig.value =
           notice === "activity"
             ? "activity"
@@ -2455,6 +2466,7 @@ function SeekActiveGame({
   const { room, deck } = payload;
   const isHider = room.role === "hider";
   const panel = ctrl.panelSig.value;
+  const photoClueFocus = ctrl.photoClueFocusSig.value;
   const family = ctrl.familySig.value;
   const option = ctrl.optionSig.value;
   const stationId = ctrl.stationIdSig.value;
@@ -2545,6 +2557,15 @@ function SeekActiveGame({
   useLayoutEffect(() => {
     ctrl.toast.setLayout("game", hasMapResult || Boolean(payload.activity.prompt));
     ctrl.activityUi.mount(activityHostRef.current, hasMapResult);
+
+    if (photoClueFocus !== null) {
+      ctrl.photoClueFocusSig.value = null;
+      const clue = controlsRef.current?.querySelector<HTMLElement>(`[data-photo-clue-index="${photoClueFocus}"]`);
+      if (clue) {
+        clue.scrollIntoView({ block: "nearest" });
+        clue.focus({ preventScroll: true });
+      }
+    }
 
     if (ctrl.pendingFocusPanelTitle) {
       ctrl.pendingFocusPanelTitle = false;

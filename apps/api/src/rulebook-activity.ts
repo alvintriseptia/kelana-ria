@@ -191,15 +191,19 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
     const answering = phase === "seeking";
     const newTurn = phase !== "lobby" && (turn !== seekTurn || seekPhase === "lobby");
 
-    function noteQuestion(question: SeekEngineQuestion, questionTurn: number, formerHiderId: string | null, active: boolean) {
+    function noteQuestion(question: SeekEngineQuestion, questionTurn: number, formerHiderId: string | null, active: boolean, clueIndex?: number) {
       if (questionStates.get(question.id) === question.status) return;
       dirty = true;
       questionStates.set(question.id, question.status);
       if (question.status === "pending") {
         publish(hiders, { kind: "question", text: "Ada pertanyaan baru.", panel: "questions", at: question.askedAt, turn: questionTurn });
       } else if (question.status === "answered") {
+        const photoClue = clueIndex !== undefined && question.family === "photo" && Boolean(question.photoId);
         publish(seats.filter(seat => seat.seatId !== formerHiderId), {
-          kind: "answer", text: "Jawaban sudah masuk. Lihat petunjuk.", panel: "clues", at: now, turn: questionTurn,
+          kind: photoClue ? "photo-clue" : "answer",
+          text: photoClue ? "Foto petunjuk sudah masuk." : "Jawaban sudah masuk. Lihat petunjuk.",
+          panel: "clues", at: now, turn: questionTurn,
+          ...(photoClue ? { clueIndex } : {}),
           ...(question.overlay ? { mapChange: true as const } : {}),
         }, () => active);
       } else {
@@ -230,7 +234,7 @@ export function createRoomActivity(initial?: RoomActivitySnapshot) {
       publish(seekers, { kind: "release", text: "Waktu mencari dimulai.", panel: "board", at: match.releaseAt ?? now, turn }, () => true);
     }
     if (answering) {
-      for (const question of match.questions) noteQuestion(question, turn, hiderId, true);
+      match.questions.forEach((question, index) => noteQuestion(question, turn, hiderId, true, index));
       const currentDraw = deck.activeDraw?.cards[0]?.instanceId ?? "";
       const currentHand = deck.hand.map(card => card.instanceId).join(":");
       const currentCurses = deck.activeCurses.map(curse => curse.curseInstanceId).join(":");

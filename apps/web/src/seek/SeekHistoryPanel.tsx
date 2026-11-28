@@ -4,7 +4,7 @@ import type { SeekEngineRoomView } from "@kelana-ria/contracts";
 import { answerText, questionNames } from "./types";
 
 export function SeekHistoryPanel({ room }: { room: SeekEngineRoomView }) {
-  const reversed = [...room.questions].reverse();
+  const reversed = room.questions.map((question, index) => ({ question, index })).reverse();
   return (
     <>
       <h2 id="sg-panel-title" tabIndex={-1}>
@@ -14,8 +14,9 @@ export function SeekHistoryPanel({ room }: { room: SeekEngineRoomView }) {
         {reversed.length === 0 ? (
           <li>Belum ada petunjuk.</li>
         ) : (
-          reversed.map((question) => (
-            <li key={question.id}>
+          reversed.map(({ question, index }) => (
+            <li key={question.id} data-photo-clue-index={question.photoId ? index : undefined}
+              tabIndex={question.photoId ? -1 : undefined}>
               <strong>
                 {questionNames[question.family]} · {question.label}
               </strong>
