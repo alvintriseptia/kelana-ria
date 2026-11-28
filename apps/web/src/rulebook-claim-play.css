@@ -60,6 +60,20 @@
   font: 800 .68rem/1.2 "DM Sans", sans-serif;
   pointer-events: none;
 }
+.cg-board .board-map-pin-zone[data-zone-state="unclaimed"],
+.cg-zone-badge[data-zone-state="unclaimed"] { background: #f2f5f3; color: #40514a; }
+.cg-board .board-map-pin-zone[data-zone-state="tied"],
+.cg-zone-badge[data-zone-state="tied"] { background: #fff3cf; color: #61450c; border-style: dashed; }
+.cg-zone-list li { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.cg-zone-badge {
+  display: inline-block;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  padding: 3px 7px;
+  font-size: .75rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
 .cg-board .board-map-pin-start { max-width: 126px; white-space: normal; pointer-events: none; }
 .cg-board .board-map-pin-mine { background: #075c54; color: white; }
 .cg-board .board-map-pin-rival { background: #9b432a; color: white; }
