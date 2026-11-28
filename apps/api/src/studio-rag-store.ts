@@ -116,7 +116,7 @@ function ftsTerms(text: string) {
 type DocRow = {
   doc_id: string; title: string; chunk_count: number; total_chars: number; headings: string; created_at: number;
 };
-type ChunkRow = { rowid: number; title: string; body: string; doc_id: string };
+type ChunkRow = { rowid: number; title: string; body: string; doc_id: string; document_title: string };
 type RankedPlatformId = { id: string };
 type DocResult =
   | { ok: true; doc: StudioKnowledgeDocSummary }
@@ -197,7 +197,7 @@ export function createStudioRagStore(db: DatabaseSync, rerank?: StudioRagReranke
     WHERE d.owner_hash = ? AND d.pack_id = ? AND d.version = ?
       AND (? IS NULL OR d.doc_id IN (SELECT value FROM json_each(?)))
   `;
-  const selectChunks = "SELECT c.id AS rowid, c.doc_id, c.title, c.body";
+  const selectChunks = "SELECT c.id AS rowid, c.doc_id, c.title, c.body, d.title AS document_title";
   const fallbackDocs = db.prepare(selectChunks + scopedChunks + " ORDER BY c.id");
   const firstDocChunks = db.prepare(
     selectChunks + scopedChunks + " ORDER BY ROW_NUMBER() OVER (PARTITION BY d.doc_id, c.title ORDER BY c.id), c.id LIMIT 24",

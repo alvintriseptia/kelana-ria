@@ -1,6 +1,6 @@
-import type { ClaimChallengeItem, ClaimChallengePrimitive } from "./rulebook-claim.js";
+import type { ClaimChallengeItem, ClaimChallengePrimitive, ClaimZoneDefinition } from "./rulebook-claim.js";
 import type {
-  GeoAttribution, GeoCoordinate, MatchingQuestionItem, MeasuringQuestionItem, PhotoQuestionItem, TentaclesQuestionItem,
+  GeoAttribution, GeoCoordinate, MatchingQuestionItem, MeasuringQuestionItem, PhotoQuestionItem, RulebookFormat, TentaclesQuestionItem,
 } from "./rulebook.js";
 
 export type StudioPointProvenance = {
@@ -118,3 +118,62 @@ export type StudioAiSuggestResponse = StudioAiSuggestionSet & {
 export type StudioAiSuggestionSet =
   | { format: "claim-the-city"; suggestions: StudioAiClaimSuggestion[] }
   | { format: "hide-and-seek"; suggestions: StudioAiSeekSuggestion[] };
+
+export type StudioChatTurn = { role: "user" | "assistant"; content: string };
+
+export type StudioChatRequest = {
+  packId: string;
+  version: number;
+  message: string;
+  history?: StudioChatTurn[];
+  docIds?: string[];
+  inlineDocumentText?: string;
+  inlineDocumentTitle?: string;
+  format: RulebookFormat;
+  targetLanguage?: "id";
+};
+
+export type StudioResolvedPinpoint = {
+  clientKey: string;
+  name: string;
+  status: "resolved" | "outside_boundary" | "unresolved";
+  latitude?: number;
+  longitude?: number;
+  osmId?: string;
+  category?: StudioPoiCategory;
+  suggestedZoneId?: string;
+  accessHint?: string;
+  publicHoursHint?: string;
+  sourceExcerpt?: string;
+  source?: "osm-curated";
+  fieldVerified?: false;
+};
+
+type StudioChatSeekQuestions =
+  | { family: "photo"; items: (PhotoQuestionItem & { reviewed: false; reviewedAt: "" })[] }
+  | { family: "matching"; items: MatchingQuestionItem[] }
+  | { family: "measuring"; items: MeasuringQuestionItem[] }
+  | { family: "tentacles"; items: TentaclesQuestionItem[] };
+
+export type StudioChatProposal = { id: string } & (
+  | { kind: "update_meta"; title?: string; summary?: string; cityLabel?: string }
+  | { kind: "add_zones"; zones: ClaimZoneDefinition[] }
+  | { kind: "add_landmarks"; landmarks: StudioResolvedPinpoint[] }
+  | { kind: "add_pois"; pois: StudioResolvedPinpoint[] }
+  | { kind: "add_stations"; stations: StudioResolvedPinpoint[] }
+  | { kind: "add_claim_challenges"; targetLandmarkNameOrId: string; challenges: ClaimChallengeItem[] }
+  | ({ kind: "add_seek_questions" } & StudioChatSeekQuestions)
+  | { kind: "expand_boundary"; suggestedPolygon: GeoCoordinate[]; reason: string }
+);
+
+export type StudioChatResponse = {
+  ok: true;
+  reply: string;
+  proposals: StudioChatProposal[];
+  unresolvedPlaces: StudioResolvedPinpoint[];
+  ingestedDoc?: StudioKnowledgeDocSummary;
+  mode: "live" | "template-fallback";
+  fallbackReason?: string;
+  attribution?: GeoAttribution;
+  ragMetrics: StudioRagMetrics;
+};
