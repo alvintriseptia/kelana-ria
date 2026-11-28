@@ -663,3 +663,31 @@
 .studio-poi-card[data-selected="true"],
 .studio-poi-card:focus { outline: 2px solid #8b4c05; }
 .studio-poi-card .rb-badge { justify-self: start; }
+
+.studio-evidence {
+  min-width: 0;
+  margin: .55rem 0;
+  padding: .7rem;
+  border: 1px solid var(--rb-line);
+  border-radius: 10px;
+  background: #f2f8f3;
+  overflow-wrap: anywhere;
+}
+.studio-evidence > summary {
+  min-height: 44px;
+  align-content: center;
+  cursor: pointer;
+  font-weight: 800;
+}
+.studio-evidence h4, .studio-evidence p { margin: .4rem 0; }
+.studio-evidence .rb-list li { min-width: 0; }
+.studio-evidence button { min-height: 44px; }
+.studio-idea { min-width: 0; padding: .7rem; }
+.studio-idea-art { width: 72px; max-width: 100%; }
+.studio-idea-art svg { display: block; width: 100%; }
+.studio-ideas [aria-pressed="true"] { background: #d8edb2; color: #183c32; }
+.studio-check { display: flex; align-items: center; min-height: 44px; gap: .6rem; }
+.studio-check input { flex: none; width: 1.15rem; height: 1.15rem; }
+[data-field-proximity]:not([hidden]) { display: inline-flex; }
+[data-field-proximity][data-near-site="true"] { color: #164c3c; background: #dff3e7; }
+[data-field-proximity][hidden] { display: none; }

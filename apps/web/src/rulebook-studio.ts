@@ -4,6 +4,7 @@ import type {
   AuthMeReply,
   ClaimCardEffect,
   ClaimChallengePrimitive,
+  ClaimRulebookPack,
   CurseClearCondition,
   GeoAttribution,
   GeoCoordinate,
@@ -16,6 +17,9 @@ import type {
   RulebookFormat,
   RulebookValidationIssue,
   StudioPoiCandidate,
+  StudioPointProvenance,
+  StudioAiSuggestRequest,
+  StudioAiSuggestResponse,
 } from "@kelana-ria/contracts";
 import {
   fetchAuthMe,
@@ -36,6 +40,7 @@ import {
 import {
   buildClaimCardFromForm,
   buildClaimChallengeFromForm,
+  claimChallengeItems,
   CLAIM_CARD_MAX_COPIES,
   CLAIM_CARD_MIN_COPIES,
   renderClaimLiveCardPreview,
@@ -78,6 +83,8 @@ import {
   syncModeStationsInDraft,
   toggleCatalogStationInDraft,
   updateStationAttributes,
+  approxMeters,
+  formatStudioProximity,
   type JakartaTransitCatalog,
   type Step2State,
   type Step2Target,
@@ -97,6 +104,9 @@ import {
 } from "./studio-types";
 import "./rulebook-seek-play.css";
 import "./studio-entry.css";
+import { renderStudioAiPanel, studioIdeaState } from "./studio-ai-panel";
+import { renderStudioChecklist, renderStudioProvenance, studioDate, validFieldNote } from "./studio-field-evidence";
+import { mountPreact } from "./ui/mount";
 
 type StudioView = "home" | "format" | "template" | "import" | "editor" | "review";
 type StudioTemplate = { packId: string; title: string; format: RulebookFormat; isOfficial: boolean };
@@ -219,6 +229,9 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   let savingMap = false;
   const mapEdits = new Map<string, Map<string, string>>();
   const openAccordions = new Set<string>();
+  const studioPanelUnmounts: (() => void)[] = [];
+  let ideaState = studioIdeaState();
+  let ideaKey = "";
   const step2: Step2State = {
     mapMode: "select",
     subTab: "primary",
@@ -582,7 +595,15 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   function restoreMapFields() {
     for (const [id, value] of mapEdits.get(mapEditKey()) ?? []) {
       const field = root.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-point-fields] #${CSS.escape(id)}`);
-      if (field) field.value = value;
+      if (field instanceof HTMLInputElement && field.type === "checkbox") field.checked = value === "true";
+      else if (field) field.value = value;
+    }
+    const proximity = mapEdits.get(mapEditKey())?.get("field-proximity");
+    const badge = root.querySelector<HTMLElement>("[data-field-proximity]");
+    if (badge && proximity !== undefined) {
+      badge.hidden = false;
+      badge.dataset.nearSite = String(Number(proximity) <= 100);
+      badge.textContent = formatStudioProximity(Number(proximity));
     }
     updateMapSaveLabel();
   }
@@ -650,6 +671,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         ...createNewLandmark(candidate, zoneId, pack.geography.landmarks.length),
         ...provenance,
         name: candidate.name,
+        osmCategory: candidate.category,
+        osmTags: candidate.tags,
         transitSummary: "",
         accessNotes: candidate.publicAccessHint ? "Periksa akses di lokasi." : "",
         publicHours: candidate.openingHours ?? "",
@@ -736,6 +759,13 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     return ok;
   }
 
+  function fieldPoint(pack: StudioPack, snapshot: GeoSnapshot, target: Step2Target | null): (GeoCoordinate & StudioPointProvenance) | undefined {
+    if (target?.kind === "landmark" && isClaimStudioPack(pack)) return pack.geography.landmarks.find(item => item.id === target.id);
+    if (target?.kind === "poi") return snapshot.pois.find(item => item.id === target.id);
+    if (target?.kind === "station") return snapshot.stations.find(item => item.id === target.id);
+    return undefined;
+  }
+
   function moveTargetCoordInDraft(
     pack: StudioPack,
     snap: GeoSnapshot,
@@ -747,25 +777,15 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       snap.startPoint.longitude = coord.longitude;
       return true;
     }
-    if (target.kind === "station") {
-      const st = snap.stations.find((s) => s.id === target.id);
-      if (!st) return false;
-      st.latitude = coord.latitude;
-      st.longitude = coord.longitude;
-      return true;
-    }
-    if (target.kind === "poi") {
-      const poi = snap.pois.find((p) => p.id === target.id);
-      if (!poi) return false;
-      poi.latitude = coord.latitude;
-      poi.longitude = coord.longitude;
-      return true;
-    }
-    if (target.kind === "landmark" && isClaimStudioPack(pack)) {
-      const lm = pack.geography.landmarks.find((l) => l.id === target.id);
-      if (!lm) return false;
-      lm.latitude = coord.latitude;
-      lm.longitude = coord.longitude;
+    const point = fieldPoint(pack, snap, target);
+    if (point) {
+      if (point.source === "osm-curated" && (point.latitude !== coord.latitude || point.longitude !== coord.longitude)) {
+        delete point.gpsVerifiedProximityMeters;
+        point.fieldVerified = false;
+        point.fieldVerifiedAt = "";
+      }
+      point.latitude = coord.latitude;
+      point.longitude = coord.longitude;
       return true;
     }
     return false;
@@ -1589,6 +1609,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         <span class="rb-badge">Status: ${escapeText(statusLabel(active.status))}</span>
         <span class="rb-badge">ID Peta: ${escapeText(active.snapshot.hash.slice(0, 10))}…</span>
       </div>
+      <div data-studio-field-checklist></div>
       <div class="rb-actions">
         <button type="button" class="primary" data-action="start-draft-playtest" data-testid="studio-playtest-btn" ${savingForm || busy ? "disabled" : ""}>Main Uji Coba (Draf)</button>
         <button type="button" class="secondary" data-action="dry-run">Uji Coba Cepat</button>
@@ -1608,6 +1629,146 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   }
 
   function render() {
+    for (const unmount of studioPanelUnmounts.splice(0)) unmount();
+    renderShell();
+    if (signal.aborted) return;
+    for (const host of root.querySelectorAll<HTMLElement>("[data-studio-provenance]")) {
+      const record = reviewVersions.find(item => `${item.packId}@${item.version}` === host.dataset.studioProvenance);
+      if (record) studioPanelUnmounts.push(mountPreact(host, () => renderStudioProvenance(record)));
+    }
+    const record = currentDraft();
+    if (!record) return;
+    const checklist = root.querySelector<HTMLElement>("[data-studio-field-checklist]");
+    if (checklist) studioPanelUnmounts.push(mountPreact(checklist, () => renderStudioChecklist(record)));
+    const host = root.querySelector<HTMLElement>("[data-studio-ai]");
+    if (host) mountIdeas(host, record);
+  }
+
+  function mountIdeas(host: HTMLElement, record: StudioVersionRecord) {
+    const claim = isClaimStudioPack(record.pack);
+    const target = claim ? claimStep3.challengeTarget : seekStep3.family;
+    const scopedKey = `${record.packId}@${record.version}:${target}:${claim ? claimStep3.challengePrimitive : ""}`;
+    if (ideaKey !== scopedKey) {
+      ideaKey = scopedKey;
+      const pattern = ideaState.pattern.value;
+      ideaState = studioIdeaState();
+      ideaState.pattern.value = pattern;
+    }
+    const targetFamily = seekStep3.family;
+    const available = new Map<string, number>();
+    for (const poi of record.snapshot.pois) available.set(poi.category, (available.get(poi.category) ?? 0) + 1);
+    const availablePoiCategories = [...available].filter(([, count]) => count >= 2).map(([category]) => category).slice(0, 24);
+    const landmarks = isClaimStudioPack(record.pack) ? record.pack.geography.landmarks : [];
+    const useSource = claim && ["backup", "hand"].includes(target);
+    const stillHere = () => !signal.aborted && currentDraft()?.packId === record.packId &&
+      currentDraft()?.version === record.version && ideaKey === scopedKey && Boolean(root.querySelector("[data-studio-ai]"));
+    const names = (previous: StudioAiSuggestResponse["suggestions"][number][]) => previous.map(idea => "payload" in idea ? idea.title : idea.item.label);
+    studioPanelUnmounts.push(mountPreact(host, () => renderStudioAiPanel({
+      state: ideaState,
+      format: record.format,
+      landmarks: useSource ? landmarks : undefined,
+      explainUnavailable: claim && !landmarks.length ? "Tambahkan landmark untuk dijadikan lokasi acuan."
+        : !claim && targetFamily !== "photo" && !availablePoiCategories.length
+          ? "Tambahkan minimal dua POI dalam kategori yang sama di Peta." : undefined,
+      generate: async (pattern, theme, previous, landmarkId) => {
+        const draft = currentDraft();
+        if (!draft || !stillHere()) throw new Error("Buka kembali editor ide untuk draf ini.");
+        const pack = draft.pack;
+        let request: StudioAiSuggestRequest;
+        if (isClaimStudioPack(pack)) {
+          const landmark = pack.geography.landmarks.find(point => point.id === (useSource ? landmarkId : target));
+          if (!landmark) throw new Error("Pilih landmark untuk dijadikan lokasi acuan.");
+          const { id, name, zoneId, transitSummary, accessNotes, publicHours, osmCategory, osmTags } = landmark;
+          request = {
+            format: "claim-the-city", cityLabel: pack.meta.cityLabel, theme, pattern, primitive: claimStep3.challengePrimitive,
+            landmark: {
+              id, name, transitSummary, accessNotes, publicHours, osmCategory, osmTags,
+              zoneName: pack.geography.zones.find(zone => zone.id === zoneId)?.name ?? zoneId,
+            },
+            existingTitles: [...names(previous), ...claimChallengeItems(pack, target).map(item => item.title)].slice(0, 40),
+          };
+        } else {
+          if (targetFamily !== "photo" && targetFamily !== "matching" && targetFamily !== "measuring" && targetFamily !== "tentacles") {
+            throw new Error("Pilih kategori pertanyaan untuk membuat ide.");
+          }
+          request = {
+            format: "hide-and-seek", cityLabel: pack.meta.cityLabel, targetFamily, theme, availablePoiCategories,
+            stationNames: draft.snapshot.stations.slice(0, 20).map(point => point.name),
+            poiSamples: draft.snapshot.pois.filter(point => availablePoiCategories.includes(point.category)).slice(0, 24)
+              .map(({ id, name, category }) => ({ id, name, category })),
+            existingLabels: [...names(previous), ...(pack.investigationBook.families[targetFamily]?.items.map(item => item.label) ?? [])].slice(0, 40),
+          };
+        }
+        let result: StudioAiSuggestResponse & { error?: string };
+        try { result = await apiJson("/api/rulebooks/studio/ai-suggest", request); }
+        catch { throw new Error("Koneksi terganggu. Coba lagi."); }
+        if (result.error === "rate-limited") throw new Error("Batas permintaan tercapai. Coba lagi dalam satu menit.");
+        if (result.error === "auth-required") throw new Error("Masuk lagi untuk membuat ide.");
+        if (result.format !== request.format || !Array.isArray(result.suggestions)) {
+          throw new Error("Ide belum bisa dibuat. Periksa data lokasi atau tema, lalu coba lagi.");
+        }
+        return result;
+      },
+      useIdea: async (idea, edit) => {
+        if (!stillHere() || savingMap || savingForm || busy) throw new Error();
+        const draft = currentDraft();
+        if (!draft || !isEditable(draft)) throw new Error();
+        const pack = structuredClone(draft.pack);
+        if ("payload" in idea && isClaimStudioPack(pack)) {
+          if (edit) {
+            claimStep3.editingChallengeIndex = null;
+            claimStep3.editingChallengeDraft = structuredClone(idea);
+            claimStep3.challengePrimitive = idea.payload.primitive;
+            render();
+            focusField("[data-ai-answer], #ed-ai-leaf-answers, #ed-ai-leaf-min, #ed-ai-first-answers, #ed-ai-second-answers", "#ed-chal-notes");
+            return false;
+          }
+          const items = writableClaimItems(pack, target);
+          if (items.some(item => item.id === idea.id)) return true;
+          items.push(idea);
+        } else if ("family" in idea && !isClaimStudioPack(pack) && idea.family === targetFamily) {
+          if (edit && idea.family === "photo") {
+            seekStep3.editingQuestionIndex = null;
+            seekStep3.editingQuestionDraft = structuredClone(idea.item);
+            render();
+            focusField("#ed-item-extra");
+            return false;
+          }
+          const settings = { enabled: true, drawCount: 2, keepCount: 1, availableInPhases: ["seeking" as const] };
+          const { family, item } = idea;
+          switch (family) {
+            case "photo":
+              (pack.investigationBook.families.photo ??= { ...settings, items: [] }).items.push(item);
+              break;
+            case "matching":
+              (pack.investigationBook.families.matching ??= { ...settings, items: [] }).items.push(item);
+              break;
+            case "measuring":
+              (pack.investigationBook.families.measuring ??= { ...settings, items: [] }).items.push(item);
+              break;
+            case "tentacles":
+              (pack.investigationBook.families.tentacles ??= { ...settings, items: [] }).items.push(item);
+              break;
+          }
+        } else return false;
+        const saved = await persistDraft(pack, structuredClone(draft.snapshot), "Ide disimpan di draf.");
+        if (!saved) throw new Error();
+        return true;
+      },
+    })));
+  }
+
+  function focusField(selector: string, fallback?: string) {
+    (root.querySelector<HTMLElement>(selector) ?? (fallback ? root.querySelector<HTMLElement>(fallback) : null))?.focus();
+  }
+
+  function writableClaimItems(pack: ClaimRulebookPack, target: string) {
+    if (target === "backup") return pack.challenges.backupPool;
+    if (target === "hand") return pack.challenges.challengeHandPool ??= [];
+    return pack.challenges.landmarkChallenges[target] ??= [];
+  }
+
+  function renderShell() {
     if (signal.aborted) return;
     syncOpenAccordions();
     const active = currentDraft();
@@ -1628,10 +1789,11 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     }[view];
     const showingMapIssues = headerSlot.querySelector<HTMLDetailsElement>("[data-map-validation]")?.open;
     const issues = validationErrors.length ? `<ul id="st-validation-issues" class="rb-errors" aria-label="Kesalahan validasi" tabindex="-1">${validationErrors.map(error => {
-      const target = resolveValidationJump(error.path, format);
+      const fieldVerification = /^(?:unverified-(?:osm|ai)|unedited-ai|unreviewed-challenge|osm-verification-note)/.test(error.code);
+      const target = resolveValidationJump(error.path, format, fieldVerification);
       const zone = error.code === "empty-zone" ? /"([^"]+)"/.exec(error.message)?.[1] ?? "" : "";
       return `<li><div>${escapeText(error.message)}</div>
-        <button type="button" class="secondary" data-jump-path="${escapeText(error.path)}" data-jump-zone="${escapeText(zone)}">Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button></li>`;
+        <button type="button" class="secondary" data-jump-path="${escapeText(error.path)}" data-jump-zone="${escapeText(zone)}" ${fieldVerification ? "data-field-verification" : ""}>Lompat &amp; Perbaiki (${escapeText(target.label)}) →</button></li>`;
     }).join("")}</ul>` : "";
     const saveInfo = editorSaveStatusInfo();
     const showMoreMenu = !authRequired && view !== "review";
@@ -1929,7 +2091,8 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
     if ((target instanceof HTMLInputElement || target instanceof HTMLSelectElement) && target.closest("[data-point-fields]")) {
       const key = mapEditKey();
       const fields = mapEdits.get(key) ?? new Map<string, string>();
-      fields.set(target.id, target.value);
+      fields.set(target.id, target instanceof HTMLInputElement && target.type === "checkbox"
+        ? String(target.checked) : target.value);
       mapEdits.set(key, fields);
       step2.saved = false;
       updateMapSaveLabel();
@@ -2119,11 +2282,12 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           const ok = await flushDirtyFormIfNeeded();
           if (!ok) return;
         }
-        const target = resolveValidationJump(jumpPath, format);
+        const verify = btn.hasAttribute("data-field-verification");
+        const target = resolveValidationJump(jumpPath, format, verify);
         setValidationFeedback(null);
         step = target.step;
         if (target.step2Tab) {
-          step2.editingChallenges = target.focusSelector === "#ed-chal-target";
+          step2.editingChallenges = target.focusSelector === "#ed-chal-target" || target.focusSelector === "#ed-chal-notes";
           const active = currentDraft();
           step2.subTab = target.step2Tab;
           step2.drawer = null;
@@ -2131,14 +2295,14 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           if (active && target.step2Tab === "primary") {
             const pack = active.pack;
             const claim = isClaimStudioPack(pack);
-            if (claim && jumpPath.toLowerCase().includes("backup")) {
+            if (claim && /^challenges\.(?:backupPool|challengeHandPool)/i.test(jumpPath)) {
               const firstLm = pack.geography.landmarks[0];
               if (firstLm && step2.selected?.kind !== "landmark") {
                 step2.selected = { kind: "landmark", id: firstLm.id };
               }
-              claimStep3.challengeTarget = "backup";
+              claimStep3.challengeTarget = /challengeHandPool/i.test(jumpPath) ? "hand" : "backup";
             } else {
-              const lmMatch = /landmarkChallenges\.([^.[]+)/.exec(jumpPath);
+              const lmMatch = /landmarkChallenges\.([^[]+)/.exec(jumpPath);
               const matchedLm = claim && lmMatch ? pack.geography.landmarks.find(l => l.id === lmMatch[1]) : undefined;
               const point = claim ? (matchedLm ?? pack.geography.landmarks[index]) : active.snapshot.stations[index];
               if (point) {
@@ -2146,6 +2310,16 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
                 if (claim) claimStep3.challengeTarget = point.id;
               }
             }
+          }
+          if (active && target.step2Tab === "pois" && active.snapshot.pois[index]) {
+            step2.selected = { kind: "poi", id: active.snapshot.pois[index].id };
+          }
+          if (active && verify && step2.editingChallenges && isClaimStudioPack(active.pack)) {
+            const items = claimChallengeItems(active.pack, claimStep3.challengeTarget);
+            const item = items[index];
+            claimStep3.editingChallengeIndex = item ? index : null;
+            claimStep3.editingChallengeDraft = item ? structuredClone(item) : null;
+            if (item) claimStep3.challengePrimitive = item.payload.primitive;
           }
           if (active && target.step2Tab === "secondary") {
             if (isClaimStudioPack(active.pack)) step2.zoneId = jumpZone || active.pack.geography.zones[index]?.id || null;
@@ -2155,6 +2329,16 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           if (active && target.step2Tab === "boundary") step2.vertex = active.snapshot.boundaryPolygon[index] ? index : null;
         }
         if (target.seekSubTab) seekStep3.subTab = target.seekSubTab;
+        if (verify && target.focusSelector === "#ed-photo-field-note") {
+          const active = currentDraft();
+          const index = Number(/\[(\d+)\]/.exec(jumpPath)?.[1] ?? -1);
+          if (active && !isClaimStudioPack(active.pack)) {
+            const item = active.pack.investigationBook.families.photo?.items[index];
+            seekStep3.family = "photo";
+            seekStep3.editingQuestionIndex = item ? index : null;
+            seekStep3.editingQuestionDraft = item ? structuredClone(item) : null;
+          }
+        }
         if (target.claimSubTab) claimStep3.subTab = target.claimSubTab;
         render();
         if (target.focusSelector || target.step2Tab) {
@@ -2452,12 +2636,17 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             else pack.investigationBook.families.thermometer.items.push(nextItem);
           } else if (fam === "matching") {
             pack.investigationBook.families.matching ??= { enabled: true, drawCount: 3, keepCount: 1, availableInPhases: ["seeking"], items: [] };
-            const nextItem = { id, label, matchType: "station_attribute" as const, attributeKey: extra };
+            const matchType = seekStep3.editingQuestionDraft?.matchType ?? "station_attribute";
+            const nextItem = { id, label, matchType,
+              ...(matchType === "nearest_poi" ? { poiCategory: extra } : matchType === "station_attribute" ? { attributeKey: extra } : {}),
+            };
             if (isEditing && pack.investigationBook.families.matching.items[editIdx]) pack.investigationBook.families.matching.items[editIdx] = nextItem;
             else pack.investigationBook.families.matching.items.push(nextItem);
           } else if (fam === "measuring") {
             pack.investigationBook.families.measuring ??= { enabled: true, drawCount: 3, keepCount: 1, availableInPhases: ["seeking"], items: [] };
-            const nextItem = { id, label, targetType: "poi_category" as const, poiCategory: extra };
+            const nextItem = seekStep3.editingQuestionDraft?.targetType === "named_poi"
+              ? { id, label, targetType: "named_poi" as const, poiId: extra }
+              : { id, label, targetType: "poi_category" as const, poiCategory: extra };
             if (isEditing && pack.investigationBook.families.measuring.items[editIdx]) pack.investigationBook.families.measuring.items[editIdx] = nextItem;
             else pack.investigationBook.families.measuring.items.push(nextItem);
           } else if (fam === "tentacles") {
@@ -2467,9 +2656,25 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
             else pack.investigationBook.families.tentacles.items.push(nextItem);
           } else {
             pack.investigationBook.families.photo ??= { enabled: true, drawCount: 1, keepCount: 1, availableInPhases: ["seeking"], items: [] };
-            const nextItem = { id, label, prompt: extra, phase: "both" as const };
-            if (isEditing && pack.investigationBook.families.photo.items[editIdx]) pack.investigationBook.families.photo.items[editIdx] = nextItem;
-            else pack.investigationBook.families.photo.items.push(nextItem);
+            const previous = seekStep3.editingQuestionDraft;
+            const fieldVerified = Boolean(root.querySelector<HTMLInputElement>("#ed-photo-field-verified")?.checked);
+            const verificationNotes = root.querySelector<HTMLTextAreaElement>("#ed-photo-field-note")?.value.trim() ?? "";
+            if (fieldVerified && !validFieldNote(verificationNotes, previous?.aiProvenance?.draftNoteMarker)) {
+              const alert = root.querySelector<HTMLElement>("[data-photo-field-error]");
+              if (alert) { alert.hidden = false; alert.textContent = "Ganti catatan draf dengan hasil cek lapangan."; }
+              return;
+            }
+            const nextItem = {
+              id: previous?.id ?? id, label, prompt: extra, phase: previous?.phase ?? "both" as const,
+              ...(previous?.aiProvenance ? {
+                aiProvenance: previous.aiProvenance, fieldVerified, verificationNotes,
+                fieldVerifiedAt: fieldVerified ? studioDate() : "",
+              } : {}),
+            };
+            const items = pack.investigationBook.families.photo.items;
+            const existing = isEditing ? editIdx : items.findIndex(item => item.id === nextItem.id);
+            if (existing >= 0 && items[existing]) items[existing] = nextItem;
+            else items.push(nextItem);
           }
           seekStep3.editingQuestionIndex = null;
           seekStep3.editingQuestionDraft = null;
@@ -2565,9 +2770,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         if (!active || !isEditable(active) || !isClaimStudioPack(active.pack)) return;
         const idx = Number(btn.dataset.index ?? -1);
         const list =
-          claimStep3.challengeTarget === "backup"
-            ? active.pack.challenges.backupPool
-            : active.pack.challenges.landmarkChallenges[claimStep3.challengeTarget];
+          claimChallengeItems(active.pack, claimStep3.challengeTarget);
         const item = list?.[idx];
         if (!item) return;
         claimStep3.editingChallengeIndex = idx;
@@ -2618,25 +2821,20 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         if (c3Action === "add-challenge" || c3Action === "save-challenge") {
           const isEditing = c3Action === "save-challenge" && claimStep3.editingChallengeIndex !== null;
           const editIdx = isEditing ? claimStep3.editingChallengeIndex! : -1;
-          const existingId = isEditing ? claimStep3.editingChallengeDraft?.id : undefined;
+          const existingId = claimStep3.editingChallengeDraft?.id;
           const chal = buildClaimChallengeFromForm(root, claimStep3, existingId);
           if (!chal) {
             const error = root.querySelector<HTMLElement>("[data-claim-composer-error]");
             if (error) {
-              error.textContent = "Isi judul, jawaban bila diperlukan, dan catatan sumber atau bukti. Centang peninjauan sebelum menyimpan.";
+              error.textContent = "Isi judul dan jawaban bila diperlukan. Untuk memverifikasi, ganti catatan draf dengan hasil cek lapangan.";
               error.hidden = false;
             }
             return;
           }
-          if (claimStep3.challengeTarget === "backup") {
-            if (isEditing && pack.challenges.backupPool[editIdx]) pack.challenges.backupPool[editIdx] = chal;
-            else pack.challenges.backupPool.push(chal);
-          } else {
-            pack.challenges.landmarkChallenges[claimStep3.challengeTarget] ??= [];
-            const targetList = pack.challenges.landmarkChallenges[claimStep3.challengeTarget];
-            if (isEditing && targetList[editIdx]) targetList[editIdx] = chal;
-            else targetList.push(chal);
-          }
+          const targetList = writableClaimItems(pack, claimStep3.challengeTarget);
+          const existing = isEditing ? editIdx : targetList.findIndex(item => item.id === chal.id);
+          if (existing >= 0 && targetList[existing]) targetList[existing] = chal;
+          else targetList.push(chal);
           claimStep3.editingChallengeIndex = null;
           claimStep3.editingChallengeDraft = null;
           await persistDraft(pack, snap, isEditing ? `Tantangan ${chal.title} diperbarui.` : `Tantangan ${chal.title} ditambahkan.`);
@@ -2645,9 +2843,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
         if (c3Action === "delete-challenge") {
           const idx = Number(btn.dataset.index ?? -1);
           const list =
-            claimStep3.challengeTarget === "backup"
-              ? pack.challenges.backupPool
-              : pack.challenges.landmarkChallenges[claimStep3.challengeTarget];
+            claimChallengeItems(pack, claimStep3.challengeTarget);
           if (list && idx >= 0) {
             list.splice(idx, 1);
             claimStep3.editingChallengeIndex = null;
@@ -2791,6 +2987,25 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
           }
           return;
         }
+        if (mapAction === "gps-verify-point") {
+          const point = fieldPoint(active.pack, active.snapshot, step2.selected);
+          if (step2.locatingGps || point?.source !== "osm-curated") return;
+          const coord = await requestStudioGpsFix();
+          if (!coord) return;
+          step2.locatingGps = false;
+          step2.gpsFeedback = "";
+          if (currentDraft() === active && step === 2 && editKey === mapEditKey()) {
+            const distance = Math.round(approxMeters(coord, point));
+            const fields = mapEdits.get(editKey) ?? new Map<string, string>();
+            fields.set("field-proximity", String(distance));
+            mapEdits.set(editKey, fields);
+            step2.saved = false;
+            step2.gpsFeedback = formatStudioProximity(distance);
+          }
+          render();
+          focusField('[data-map-action="gps-verify-point"]');
+          return;
+        }
         if (mapAction === "gps-add" || mapAction === "gps-move-selected") {
           if (step2.locatingGps) return;
           const coord = await requestStudioGpsFix();
@@ -2897,6 +3112,26 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
                 Number(root.querySelector<HTMLInputElement>("#ed-lm-chal")?.value ?? 4) * 60_000;
               lm.accessNotes = root.querySelector<HTMLInputElement>("#ed-lm-notes")?.value.trim() || lm.accessNotes;
             }
+          }
+          const point = fieldPoint(pack, snap, step2.selected);
+          const previous = fieldPoint(active.pack, active.snapshot, step2.selected);
+          if (point?.source === "osm-curated" && previous) {
+            const note = root.querySelector<HTMLInputElement>("#ed-field-note")?.value.trim() ?? "";
+            const confirmed = root.querySelector<HTMLInputElement>("#ed-field-verified")?.checked ?? false;
+            const moved = previous.latitude !== point.latitude || previous.longitude !== point.longitude;
+            if (confirmed && !validFieldNote(note)) {
+              step2.undoStack.pop();
+              step2.gpsError = "Isi catatan cek lapangan dengan minimal enam karakter.";
+              render();
+              focusField("#ed-field-note");
+              return;
+            }
+            point.fieldVerificationNote = note;
+            point.fieldVerified = confirmed && !moved;
+            point.fieldVerifiedAt = point.fieldVerified ? studioDate() : "";
+            const distance = mapEdits.get(editKey)?.get("field-proximity");
+            if (moved) delete point.gpsVerifiedProximityMeters;
+            else if (distance !== undefined) point.gpsVerifiedProximityMeters = Number(distance);
           }
           step2.gpsFeedback = "";
           step2.gpsError = "";
@@ -3386,6 +3621,7 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
   void refresh();
   return () => {
     lifetime.abort();
+    for (const unmount of studioPanelUnmounts.splice(0)) unmount();
     closeDeleteDraftDialog();
     closeReviewDialog();
     window.clearInterval(dryClock);

@@ -29,14 +29,26 @@ export type DryRunState = {
 export type ValidationJumpTarget = {
   step: StudioStep;
   label: string;
-  step2Tab?: "primary" | "secondary" | "start" | "boundary";
+  step2Tab?: "primary" | "secondary" | "pois" | "start" | "boundary";
   seekSubTab?: "timers" | "book" | "deck";
   claimSubTab?: "session" | "deck";
   focusSelector?: string;
 };
 
-export function resolveValidationJump(path: string, format: RulebookFormat): ValidationJumpTarget {
+export function resolveValidationJump(path: string, format: RulebookFormat, fieldVerification = false): ValidationJumpTarget {
   const p = path.toLowerCase();
+  if (fieldVerification) {
+    if (p.startsWith("snapshot.pois[")) return { step: 2, label: "Cek lokasi", step2Tab: format === "claim-the-city" ? "pois" : "secondary", focusSelector: "#ed-field-note" };
+    if (p.startsWith("snapshot.stations[") || p.startsWith("geography.landmarks[")) {
+      return { step: 2, label: "Cek lokasi", step2Tab: "primary", focusSelector: "#ed-field-note" };
+    }
+    if (p.startsWith("challenges.")) {
+      return { step: 2, label: "Cek tantangan", step2Tab: "primary", focusSelector: "#ed-chal-notes" };
+    }
+    if (p.startsWith("investigationbook.families.photo.")) {
+      return { step: 3, label: "Cek petunjuk foto", seekSubTab: "book", focusSelector: "#ed-photo-field-note" };
+    }
+  }
   if (p.startsWith("meta")) {
     return { step: 1, label: "Tahap 1 · Info Paket", focusSelector: "#ed-meta-title" };
   }

@@ -1,3 +1,4 @@
+import type { PhotoQuestionItem, MatchingQuestionItem, MeasuringQuestionItem } from "@kelana-ria/contracts";
 import type {
   CurseBlockerType,
   CurseCastingCost,
@@ -27,6 +28,14 @@ export type SeekQuestionDraft = {
   attributeKey?: string;
   poiCategory?: string;
   prompt?: string;
+  matchType?: MatchingQuestionItem["matchType"];
+  targetType?: MeasuringQuestionItem["targetType"];
+  poiId?: string;
+  phase?: PhotoQuestionItem["phase"];
+  fieldVerified?: boolean;
+  fieldVerifiedAt?: string;
+  verificationNotes?: string;
+  aiProvenance?: PhotoQuestionItem["aiProvenance"];
 };
 
 export type SeekStep3State = {
@@ -146,7 +155,7 @@ function renderSeekBook(
   const cfg = pack.investigationBook.families[family];
   const items = cfg?.items ?? [];
   const familyLabel = FAMILY_LIST.find((f) => f.id === family)?.label ?? family;
-  const editing = state.editingQuestionIndex !== null ? state.editingQuestionDraft : null;
+  const editing = state.editingQuestionDraft;
 
   const labelVal = editing?.label ?? "";
   const radarNum = editing?.radiusMeters ?? 750;
@@ -184,6 +193,7 @@ function renderSeekBook(
     </div>
     ${editable ? `<button type="button" class="secondary" data-s3-action="save-family-cfg">Simpan Pengaturan Kategori</button>` : ""}
 
+    ${editable && ["photo", "matching", "measuring", "tentacles"].includes(family) ? '<div data-studio-ai="seek"></div>' : ""}
     <details class="rb-accordion" data-studio-accordion="seek-book">
       <summary>Daftar Pertanyaan ${escapeText(familyLabel)} (${items.length})</summary>
       <ul class="rb-list">
@@ -193,7 +203,10 @@ function renderSeekBook(
             : items
                 .map(
                   (item, idx) => `<li${state.editingQuestionIndex === idx ? ' class="st-editing-row"' : ""}>
-                    <div><strong>${escapeText(item.label)}</strong></div>
+                    <div><strong>${escapeText(item.label)}</strong>
+                      ${"aiProvenance" in item && item.aiProvenance && !item.fieldVerified
+                        ? '<span class="rb-badge rb-badge-warn">Perlu Cek Lapangan</span>' : ""}
+                    </div>
                     ${
                       editable
                         ? `<div class="rb-actions">
@@ -221,19 +234,24 @@ function renderSeekBook(
                   : family === "thermometer"
                     ? `<label class="rb-field"><span>Jarak Tempuh Min (meter)</span><input id="ed-item-num" type="number" value="${thermoNum}" min="100"></label>`
                     : family === "matching"
-                      ? `<label class="rb-field"><span>Atribut Stasiun</span><input id="ed-item-extra" value="${escapeText(matchingAttr)}"></label>`
+                      ? `<label class="rb-field"><span>${editing?.matchType === "nearest_poi" ? "Kategori lokasi" : "Atribut Stasiun"}</span><input id="ed-item-extra" value="${escapeText(editing?.matchType === "nearest_poi" ? measuringCat : matchingAttr)}" ${editing?.matchType && !["station_attribute", "nearest_poi"].includes(editing.matchType) ? "disabled" : ""}></label>`
                       : family === "measuring"
-                        ? `<label class="rb-field"><span>Kategori Lokasi</span><input id="ed-item-extra" value="${escapeText(measuringCat)}"></label>`
+                        ? `<label class="rb-field"><span>${editing?.targetType === "named_poi" ? "ID lokasi" : "Kategori Lokasi"}</span><input id="ed-item-extra" value="${escapeText(editing?.targetType === "named_poi" ? editing.poiId ?? "" : measuringCat)}"></label>`
                         : family === "tentacles"
                           ? `<label class="rb-field"><span>Radius (meter)</span><input id="ed-item-num" type="number" value="${tentaclesNum}" min="200"></label>
                              <label class="rb-field"><span>Kategori Lokasi</span><input id="ed-item-extra" value="${escapeText(tentaclesCat)}"></label>`
                           : `<label class="rb-field"><span>Instruksi Foto</span><input id="ed-item-extra" value="${escapeText(photoPrompt)}"></label>`
               }
             </div>
+            ${family === "photo" && editing?.aiProvenance ? `<label class="rb-field"><span>Catatan cek lapangan</span>
+              <textarea id="ed-photo-field-note" rows="2">${escapeText(editing.verificationNotes ?? "")}</textarea></label>
+              <p class="rb-errors" data-photo-field-error role="alert" hidden></p>
+              <label class="studio-check"><input id="ed-photo-field-verified" type="checkbox" ${editing.fieldVerified ? "checked" : ""}> Saya sudah memverifikasi langsung di lokasi</label>` : ""}
+
             ${
               editing
                 ? `<div class="rb-actions">
-                    <button type="button" class="primary" data-s3-action="save-book-item">Simpan Perubahan</button>
+                    <button type="button" class="primary" data-s3-action="${state.editingQuestionIndex === null ? "add-book-item" : "save-book-item"}">${state.editingQuestionIndex === null ? "+ Tambah Pertanyaan" : "Simpan Perubahan"}</button>
                     <button type="button" class="secondary" data-s3-action="cancel-edit-book-item">Batal</button>
                   </div>`
                 : `<button type="button" class="primary" data-s3-action="add-book-item">+ Tambah Pertanyaan</button>`

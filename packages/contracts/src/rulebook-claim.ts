@@ -10,7 +10,7 @@ import type {
   RulebookValidationIssue,
   TransitMode,
 } from "./rulebook.js";
-import type { StudioAiProvenance, StudioPointProvenance } from "./studio-cocreator.js";
+import type { StudioAiProvenance, StudioPoiCategory, StudioPointProvenance } from "./studio-cocreator.js";
 import type { RoomActivityFeed } from "./rulebook-activity.js";
 import type { LocationFix } from "./index.js";
 
@@ -65,6 +65,8 @@ export type ClaimLandmarkDefinition = GeoCoordinate & StudioPointProvenance & {
   publicHours: string;
   estimatedTravelFromStartMs?: number;
   estimatedChallengeMs?: number;
+  osmCategory?: StudioPoiCategory;
+  osmTags?: Record<string, string>;
 };
 
 export type ClaimGeographyRules = {

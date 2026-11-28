@@ -6,6 +6,8 @@ import type {
   ClaimRulebookPack,
 } from "@kelana-ria/contracts";
 import { escapeText } from "./escape-text";
+import { readStudioSuggestionFields, renderStudioSuggestionFields } from "./studio-claim-suggestion-fields";
+import { studioDate, validFieldNote } from "./studio-field-evidence";
 import {
   challengePrimitiveTileMeta,
   renderGameCardPreviewHtml,
@@ -16,7 +18,7 @@ export type ClaimStep3SubTab = "session" | "deck";
 
 export type ClaimStep3State = {
   subTab: ClaimStep3SubTab;
-  challengeTarget: string; // "backup" or landmarkId
+  challengeTarget: string; // "backup", "hand", or landmark ID
   challengePrimitive: ClaimChallengePrimitive["primitive"];
   cardPrimitive: ClaimCardEffect["primitive"];
   editingChallengeIndex: number | null;
@@ -226,6 +228,12 @@ function challengeEditorValues(prim: ClaimChallengePrimitive["primitive"], editi
   };
 }
 
+export function claimChallengeItems(pack: ClaimRulebookPack, target: string) {
+  if (target === "backup") return pack.challenges.backupPool;
+  if (target === "hand") return pack.challenges.challengeHandPool ?? [];
+  return pack.challenges.landmarkChallenges[target] ?? [];
+}
+
 export function renderClaimChallenges(
   pack: ClaimRulebookPack,
   state: ClaimStep3State,
@@ -233,11 +241,10 @@ export function renderClaimChallenges(
   editable: boolean,
 ): string {
   const isBackup = state.challengeTarget === "backup";
-  const items = isBackup
-    ? pack.challenges.backupPool
-    : (pack.challenges.landmarkChallenges[state.challengeTarget] ?? []);
+  const items = claimChallengeItems(pack, state.challengeTarget);
   const prim = state.challengePrimitive;
-  const editing = state.editingChallengeIndex !== null ? state.editingChallengeDraft : null;
+  const editing = state.editingChallengeDraft;
+  const generated = editing?.aiProvenance && editing.payload.primitive === prim;
   const vals = challengeEditorValues(prim, editing);
   const estimates = items.flatMap(item => item.estimatedSeconds === undefined ? [] : [item.estimatedSeconds]);
   const compare = estimates.length > 1 && Math.max(...estimates) - Math.min(...estimates) > 20;
@@ -246,6 +253,7 @@ export function renderClaimChallenges(
     <label class="rb-field"><span>Target Tantangan</span>
       <select id="ed-chal-target">
         <option value="backup" ${isBackup ? "selected" : ""}>Tantangan Cadangan (${pack.challenges.backupPool.length} tantangan)</option>
+        ${pack.challenges.challengeHandPool ? `<option value="hand" ${state.challengeTarget === "hand" ? "selected" : ""}>Tangan Tantangan (${pack.challenges.challengeHandPool.length})</option>` : ""}
         ${pack.geography.landmarks
           .map(
             (lm) =>
@@ -255,6 +263,7 @@ export function renderClaimChallenges(
       </select>
     </label>
 
+    ${editable ? '<div data-studio-ai="claim"></div>' : ""}
     <details class="rb-accordion" data-studio-accordion="claim-challenges">
       <summary>Varian tantangan (${items.length})</summary>
       ${compare ? '<p>Selisih perkiraan lebih dari 20 detik. Bandingkan usaha yang diperlukan sebelum menerbitkan.</p>' : ""}
@@ -266,7 +275,7 @@ export function renderClaimChallenges(
                 .map(
                   (item, idx) => `<li${state.editingChallengeIndex === idx ? ' class="st-editing-row"' : ""}>
                     <div><strong>${escapeText(item.title)}</strong> <span class="rb-badge">${escapeText(challengePrimitiveTileMeta(item.payload.primitive).short)}</span></div>
-                    <small>${item.reviewed ? `Ditinjau ${escapeText(item.reviewedAt)}` : "Belum ditinjau"} · ${escapeText(item.verificationNotes)}</small>
+                    <small>${item.reviewed ? `Ditinjau ${escapeText(item.reviewedAt)}` : "Perlu Cek Lapangan"} · ${escapeText(item.verificationNotes)}</small>
                     ${item.estimatedSeconds ? `<small>Perkiraan ${item.estimatedSeconds} detik</small>` : ""}
                     <div class="rb-actions">
                       <button type="button" class="secondary" data-c3-action="preview-challenge" data-index="${idx}">Pratinjau varian</button>
@@ -306,7 +315,8 @@ export function renderClaimChallenges(
             </div>
 
             ${
-              prim === "observation_mcq"
+              generated ? renderStudioSuggestionFields(editing.payload)
+                : prim === "observation_mcq"
                 ? `<label class="rb-field"><span>Pertanyaan Pengamatan</span><input id="ed-chal-prompt" value="${escapeText(vals.prompt)}"></label>
                    <div class="rb-grid-2">
                      <label class="rb-field"><span>Opsi A</span><input id="ed-chal-opt-a" value="${escapeText(vals.optA)}"></label>
@@ -365,16 +375,16 @@ export function renderClaimChallenges(
                             <label class="rb-field"><span>Jawaban Langkah 2</span><input id="ed-chal-answer" value="${escapeText(vals.answer)}"></label>
                           </div>`
             }
-            <label class="rb-field"><span>Sumber atau kriteria bukti</span><textarea id="ed-chal-notes" rows="2" required placeholder="Catat sumber fakta atau ciri yang harus terlihat dalam bukti.">${escapeText(vals.notes)}</textarea></label>
+            <label class="rb-field"><span>Sumber atau kriteria bukti</span><textarea id="ed-chal-notes" rows="2" placeholder="Catat sumber fakta atau ciri yang harus terlihat dalam bukti.">${escapeText(vals.notes)}</textarea></label>
             <label class="rb-field"><span>Petunjuk setelah check-in (opsional)</span><textarea id="ed-chal-hint" rows="2">${escapeText(vals.hint)}</textarea></label>
             <label class="rb-field"><span>Penjelasan setelah berhasil (opsional)</span><textarea id="ed-chal-explanation" rows="2">${escapeText(vals.explanation)}</textarea></label>
             <label class="rb-field"><span>Perkiraan pengerjaan (detik)</span><input id="ed-chal-estimate" type="number" min="1" step="1" value="${escapeText(vals.estimate)}"></label>
-            <label><input id="ed-chal-reviewed" type="checkbox" required ${vals.reviewed ? "checked" : ""}> Saya sudah meninjau tugas, kunci jawaban atau kriteria bukti, dan sumbernya.</label>
+            <label><input id="ed-chal-reviewed" type="checkbox" ${vals.reviewed ? "checked" : ""}> Saya sudah memverifikasi langsung di lokasi</label>
             <p class="rb-errors" role="alert" data-claim-composer-error hidden></p>
             ${
               editing
                 ? `<div class="rb-actions">
-                    <button type="button" class="primary" data-c3-action="save-challenge">Simpan Perubahan</button>
+                    <button type="button" class="primary" data-c3-action="${state.editingChallengeIndex === null ? "add-challenge" : "save-challenge"}">${state.editingChallengeIndex === null ? "+ Simpan Tantangan ke Target" : "Simpan Perubahan"}</button>
                     <button type="button" class="secondary" data-c3-action="cancel-edit-challenge">Batal</button>
                   </div>`
                 : `<button type="button" class="primary" data-c3-action="add-challenge">+ Simpan Tantangan ke Target</button>`
@@ -509,14 +519,19 @@ export function buildClaimChallengeFromForm(
   existingId?: string,
 ): ClaimChallengeItem | null {
   const title = root.querySelector<HTMLInputElement>("#ed-chal-title")?.value.trim();
-  const verificationNotes = root.querySelector<HTMLTextAreaElement>("#ed-chal-notes")?.value.trim();
-  const reviewed = root.querySelector<HTMLInputElement>("#ed-chal-reviewed")?.checked;
-  if (!title || !verificationNotes || verificationNotes.length < 6 || !reviewed) return null;
-  const reviewedAt = new Date().toISOString().slice(0, 10);
+  const verificationNotes = root.querySelector<HTMLTextAreaElement>("#ed-chal-notes")?.value.trim() ?? "";
+  const reviewed = Boolean(root.querySelector<HTMLInputElement>("#ed-chal-reviewed")?.checked);
+  const previous = state.editingChallengeDraft;
+  if (!title || (reviewed && !validFieldNote(verificationNotes, previous?.aiProvenance?.draftNoteMarker))) return null;
+  const reviewedAt = reviewed ? studioDate() : "";
   const prim = state.challengePrimitive;
   let payload: ClaimChallengePrimitive;
 
-  if (prim === "observation_mcq") {
+  if (previous?.aiProvenance && previous.payload.primitive === prim) {
+    const updated = readStudioSuggestionFields(root, previous.payload);
+    if (!updated) return null;
+    payload = updated;
+  } else if (prim === "observation_mcq") {
     payload = {
       primitive: "observation_mcq",
       prompt: root.querySelector<HTMLInputElement>("#ed-chal-prompt")?.value.trim() || "Pilih jawaban tepat.",
@@ -636,8 +651,9 @@ export function buildClaimChallengeFromForm(
     ...(hint ? { hint } : {}),
     ...(learningExplanation ? { learningExplanation } : {}),
     ...(Number.isFinite(estimatedSeconds) ? { estimatedSeconds } : {}),
-    reviewed: true,
+    reviewed,
     reviewedAt,
+    ...(previous?.aiProvenance ? { aiProvenance: previous.aiProvenance } : {}),
     payload,
   };
 }

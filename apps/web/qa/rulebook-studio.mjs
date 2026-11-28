@@ -312,6 +312,184 @@ async function checkAutomaticValidation(page, state, result, { source = "main", 
   }
 }
 
+async function exerciseAiStudio(page, adminStorageState) {
+  const endpoint = `${baseUrl}/api/rulebooks`;
+  const saveResponse = type => page.waitForResponse(response => response.url() === endpoint &&
+    response.request().method() === "POST" && response.request().postDataJSON()?.type === type);
+  const submit = async expected => {
+    const [response] = await Promise.all([saveResponse("submit-draft"),
+      page.getByRole("button", { name: "Ajukan untuk Tinjauan" }).click()]);
+    const body = await response.json();
+    assert.equal(response.status(), expected, JSON.stringify(body));
+    return body;
+  };
+  const go = async step => {
+    await page.locator('[data-testid="studio-save-status"][data-save-state]:not([data-save-state="saving"])').waitFor();
+    await page.locator(`button[data-step="${step}"]`).first().click();
+  };
+  const checklist = page.getByRole("region", { name: "Checklist Verifikasi Lapangan" });
+  const note = "Penanda terlihat jelas dari trotoar dan pintu masuk publik.";
+  const setup = async (suffix, format) => {
+    const packId = `pack-field-ai-${suffix}`;
+    const clone = await page.request.post(endpoint, { data: {
+      type: "clone-official", templatePackId: `official-jakarta-compact-${suffix}`,
+      packId, title: `Racik Ide ${suffix}`, byline: "Kreator Uji",
+    } });
+    assert.ok(clone.ok(), await clone.text());
+    await page.goto(`${baseUrl}${studioUrl}&studio=editor&format=${format}&draft=${packId}&version=1`);
+    await page.locator("#ed-meta-title").waitFor();
+    return { packId, record: (await clone.json()).record };
+  };
+  const phoneChecks = async (surface, label, testPage = page) => {
+    for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 640 }]) {
+      await testPage.setViewportSize(viewport);
+      await assertNoHorizontalOverflow(testPage, label);
+      await assertCleanUiCopy(testPage, label);
+      assert.ok(await surface.locator("button:visible").evaluateAll(buttons => buttons.every(button => button.offsetHeight >= 44)));
+    }
+    await surface.scrollIntoViewIfNeeded();
+    await testPage.screenshot({ path: path.join(results, `studio-${label}-320.png`) });
+    await testPage.setViewportSize({ width: 390, height: 844 });
+  };
+  const claim = await setup("claim", "claim-the-city");
+  await go(2);
+  const drawer = page.getByRole("region", { name: "Kurasi POI" });
+  await page.getByRole("button", { name: "Kurasi POI", exact: true }).press("Enter");
+  await drawer.getByRole("button", { name: "Cari POI di Area" }).click();
+  const [importResponse] = await Promise.all([saveResponse("save-draft"),
+    drawer.getByRole("button", { name: "+ Jadikan Landmark", exact: true }).first().click()]);
+  const imported = (await importResponse.json()).record.pack.geography.landmarks.find(point => point.source === "osm-curated");
+  assert.ok(imported?.osmCategory);
+  await drawer.getByRole("button", { name: "Tutup", exact: true }).click();
+  await page.getByTestId("step2-inspector").getByText(imported.name, { exact: false }).first().waitFor();
+  await page.getByRole("button", { name: "Sunting tantangan landmark" }).click();
+  await page.locator('button[data-c3-prim="observation_mcq"]').click();
+  const claimPanel = page.locator('[data-studio-ai="claim"]');
+  await claimPanel.getByText("Racik Ide AI", { exact: true }).press("Enter");
+  await claimPanel.getByRole("button", { name: "Bandingkan Detail" }).click();
+  let [ideasResponse] = await Promise.all([
+    page.waitForResponse(response => response.url().endsWith("/studio/ai-suggest")),
+    claimPanel.getByRole("button", { name: "Buat Ide Tantangan" }).press("Enter"),
+  ]);
+  const firstIdeas = await ideasResponse.json();
+  assert.equal(firstIdeas.mode, "template-fallback");
+  assert.equal(ideasResponse.request().postDataJSON().landmark.id, imported.id);
+  assert.equal(ideasResponse.request().postDataJSON().pattern, "compare_features");
+  assert.equal(ideasResponse.request().postDataJSON().primitive, "observation_mcq");
+  await claimPanel.getByText("Templat Cerdas (Mode Simulasi)", { exact: true }).first().waitFor();
+  [ideasResponse] = await Promise.all([
+    page.waitForResponse(response => response.url().endsWith("/studio/ai-suggest")),
+    claimPanel.getByRole("button", { name: "Racik Ulang" }).press("Enter"),
+  ]);
+  const later = await ideasResponse.json();
+  assert.equal(later.suggestions.length, 3);
+  assert.ok(later.suggestions.every(item => !firstIdeas.suggestions.some(previous => previous.title === item.title)));
+  await claimPanel.getByText(later.suggestions[0].title, { exact: true }).waitFor();
+  await phoneChecks(claimPanel, "claim-ai");
+  const [saved] = await Promise.all([saveResponse("save-draft"),
+    claimPanel.getByRole("button", { name: "Simpan Draf (Cek Nanti)" }).first().click()]);
+  const savedChallenge = (await saved.json()).record.pack.challenges.landmarkChallenges[imported.id][0];
+  assert.equal(savedChallenge.reviewed, false);
+  assert.equal(savedChallenge.aiProvenance.source, "template-fallback");
+  await claimPanel.getByRole("button", { name: "Pakai & Sunting" }).first().press("Enter");
+  assert.equal(await page.locator("#ed-chal-reviewed").isChecked(), false);
+  assert.ok(await page.locator("#ed-chal-title").inputValue());
+  await page.locator("[data-ai-answer]:focus").waitFor();
+  await Promise.all([saveResponse("save-draft"), page.locator('button[data-c3-action="add-challenge"]').click()]);
+  await go(4);
+  assert.match(await checklist.innerText(), /Lokasi OSM · 0\/1 terverifikasi.*Ide AI · 0\/2 terverifikasi/s);
+  const rejectedClaim = await submit(400);
+  assert.ok(rejectedClaim.validation.errors.some(error => error.code === "unverified-ai-challenge"));
+  assert.ok(rejectedClaim.validation.errors.some(error => error.code === "unverified-osm-landmark"));
+  await checklist.getByRole("button", { name: `Cek & Verifikasi ${imported.name}`, exact: true }).press("Enter");
+  await page.locator("#ed-field-note:focus").waitFor();
+  await page.evaluate(({ latitude, longitude }) => {
+    Object.defineProperty(navigator, "geolocation", {
+      configurable: true, value: { getCurrentPosition(callback) { callback({ coords: { latitude, longitude } }); } },
+    });
+  }, imported);
+  await page.locator("#ed-field-note").fill(note);
+  await page.locator("#ed-field-verified").check();
+  await page.locator("#ed-lm-transit").fill("Akses lewat halte dan trotoar.");
+  await page.locator("#ed-lm-hours").fill("07.00–17.00");
+  await page.locator("#ed-lm-notes").fill("Masuk lewat trotoar umum.");
+  await page.getByRole("button", { name: "Cek Jarak GPS Saya" }).click();
+  await page.locator("[data-field-proximity]").filter({ hasText: /Tercatat di lokasi/ }).waitFor();
+  assert.equal(await page.locator("#ed-field-note").inputValue(), note);
+  assert.equal(await page.locator("#ed-field-verified").isChecked(), true);
+  const [pointSaved] = await Promise.all([saveResponse("save-draft"),
+    page.getByRole("button", { name: "Simpan titik", exact: true }).click()]);
+  const verifiedPoint = (await pointSaved.json()).record.pack.geography.landmarks.find(point => point.id === imported.id);
+  assert.equal(verifiedPoint.fieldVerified, true);
+  assert.match(verifiedPoint.fieldVerifiedAt, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(verifiedPoint.gpsVerifiedProximityMeters <= 100);
+  await go(4);
+  for (let remaining = 2; remaining > 0; remaining--) {
+    const jump = checklist.locator('button[data-jump-path^="challenges."]').first();
+    await jump.press("Enter");
+    await page.locator("#ed-chal-notes:focus").waitFor();
+    await page.locator("#ed-chal-notes").fill(note);
+    await page.locator("#ed-chal-reviewed").check();
+    const [response] = await Promise.all([saveResponse("save-draft"), page.locator('button[data-c3-action="save-challenge"]').click()]);
+    assert.ok(response.ok(), await response.text());
+    await go(4);
+  }
+  await checklist.getByText("Semua pemeriksaan lapangan selesai.").waitFor();
+  await submit(200);
+
+  const seek = await setup("seek", "hide-and-seek");
+  await go(3);
+  await page.locator('button[data-s3-tab="book"]').click();
+  const seekPanel = page.locator('[data-studio-ai="seek"]');
+  for (const family of ["matching", "measuring", "tentacles", "photo"]) {
+    await page.locator(`button[data-s3-family="${family}"]`).click();
+    await seekPanel.getByText("Racik Ide Pertanyaan AI", { exact: true }).press("Enter");
+    const [response] = await Promise.all([
+      page.waitForResponse(res => res.url().endsWith("/studio/ai-suggest")),
+      seekPanel.getByRole("button", { name: "Buat Ide Pertanyaan" }).click(),
+    ]);
+    const request = response.request().postDataJSON();
+    const ideas = await response.json();
+    assert.equal(request.targetFamily, family);
+    assert.ok(request.availablePoiCategories.every(category => seek.record.snapshot.pois.filter(poi => poi.category === category).length >= 2));
+    assert.equal(ideas.mode, "template-fallback");
+    assert.ok(ideas.suggestions.every(idea => idea.family === family));
+    if (family === "photo") await phoneChecks(seekPanel, "seek-ai");
+    const button = family === "photo" ? "Simpan Draf (Cek Nanti)" : "+ Tambah ke Pertanyaan";
+    const [committed] = await Promise.all([saveResponse("save-draft"), seekPanel.getByRole("button", { name: button, exact: true }).first().click()]);
+    assert.ok(committed.ok(), await committed.text());
+  }
+  await go(4);
+  await checklist.getByText("Ide AI · 0/1 terverifikasi").waitFor();
+  const rejectedSeek = await submit(400);
+  assert.ok(rejectedSeek.validation.errors.some(error => error.code === "unverified-ai-photo-prompt"));
+  await checklist.getByRole("button", { name: /Cek & Verifikasi/ }).press("Enter");
+  await page.locator("#ed-photo-field-note:focus").waitFor();
+  await page.locator("#ed-photo-field-note").fill(note);
+  await page.locator("#ed-photo-field-verified").check();
+  const [photoSaved] = await Promise.all([saveResponse("save-draft"),
+    page.locator('button[data-s3-action="save-book-item"]').click()]);
+  assert.ok((await photoSaved.json()).validation.ok);
+  await go(4);
+  await checklist.getByText("Semua pemeriksaan lapangan selesai.").waitFor();
+  await submit(200);
+
+  const adminCtx = await browser.newContext({ viewport: { width: 320, height: 640 }, storageState: adminStorageState });
+  try {
+    const admin = await adminCtx.newPage();
+    await admin.goto(`${baseUrl}${reviewUrl}`);
+    const provenance = admin.locator(`[data-admin-pack="${claim.packId}"] [data-studio-provenance]`);
+    await provenance.getByText("Ringkasan Sumber & Verifikasi").click();
+    assert.match(await provenance.innerText(), /1 titik OSM · 2 ide AI/);
+    assert.match(await provenance.innerText(), /Semua terverifikasi kreator/);
+    assert.ok((await provenance.innerText()).includes(note));
+    assert.match(await provenance.innerText(), /GPS · \d+ m/);
+    await phoneChecks(provenance, "review-provenance", admin);
+  } finally {
+    await adminCtx.close();
+  }
+}
+
 async function checkAdminPhoneLayout(page, scope, label) {
   const originalViewport = page.viewportSize();
   try {
@@ -542,6 +720,7 @@ async function exerciseAdminConsole(creator, creatorContext) {
     await revokeDialog.getByRole("button", { name: "Cabut Akses", exact: true }).tap();
     await promoted.waitFor({ state: "hidden" });
     await checkCreatorReviewAccess(creator);
+    return await adminContext.storageState();
   } finally {
     await adminContext.close();
   }
@@ -1307,10 +1486,13 @@ try {
   await page.fill("#ed-chal-hint", "Bandingkan tinggi baris depan dan belakang.");
   await page.fill("#ed-chal-explanation", "Undakan membuat penonton dapat melihat dari beberapa baris.");
   await page.fill("#ed-chal-estimate", "45");
+  await page.check("#ed-chal-reviewed");
+  const verificationNote = await page.inputValue("#ed-chal-notes");
+  await page.fill("#ed-chal-notes", "[PERLU CEK LAPANGAN] Periksa undakan.");
   await page.click('button[data-c3-action="add-challenge"]');
   await page.locator("[data-claim-composer-error]").waitFor();
   assert.equal(await page.inputValue("#ed-chal-title"), "Undakan untuk menonton");
-  await page.check("#ed-chal-reviewed");
+  await page.fill("#ed-chal-notes", verificationNote);
   await clickAndWaitStudioSave(page, 'button[data-c3-action="add-challenge"]');
   await page.click('button[data-c3-prim="observation_input"]');
   await page.fill("#ed-chal-title", "Pandangan ke panggung");
@@ -1368,7 +1550,7 @@ try {
   // Submit -> full Admin review lifecycle -> Public Catalog -> Midtrans settlement -> Live Room
   await clickAndWaitPost(page, 'button[data-action="submit-draft"]');
   await page.waitForFunction(() => document.body.textContent.includes("diajukan ke peninjau"));
-  await exerciseAdminConsole(page, ctx);
+  const adminStorageState = await exerciseAdminConsole(page, ctx);
 
   await page.click('button[data-nav="back"]');
   await buyPublishedDraft(page, "pack-claim-studio-qa");
@@ -1428,6 +1610,7 @@ try {
     await otherCreator.close();
   }
 
+  await exerciseAiStudio(page, adminStorageState);
   await ctx.close();
   console.log("qa:rulebook-studio passed (Studio lifecycle, OpenStreetMap curation and tile fallback, private playtests, mobile Admin moderation and access, Midtrans)");
 } finally {

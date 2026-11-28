@@ -532,6 +532,7 @@ function renderSubmission(record: AdminReviewRecord, state: AdminReviewState) {
       <span class="rb-badge admin-review-status" data-status="${escapeText(status)}">${statuses[status as ReviewStatus]}</span>
       <span class="rb-badge ${validatorClass}">Validasi · ${validatorLabel}</span>
     </div>
+    <div data-studio-provenance="${escapeText(key)}"></div>
     <ul class="admin-review-counts" aria-label="Isi paket">${itemCounts(record).map(label => `<li>${label}</li>`).join("")}</ul>
     <details class="admin-review-inspect" data-admin-inspect="${escapeText(key)}"${expanded ? " open" : ""}>
       <summary>Periksa Paket</summary>
