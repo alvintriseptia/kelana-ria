@@ -516,6 +516,7 @@ class SeekController {
         const handle = mountBoardMap({
           container: host,
           config: mapCfg,
+          theme: "player",
           camera: {
             center: [latest.room.turnStartPoint.longitude, latest.room.turnStartPoint.latitude],
             zoom: 15.2,
@@ -1386,6 +1387,7 @@ class SeekController {
             dimmed: candidates ? !candidates.has(station.id) : false,
             markerKind: "station" as const,
             markerText: station.id === room.ownAnchorStationId ? "◆" : "•",
+            statusTag: station.id === room.ownAnchorStationId ? "locked" as const : undefined,
             label: station.id === room.ownAnchorStationId ? "Lokasi terkunci" : undefined,
           })),
         ...(seeker
@@ -1490,6 +1492,7 @@ class SeekController {
       const handle = mountBoardMap({
         container: host,
         config,
+        theme: "player",
         ...state,
         camera: state.focusPoints ? undefined : camera,
       });

@@ -2324,15 +2324,26 @@ export function rulebookStore(
                 startPoint: session.match.snapshot.startPoint,
                 checkInRadiusMeters: session.match.pack.geography.checkInRadiusMeters,
                 maxGpsAccuracyMeters: session.match.pack.geography.maxGpsAccuracyMeters,
-                landmarks: session.match.pack.geography.landmarks.map((l) => ({
-                  id: l.id,
-                  name: l.name,
-                  zoneId: l.zoneId,
-                  latitude: l.latitude,
-                  longitude: l.longitude,
-                  transitSummary: l.transitSummary,
-                  accessNotes: l.accessNotes,
-                })),
+                landmarks: session.match.pack.geography.landmarks.map((l) => {
+                  const poi = session.match.snapshot.pois.find(point =>
+                    point.latitude === l.latitude && point.longitude === l.longitude &&
+                    (point.category === "park" || point.category === "museum" || point.category === "monument"),
+                  );
+                  const category = l.osmCategory ?? poi?.category;
+                  const mapCategory = category === "taman" || category === "park" ? "park" as const
+                    : category === "museum" ? "museum" as const
+                    : category === "monumen" || category === "monument" ? "monument" as const : undefined;
+                  return {
+                    id: l.id,
+                    name: l.name,
+                    zoneId: l.zoneId,
+                    latitude: l.latitude,
+                    longitude: l.longitude,
+                    transitSummary: l.transitSummary,
+                    accessNotes: l.accessNotes,
+                    ...(mapCategory && { mapCategory }),
+                  };
+                }),
               },
             }
           : {}),

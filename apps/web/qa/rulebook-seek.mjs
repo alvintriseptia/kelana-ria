@@ -631,6 +631,7 @@ async function refreshSeekRoom(page) {
   await pageG2.reload();
   await pageG2.locator('[data-action="retry-map"]').waitFor();
   assert.equal(await photoNotice.count(), 0, "Reload does not replay the accepted photo notice");
+  await pageG2.screenshot({ path: path.join(results, "rulebook-seek-map-list-fallback.png") });
   await pageG2.click('button[data-action="select-station"][data-station="mrt-blok-m"]');
   await clickAndWaitPost(pageG2, 'button[data-action="seeker-check-in"]');
   const atHider = (await snapshot()).room;

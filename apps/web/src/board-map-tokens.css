@@ -1,0 +1,102 @@
+.board-map-canvas--player .board-map-pin.board-map-token {
+  --token-diameter: 32px;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  color: #28493d;
+  font: 800 0.69rem/1 "DM Sans Variable", system-ui, sans-serif;
+  animation: none;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.board-map-token-hit { position: absolute; inset: 0; pointer-events: auto; }
+.board-map-canvas--player.board-map-tokens-compact .board-map-pin.board-map-token { --token-diameter: 26px; }
+.board-map-canvas--player .board-map-pin.board-map-token:has(.board-map-token-hit[data-overlap]) { --token-diameter: 26px; }
+.board-map-canvas--player .board-map-pin.board-map-token:is(.board-map-pin-selected, :focus-visible) { --token-diameter: 32px; }
+.board-map-canvas--player .board-map-token::before {
+  content: "";
+  box-sizing: border-box;
+  display: block;
+  width: var(--token-diameter, 32px);
+  aspect-ratio: 1;
+  border: 2px solid var(--map-token-team, #245d46);
+  border-radius: 50%;
+  background: var(--token-art) center / 85% no-repeat var(--map-token-tint, #fffdf5);
+  box-shadow: 0 2px 0 #29463e41, 0 1px 5px #29463e56;
+}
+
+.board-map-token-landmark { --token-art: url("./assets/map-tokens/landmark.svg"); }
+.board-map-token-museum { --token-art: url("./assets/map-tokens/museum.svg"); }
+.board-map-token-park { --token-art: url("./assets/map-tokens/park.svg"); }
+.board-map-token-station { --token-art: url("./assets/map-tokens/station.svg"); }
+.board-map-token.board-map-pin-start { --token-art: url("./assets/map-tokens/start.svg"); }
+.board-map-token-player { --token-art: url("./assets/map-tokens/player.svg"); }
+.board-map-token-rival { --token-art: url("./assets/map-tokens/rival.svg"); }
+
+.board-map-token-label {
+  position: absolute;
+  inset: auto auto 0 50%;
+  transform: translateX(-50%);
+  padding: 2px 3px;
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  background: #fffdf5;
+  color: var(--map-token-team, #28493d);
+  white-space: nowrap;
+  pointer-events: none;
+}
+.board-map-token:is(.board-map-pin-start, .board-map-token-rival) .board-map-token-label {
+  inset-block-start: calc(50% + var(--token-diameter) / 2 - 3px);
+  inset-block-end: auto;
+  width: max-content;
+  max-width: 128px;
+  white-space: normal;
+  text-align: center;
+}
+.board-map-token:is(.board-map-pin-unclaimed, .board-map-token-player) .board-map-token-label,
+.board-map-token-station:not(.board-map-pin-locked) .board-map-token-label,
+.board-map-tokens-compact .board-map-token.board-map-pin-start:not(:focus-visible, .board-map-pin-selected) .board-map-token-label { display: none; }
+.board-map-canvas--player .board-map-token.board-map-pin-claimed::before { border-style: dashed; }
+.board-map-canvas--player .board-map-token:is(.board-map-pin-locked, .board-map-pin-start)::before { border-radius: 8px; }
+.board-map-canvas--player .board-map-token.board-map-pin-stale::before { border-style: dashed; }
+.board-map-canvas--player .board-map-token[data-protected]::after {
+  content: "+";
+  position: absolute;
+  inset: 1px 3px auto auto;
+  padding: 1px 4px 2px;
+  background: #fffdf5;
+  border: 1px solid #245d46;
+  border-radius: 3px 3px 7px 7px;
+  color: #245d46;
+}
+
+.board-map-canvas--player .board-map-pin.board-map-token:is(.board-map-pin-eligible, .board-map-pin-start) { z-index: 3; }
+.board-map-canvas--player .board-map-pin.board-map-token.board-map-token-rival { z-index: 4; }
+.board-map-canvas--player .board-map-pin.board-map-token:is(.board-map-pin-selected, :focus-visible) { z-index: 7; }
+.board-map-canvas--player .board-map-token.board-map-pin-eligible::before { outline: 2px dashed #2f6843; outline-offset: 2px; }
+.board-map-canvas--player .board-map-token.board-map-pin-selected::before { outline: 3px solid #a65c00; outline-offset: 2px; }
+.board-map-canvas--player button.board-map-token:focus-visible { outline: 2px solid #12362a; }
+.board-map-canvas--player .board-map-pin.board-map-token.board-map-pin-dimmed:not(:focus-visible, .board-map-pin-selected) { opacity: 0.56; }
+.board-map-canvas--player .board-map-token.board-map-pin-dimmed:not(:focus-visible, .board-map-pin-selected)::before { border-style: dotted; }
+
+.board-map-canvas--player .board-map-self-dot.board-map-token {
+  --token-diameter: 31px;
+  --map-token-team: #20536a;
+  --map-token-tint: #eff8fa;
+  width: 31px;
+  height: 31px;
+  background: none;
+  border: 0;
+  box-shadow: none;
+  animation: none;
+}

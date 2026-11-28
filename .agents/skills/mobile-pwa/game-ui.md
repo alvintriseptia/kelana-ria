@@ -56,6 +56,8 @@ For changed flows, verify the normal path, reduced motion, and keyboard use. Exe
 
 Open the [clickable Claim the City and Hide & Seek prototype](../../../docs/qa/gameplay-concept/README.md) for the screen hierarchy, existing role controls, and phone-size reference frames. The practice edition tests long place names, a collapsed board, card targeting, and retry. Use live room data for rules, scores and eligibility during production implementation. Preserve the current tab names and use the same place actions in the map and its list fallback.
 
+Use the [player basemap and token evidence](../../../docs/qa/gameplay-concept/map-evidence.md) alongside the prototype when designing Claim territories, Seek deductions, or in-game controls. Reuse the player's pastel style and token family and check the overlays against MapLibre at both phone sizes.
+
 | Event | Motion target | Static state and recovery |
 | --- | --- | --- |
 | Primary action | Brief press and release, 80–180 ms. Keep optional spark local. | Button press acknowledges input. Show pending separately. |
