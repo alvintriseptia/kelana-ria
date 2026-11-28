@@ -201,7 +201,21 @@ try {
   await pageG3.click('button[data-action="join-room"]');
   await pageG3.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (3/4)"));
 
-  async function refreshSeekRoom(page) {
+  function contrastRatio(locator) {
+  return locator.evaluate(el => {
+    const luminance = color => {
+      const components = color.match(/[\d.]+/g).map(value => Number(value) / 255);
+      const linear = components.slice(0, 3).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+      return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+    };
+    const style = getComputedStyle(el);
+    if (style.backgroundColor === "rgba(0, 0, 0, 0)") return 0;
+    const values = [luminance(style.color), luminance(style.backgroundColor)];
+    return (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05);
+  });
+}
+
+async function refreshSeekRoom(page) {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
         const isOpen = await page
@@ -284,17 +298,7 @@ try {
   assert.equal(await pageCreator.locator("#sg-panel-title").evaluate(el => el === document.activeElement), true);
   await pageCreator.setViewportSize({ width: 320, height: 640 });
   assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  const codeContrast = await hiderCodeValue.evaluate(el => {
-    const luminance = color => {
-      const components = color.match(/[\d.]+/g).map(value => Number(value) / 255);
-      const linear = components.slice(0, 3).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
-      return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
-    };
-    const style = getComputedStyle(el);
-    if (style.backgroundColor === "rgba(0, 0, 0, 0)") return 0;
-    const values = [luminance(style.color), luminance(style.backgroundColor)];
-    return (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05);
-  });
+  const codeContrast = await contrastRatio(hiderCodeValue);
   assert.ok(codeContrast >= 4.5, `Private code contrast must be at least 4.5:1, got ${codeContrast}`);
   await pageCreator.waitForFunction(() => {
     const sheet = document.querySelector(".sg-sheet");
@@ -667,7 +671,23 @@ try {
   assert.ok(seekPlayAgainBox && seekPlayAgainBox.height >= 44, "Seek Main Lagi button must meet 44px touch target");
   await pageCreator.getByTestId("postmatch-back-catalog").waitFor();
   assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek finished screen for Host (390x844)");
-  await seekPlayAgainBtn.click();
+  for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 640 }]) {
+    await pageCreator.setViewportSize(viewport);
+    await seekPlayAgainBtn.scrollIntoViewIfNeeded();
+    assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    assert.ok(await contrastRatio(seekPlayAgainBtn) >= 4.5, `Main Lagi default contrast at ${viewport.width}px`);
+    await seekPlayAgainBtn.hover();
+    assert.ok(await contrastRatio(seekPlayAgainBtn) >= 4.5, `Main Lagi hover contrast at ${viewport.width}px`);
+    await pageCreator.mouse.move(0, 0);
+    await pageCreator.keyboard.press("Tab");
+    await seekPlayAgainBtn.focus();
+    assert.equal(await seekPlayAgainBtn.evaluate(button =>
+      button.matches(":focus-visible") && getComputedStyle(button).outlineStyle !== "none"), true);
+    assert.ok(await contrastRatio(seekPlayAgainBtn) >= 4.5, `Main Lagi focus contrast at ${viewport.width}px`);
+    await pageCreator.screenshot({ path: path.join(results, `rulebook-seek-main-lagi-${viewport.width}.png`), animations: "disabled" });
+  }
+  await pageCreator.setViewportSize({ width: 390, height: 844 });
+  await seekPlayAgainBtn.press("Enter");
   await pageCreator.waitForFunction((oldCode) => {
     const code = new URL(location.href).searchParams.get("room");
     return Boolean(code && code !== oldCode && document.body.textContent.includes("Ruang Tunggu"));
