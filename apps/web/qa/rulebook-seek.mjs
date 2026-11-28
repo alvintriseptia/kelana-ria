@@ -5,7 +5,9 @@ import { mkdir, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
+import { verifyCardInfo } from "./card-info.mjs";
 import { catalogUrl, openEdition } from "./catalog.mjs";
+import { contrastRatio } from "./contrast.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
 import { buyPublishedDraft, moderateAdminPack, openAdminPanel, openDraft, signInQaContext, startDraft } from "./studio-navigation.mjs";
@@ -228,7 +230,7 @@ try {
   await pageG3.click('button[data-action="join-room"]');
   await pageG3.waitForFunction(() => document.body.textContent.includes("Kursi Pemain (3/4)"));
 
-  async function refreshSeekRoom(page) {
+async function refreshSeekRoom(page) {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
         const isOpen = await page
@@ -311,17 +313,7 @@ try {
   assert.equal(await pageCreator.locator("#sg-panel-title").evaluate(el => el === document.activeElement), true);
   await pageCreator.setViewportSize({ width: 320, height: 640 });
   assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  const codeContrast = await hiderCodeValue.evaluate(el => {
-    const luminance = color => {
-      const components = color.match(/[\d.]+/g).map(value => Number(value) / 255);
-      const linear = components.slice(0, 3).map(value => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
-      return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
-    };
-    const style = getComputedStyle(el);
-    if (style.backgroundColor === "rgba(0, 0, 0, 0)") return 0;
-    const values = [luminance(style.color), luminance(style.backgroundColor)];
-    return (Math.max(...values) + 0.05) / (Math.min(...values) + 0.05);
-  });
+  const codeContrast = await contrastRatio(hiderCodeValue);
   assert.ok(codeContrast >= 4.5, `Private code contrast must be at least 4.5:1, got ${codeContrast}`);
   await pageCreator.waitForFunction(() => {
     const sheet = document.querySelector(".sg-sheet");
@@ -460,6 +452,42 @@ try {
   // Reload keeps the same offer and deadline without replaying the deal.
   const activeOffer = async () => (await (await pageCreator.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`)).json()).deck.activeDraw;
   const offered = await activeOffer();
+  // Present two cards taken from the actual published edition to make the info checks deterministic.
+  // The real server offer remains active and unchanged throughout this read-only test.
+  const bonus = exportedPack.deck.cards.find(card => card.effect.primitive === "time_bonus");
+  const curse = exportedPack.deck.cards.find(card => card.title === "Kutukan Barista Buyout");
+  assert.ok(bonus && curse && offered.cards.length >= 2);
+  const roomEndpoint = `**/api/rulebooks/rooms/${roomCode}`;
+  await pageCreator.route(roomEndpoint, async route => {
+    const response = await route.fetch();
+    const payload = await response.json();
+    if (payload.deck.activeDraw) {
+      payload.deck.activeDraw.cards = [bonus, curse].map(({ id, ...card }, index) => ({
+        ...card, cardId: id, instanceId: offered.cards[index].instanceId,
+      }));
+    }
+    await route.fulfill({ response, json: payload });
+  });
+  await pageCreator.setViewportSize({ width: 320, height: 640 });
+  await pageCreator.reload();
+  const bonusAmount = bonus.effect.minutes === undefined ? `${bonus.effect.percentOfRawTime}%` : `${bonus.effect.minutes} menit`;
+  await verifyCardInfo(pageCreator, bonus.title, [new RegExp(bonusAmount), /skor waktu sembunyi/], { keyboard: true });
+  const discardCost = curse.effect.curse.castingCosts.find(cost => cost.type === "discard_cards");
+  assert.ok(discardCost);
+  const clearCondition = curse.effect.curse.clearCondition;
+  assert.equal(clearCondition.type, "photo_challenge");
+  await verifyCardInfo(pageCreator, curse.title, [
+    /Pencari pada giliran ini/,
+    new RegExp(`Buang ${discardCost.count} kartu lain`),
+    new RegExp(`disetujui otomatis setelah ${clearCondition.autoApproveMs / 60_000} menit`),
+  ], {
+    screenshot: path.join(results, "rulebook-seek-card-info.png"),
+  });
+  assert.equal(await pageCreator.locator('button[data-action="choose-draw"][aria-pressed="true"]').count(), 0);
+  assert.equal(await pageG2.locator(".card-info-button").count(), 0);
+  assert.deepEqual(await activeOffer(), offered);
+  await pageCreator.unroute(roomEndpoint);
+  await pageCreator.setViewportSize({ width: 390, height: 844 });
   await pageCreator.reload();
   const cardChoice = pageCreator.locator('button[data-action="choose-draw"]').first();
   await cardChoice.waitFor();
@@ -548,6 +576,9 @@ try {
   const seekCaptureBox = await pageCreator.getByTestId("photo-capture-btn").boundingBox();
   assert.ok(seekCaptureBox && seekCaptureBox.height >= 44, "Seek Ambil Foto button must meet 44px touch target");
 
+  const photoNotice = pageG2.locator('[data-activity-message][data-notice-kind="photo-clue"]');
+  const photoEvents = async () => (await pageG2.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`).then(r => r.json()))
+    .activity.events.filter(event => event.kind === "photo-clue");
   // Corrupt non-image file rejected cleanly without enabling submit
   await seekPhotoInput.setInputFiles(buildCorruptPhotoFile());
   await pageCreator.getByRole("alert").filter({ hasText: /foto|format|JPEG/i }).waitFor();
@@ -568,9 +599,21 @@ try {
   await pageCreator.getByTestId("photo-clear-btn").click();
   assert.equal(await pageCreator.getByTestId("photo-preview-img").count(), 0);
   assert.equal(await pageCreator.locator('button[data-action="answer-photo"]').isDisabled(), true);
+  assert.deepEqual(await photoEvents(), [], "An invalid or canceled photo must not notify the seeker");
   await pageCreator.locator("#sg-clue-photo").setInputFiles(largeSeekPhoto);
   await pageCreator.locator('img[alt="Pratinjau foto petunjuk"]').waitFor();
   await clickAndWaitPost(pageCreator, 'button[data-action="answer-photo"]');
+  await photoNotice.waitFor({ timeout: 2200 });
+  assert.match(await pageG2.locator('[data-activity-announcement][role="status"]').textContent(), /Foto petunjuk sudah masuk/);
+  assert.equal(await pageCreator.locator('[data-activity-message][data-notice-kind="photo-clue"]').count(), 0);
+  const [notice] = await photoEvents();
+  assert.ok(notice);
+  await pageG2.screenshot({ path: path.join(results, "rulebook-seek-photo-notice.png") });
+  await photoNotice.getByRole("button", { name: "Buka", exact: true }).press("Enter");
+  const openedPhoto = pageG2.locator(`[data-photo-clue-index="${notice.clueIndex}"]`);
+  await openedPhoto.locator("img").waitFor();
+  assert.equal(await openedPhoto.evaluate(el => el === document.activeElement), true);
+  assert.deepEqual(await photoEvents(), [notice]);
   const photoId = (await snapshot()).room.questions.at(-1).photoId;
   assert.ok(photoId);
   const photoUrl = `${baseUrl}/api/rulebooks/rooms/${roomCode}/photos/${photoId}`;
@@ -584,6 +627,7 @@ try {
   await pageG2.route("**/qa-tiles/style.json", route => route.abort());
   await pageG2.reload();
   await pageG2.locator('[data-action="retry-map"]').waitFor();
+  assert.equal(await photoNotice.count(), 0, "Reload does not replay the accepted photo notice");
   await pageG2.click('button[data-action="select-station"][data-station="mrt-blok-m"]');
   await clickAndWaitPost(pageG2, 'button[data-action="seeker-check-in"]');
   const atHider = (await snapshot()).room;
@@ -678,7 +722,23 @@ try {
   assert.ok(seekPlayAgainBox && seekPlayAgainBox.height >= 44, "Seek Main Lagi button must meet 44px touch target");
   await pageCreator.getByTestId("postmatch-back-catalog").waitFor();
   assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "Zero overflow on Seek finished screen for Host (390x844)");
-  await seekPlayAgainBtn.click();
+  for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 640 }]) {
+    await pageCreator.setViewportSize(viewport);
+    await seekPlayAgainBtn.scrollIntoViewIfNeeded();
+    assert.ok(await pageCreator.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    assert.ok(await contrastRatio(seekPlayAgainBtn) >= 4.5, `Main Lagi default contrast at ${viewport.width}px`);
+    await seekPlayAgainBtn.hover();
+    assert.ok(await contrastRatio(seekPlayAgainBtn) >= 4.5, `Main Lagi hover contrast at ${viewport.width}px`);
+    await pageCreator.mouse.move(0, 0);
+    await pageCreator.keyboard.press("Tab");
+    await seekPlayAgainBtn.focus();
+    assert.equal(await seekPlayAgainBtn.evaluate(button =>
+      button.matches(":focus-visible") && getComputedStyle(button).outlineStyle !== "none"), true);
+    assert.ok(await contrastRatio(seekPlayAgainBtn) >= 4.5, `Main Lagi focus contrast at ${viewport.width}px`);
+    await pageCreator.screenshot({ path: path.join(results, `rulebook-seek-main-lagi-${viewport.width}.png`), animations: "disabled" });
+  }
+  await pageCreator.setViewportSize({ width: 390, height: 844 });
+  await seekPlayAgainBtn.press("Enter");
   await pageCreator.waitForFunction((oldCode) => {
     const code = new URL(location.href).searchParams.get("room");
     return Boolean(code && code !== oldCode && document.body.textContent.includes("Ruang Tunggu"));

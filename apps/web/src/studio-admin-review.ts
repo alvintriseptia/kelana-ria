@@ -413,6 +413,7 @@ function renderDeck(pack: AdminReviewRecord["pack"]) {
   const settings: Fact[] = claim ? [
     ["Kartu Permainan Aktif", yesNo(pack.tacticalDeck.enabled)],
     ["Kartu Maksimal di Tangan", pack.tacticalDeck.maxHandSize],
+    ["Pilihan Kartu Hadiah Klaim", pack.tacticalDeck.claimRewardDrawCount ?? "Satu kartu langsung"],
     ["Kutukan Aktif Maksimal per Target", pack.tacticalDeck.maxActiveCursesPerTarget],
     ["Ambil Saat Mengunci", yesNo(pack.tacticalDeck.drawTriggers.onLock)],
     ["Ambil Saat Merebut", yesNo(pack.tacticalDeck.drawTriggers.onSteal)],

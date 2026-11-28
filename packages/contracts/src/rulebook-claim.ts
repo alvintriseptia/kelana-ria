@@ -182,6 +182,7 @@ export type ClaimCardDefinition = {
 export type ClaimTacticalDeckRules = {
   enabled: boolean;
   maxHandSize: number;
+  claimRewardDrawCount?: number;
   drawTriggers: {
     onLock: boolean;
     onSteal: boolean;
@@ -302,6 +303,11 @@ export type ClaimPendingPhotoReview = {
   autoApproveAt: number;
 };
 
+export type ClaimRewardOffer = {
+  offerId: string;
+  cards: ClaimCardInstance[];
+};
+
 export type ClaimCardInstance = {
   instanceId: string;
   cardId: string;
@@ -416,6 +422,7 @@ export type ClaimEngineRoomView = {
   ownCooldowns: Record<string, number>;
   ownBurnedLandmarks: string[];
   ownHand: ClaimCardInstance[];
+  ownClaimReward?: ClaimRewardOffer;
   ownChallengeHand?: ClaimSanitizedChallenge[];
   scoutedChallenges: Record<string, ClaimSanitizedChallenge>;
   pendingRivalPhotoReviews: ClaimPendingPhotoReview[];
@@ -443,6 +450,7 @@ export type ClaimEngineAction = { actionId: string } & (
     }
   | { type: "review-challenge-photo"; targetSeatId: string; landmarkId: string; approve: boolean }
   | { type: "bail-challenge"; landmarkId: string }
+  | { type: "choose-claim-reward"; offerId: string; cardInstanceId: string }
   | {
       type: "play-card";
       cardInstanceId: string;

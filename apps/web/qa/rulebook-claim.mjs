@@ -4,7 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { createRecordedMidtransAdapter, createSoloServer } from "../../api/dist/index.js";
+import { verifyCardInfo } from "./card-info.mjs";
 import { catalogUrl, openEdition } from "./catalog.mjs";
+import { contrastRatio } from "./contrast.mjs";
 import { assertCleanUiCopy } from "./copy-guard.mjs";
 import { buildCorruptPhotoFile, buildLargeTestPhotoFile } from "./photo-fixtures.mjs";
 import { exerciseInviteConfirmation } from "./rulebook-invite.mjs";
@@ -125,7 +127,6 @@ try {
   await pageSolo.waitForFunction(() => document.body.textContent.includes("1/4 terkunci"));
   await assertCleanUiCopy(pageSolo, "claim active board after lock");
   await pageSolo.locator('[data-map-point="m-bloc"][data-game-motion^="lock:"]').waitFor();
-  await pageSolo.locator('[data-panel="cards"][data-game-motion^="update:"]').waitFor();
   assert.equal(
     await claimCanvas.evaluate((el) => el.isConnected && document.querySelector("#rb-claim-map-host .maplibregl-canvas") === el),
     true,
@@ -134,7 +135,33 @@ try {
 
   // The player must choose a target before a map-targeted card can be played.
   await pageSolo.getByRole("button", { name: "Kartu", exact: true }).click();
-  await pageSolo.locator(".cg-tactic").first().click();
+  const soloOffers = pageSolo.locator('[data-action="choose-claim-reward"]');
+  assert.equal(await soloOffers.count(), 3);
+  await pageSolo.setViewportSize({ width: 320, height: 640 });
+  assert.ok(await pageSolo.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  assert.ok((await soloOffers.first().boundingBox()).height >= 44);
+  await pageSolo.screenshot({ path: path.join(results, "rulebook-claim-reward-320.png") });
+  await pageSolo.setViewportSize({ width: 390, height: 844 });
+  await clickAndWaitPost(pageSolo, '[data-action="choose-claim-reward"]');
+  await pageSolo.locator('[data-panel="cards"][data-game-motion^="update:"]').waitFor();
+  assert.equal(await soloOffers.count(), 0);
+  assert.equal(await pageSolo.locator(".cg-tactic").count(), 1);
+  await pageSolo.locator(".cg-tactic").click();
+  const readSoloRoom = async () => (await (await pageSolo.request.get(`${baseUrl}/api/rulebooks/rooms/${soloRoomCode}`)).json()).room;
+  const ownCard = (await readSoloRoom()).ownHand[0];
+  const expectedTarget = {
+    scout_challenge: /Landmark yang belum terkunci/,
+    double_weight: /Landmark terkunci milik timmu/,
+    swap_challenge: /Tantangan aktifmu/,
+    instant_lock: /Landmark rentan yang dikuasai timmu/,
+  }[ownCard.effect.primitive];
+  assert.ok(expectedTarget);
+  await pageSolo.setViewportSize({ width: 320, height: 640 });
+  await verifyCardInfo(pageSolo, ownCard.title, [expectedTarget, /Kapan/, /Efek/, /Biaya/], {
+    keyboard: true, screenshot: path.join(results, "rulebook-claim-card-info.png"),
+  });
+  assert.deepEqual((await readSoloRoom()).ownHand, [ownCard]);
+  await pageSolo.setViewportSize({ width: 390, height: 844 });
   const play = pageSolo.getByRole("button", { name: "Mainkan Kartu" });
   assert.equal(await play.isDisabled(), true);
   const eligible = pageSolo.locator("button.board-map-pin-eligible");
@@ -286,8 +313,14 @@ try {
   // Ensure P2's map & SSE stream are active, then P1 claims & bails taman-literasi -> P2 receives update via SSE (< 1.5s) while MapLibre stays connected
   await pageP2.locator("#rb-claim-map-host[data-map-ready=true]").waitFor();
   const p2MapCanvas = await pageP2.locator("#rb-claim-map-host .maplibregl-canvas").elementHandle();
+  const p2Zone = pageP2.locator('[data-map-point="zone:blok-m"]');
+  await pageP2.getByRole("img", { name: "Blok M (Belum dikuasai)" }).waitFor();
+  const p2ZoneNode = await p2Zone.elementHandle();
+  assert.ok(await contrastRatio(p2Zone) >= 4.5);
   await checkIn(pageP1, "taman-literasi");
   await pageP1.waitForSelector('button[data-action="bail-challenge"]');
+  await pageP2.getByRole("img", { name: "Blok M (Dikuasai Tim 1)" }).waitFor();
+  const teamOneColor = await p2Zone.evaluate(el => getComputedStyle(el).color);
   const bailSentAt = Date.now();
   await clickAndWaitPost(pageP1, 'button[data-action="bail-challenge"]');
 
@@ -315,6 +348,10 @@ try {
   await pageP1.locator('[data-map-point="zone:blok-m"][data-game-motion^="role:"]').waitFor({ state: "attached" });
   assert.equal(await pageP2.locator('[data-map-point="taman-literasi"][data-game-motion^="steal:"]').count(), 0);
   assert.match(await stealNotice.innerText(), /berpindah tim.*Penguasaan zona berubah/);
+  await pageP2.getByRole("img", { name: "Blok M (Dikuasai Tim 2)" }).waitFor();
+  assert.ok(await p2ZoneNode.evaluate(el => el.isConnected), "Control changes preserve the marker node");
+  const teamTwoColor = await p2Zone.evaluate(el => getComputedStyle(el).color);
+  assert.notEqual(teamTwoColor, teamOneColor);
   assert.equal(await pageP2.locator('[data-activity-message][data-notice-kind="steal"]:visible').count(), 0);
   await ctxP3.setOffline(false);
   assert.equal(await pageP3.locator('[data-activity-message][data-notice-kind="steal"]:visible').count(), 0);
@@ -326,6 +363,33 @@ try {
   assert.equal(stealEvents[0].alert, true);
   assert.equal(activityForRival.events.find(event => event.kind === "steal").alert, undefined);
   assert.doesNotMatch(JSON.stringify(lostClaimFeed), /"latitude"|"longitude"|"photoId"|"correctChoiceId"|"acceptedAnswers"|"verificationNotes"/);
+  const readRoom = async page => (await (await page.request.get(`${baseUrl}/api/rulebooks/rooms/${roomCode}`)).json()).room;
+  const stealOffer = (await readRoom(pageP2)).ownClaimReward;
+  assert.equal(stealOffer.cards.length, 3);
+  for (const rival of [pageP1, pageP3]) {
+    const rivalRoom = await readRoom(rival);
+    assert.equal(rivalRoom.ownClaimReward, undefined);
+    assert.ok(stealOffer.cards.every(card => !JSON.stringify(rivalRoom).includes(card.instanceId)));
+    await rival.getByRole("button", { name: "Kartu", exact: true }).click();
+    assert.equal(await rival.getByRole("region", { name: "Pilih satu kartu hadiah" }).count(), 0);
+    assert.equal(await rival.locator(".card-info-button").count(), 0);
+  }
+  await pageP2.reload();
+  await pageP2.getByRole("button", { name: "Kartu", exact: true }).click();
+  const rewardOptions = pageP2.locator('[data-action="choose-claim-reward"]');
+  assert.equal(await rewardOptions.count(), 3);
+  assert.deepEqual((await readRoom(pageP2)).ownClaimReward, stealOffer);
+  const keepRequestPromise = pageP2.waitForRequest(request =>
+    request.method() === "POST" && request.url().endsWith("/api/rulebooks")
+    && request.postDataJSON()?.action?.type === "choose-claim-reward",
+  );
+  await clickAndWaitPost(pageP2, '[data-action="choose-claim-reward"]');
+  const keepRequest = (await keepRequestPromise).postDataJSON();
+  const keepRetry = await pageP2.request.post(`${baseUrl}/api/rulebooks`, { data: keepRequest });
+  assert.ok(keepRetry.ok());
+  const keptRoom = (await keepRetry.json()).room;
+  assert.equal(keptRoom.ownClaimReward, undefined);
+  assert.deepEqual(keptRoom.ownHand.map(card => card.instanceId), [stealOffer.cards[0].instanceId]);
   await stealNotice.getByRole("button", { name: "Buka", exact: true }).click();
   assert.equal(await pageP1.locator(".cg-selected").getAttribute("data-landmark-id"), "taman-literasi");
   await pageP1.reload();
@@ -341,6 +405,50 @@ try {
   await activityPanel.getByText(/Taman Literasi.*bisa direbut/).waitFor();
   assert.ok(await pageP3.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await pageP3.screenshot({ path: path.join(results, "rulebook-claim-recent-activity.png") });
+
+  // One landmark each ties the zone. Both clients and the tile fallback show the tie.
+  await checkIn(pageP1, "m-bloc");
+  await clickAndWaitPost(pageP1, 'button[data-action="bail-challenge"]');
+  for (const p of [pageP1, pageP2]) {
+    await p.getByRole("img", { name: "Blok M (Seri)" }).waitFor();
+    await p.getByRole("button", { name: "Skor", exact: true }).click();
+    const zoneRow = p.getByRole("list", { name: "Kepemilikan Zona" }).locator('[data-zone-id="blok-m"]');
+    assert.equal(await zoneRow.getByText("Seri", { exact: true }).count(), 1);
+    const room = await readRoom(p);
+    assert.equal(room.zones.find(zone => zone.zoneId === "blok-m").controllerTeamId, null);
+    assert.deepEqual(Object.values(room.zones.find(zone => zone.zoneId === "blok-m").weightsByTeam).sort(), [0, 1, 1]);
+  }
+  await pageP3.route("**/api/map/config", route => route.fulfill({ json: {
+    mode: "geoapify-vector", styleUrl: "/qa-unavailable-group-map", mapLibreLicenseUrl: "/licenses/maplibre-gl.txt",
+  } }));
+  await pageP3.route("**/qa-unavailable-group-map", route => route.abort());
+  await pageP3.reload();
+  const fallback = pageP3.getByRole("complementary", { name: "Papan landmark" });
+  const fallbackZone = fallback.getByRole("list", { name: "Kepemilikan Zona" }).locator('[data-zone-id="blok-m"]');
+  await fallbackZone.getByText("Seri", { exact: true }).waitFor();
+  await fallback.getByRole("list", { name: "Daftar Landmark" }).waitFor();
+
+  // A third landmark restores Tim 2's control and color on the mounted map, score panel and fallback.
+  await checkIn(pageP2, "blok-m-plaza");
+  await clickAndWaitPost(pageP2, 'button[data-action="bail-challenge"]');
+  await fallbackZone.getByText(/Dikuasai Tim 2/).waitFor();
+  const p1Zone = pageP1.getByRole("img", { name: "Blok M (Dikuasai Tim 2)" });
+  const p1Badge = pageP1.getByRole("list", { name: "Kepemilikan Zona" }).locator('[data-zone-id="blok-m"] [data-zone-state="controlled"]');
+  await p1Badge.getByText(/Dikuasai Tim 2/).waitFor();
+  for (const viewport of [{ width: 390, height: 844 }, { width: 320, height: 640 }]) {
+    await pageP1.setViewportSize(viewport);
+    assert.equal(await p1Zone.evaluate(el => getComputedStyle(el).color), teamTwoColor);
+    assert.equal(await p1Badge.evaluate(el => getComputedStyle(el).color), teamTwoColor);
+    assert.ok(await contrastRatio(p1Zone) >= 4.5);
+    assert.ok(await contrastRatio(p1Badge) >= 4.5);
+    assert.ok(await pageP1.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await p1Badge.scrollIntoViewIfNeeded();
+    await pageP1.screenshot({ path: path.join(results, `rulebook-claim-zones-${viewport.width}.png`) });
+    await pageP1.getByRole("button", { name: /Lihat peta/ }).click();
+    await pageP1.screenshot({ path: path.join(results, `rulebook-claim-map-zones-${viewport.width}.png`) });
+    await pageP1.getByRole("button", { name: /Buka panel/ }).click();
+  }
+  await pageP1.setViewportSize({ width: 390, height: 844 });
 
   // Abort SSE /events on P2 -> verify automatic 3s polling fallback delivers rival photo review cleanly
   await pageP2.route(`**/api/rulebooks/rooms/${roomCode}/events`, route => route.abort());
@@ -405,7 +513,7 @@ try {
     pageP2.waitForResponse(r => r.url().includes(`/api/rulebooks/recaps/${roomCode}/share`) && r.status() === 200),
     pageP2.getByRole("button", { name: "Bagikan ke komunitas", exact: true }).click(),
   ]);
-  assert.match(await pageP2.getByTestId("recap-visibility-badge").innerText(), /Publik/);
+  await pageP2.getByTestId("recap-visibility-badge").filter({ hasText: /Publik/ }).waitFor();
   const publicHref = await pageP2.getByTestId("public-recap-link").getAttribute("href");
   assert.match(publicHref, /^\/\?shared=SR-[\dA-F]{12}$/);
   assert.ok(await pageP2.evaluate(() => document.documentElement.scrollWidth <= innerWidth));

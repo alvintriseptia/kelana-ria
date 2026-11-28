@@ -14,11 +14,14 @@ export function practiceDeck(edition: CatalogEdition, mode: RulebookPlayMode, fa
       triggers?.onBoldChallenge ? "menyelesaikan tantangan ekstra yang memberi kartu" : "",
     ].filter(Boolean);
     if (!earns && !triggerNames.length) return;
-    const reason = earns ? "Kamu mengunci landmark dan dapat 1 kartu."
+    const draw = Math.min(rules.claimRewardDrawCount ?? 1, rules.totalCards);
+    const reason = earns ? (rules.claimRewardDrawCount
+      ? `Kamu mengunci landmark dan memilih satu dari ${draw} kartu hadiah.`
+      : "Kamu mengunci landmark dan dapat 1 kartu.")
       : "Lihat contoh kartu yang bisa kamu dapat di edisi ini.";
     const extra = triggerNames.length ? ` Kamu ${earns ? "juga " : ""}bisa mendapat kartu saat ${triggerNames.join(" atau ")}.` : "";
     return {
-      examples, draw: 1, keep: 1, handLimit: rules.maxHandSize, decisionMs: 0, earns,
+      examples, draw, keep: 1, handLimit: rules.maxHandSize, decisionMs: 0, earns,
       source: reason + extra,
     };
   }

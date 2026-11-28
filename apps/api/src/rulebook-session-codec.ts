@@ -149,6 +149,7 @@ export function deserializeLiveSession(
       })),
       deck: {
         ...raw.match.deck,
+        rewardOffersBySeat: raw.match.deck.rewardOffersBySeat ?? {},
         rngInt: defaultRngInt,
       },
       appliedActions: new Map(raw.match.appliedActions),

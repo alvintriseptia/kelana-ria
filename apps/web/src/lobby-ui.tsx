@@ -353,7 +353,7 @@ export function PostMatchActions({
       <div ref={boxRef} class="postmatch-actions" data-testid="postmatch-actions">
         <button
           type="button"
-          class="sg-main"
+          class="postmatch-play-again"
           data-action="play-again"
           data-testid="postmatch-play-again"
           disabled={busy}

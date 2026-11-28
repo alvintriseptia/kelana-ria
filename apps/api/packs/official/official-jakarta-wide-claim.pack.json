@@ -744,6 +744,7 @@
   "tacticalDeck": {
     "enabled": true,
     "maxHandSize": 3,
+    "claimRewardDrawCount": 3,
     "drawTriggers": {
       "onLock": true,
       "onSteal": true,

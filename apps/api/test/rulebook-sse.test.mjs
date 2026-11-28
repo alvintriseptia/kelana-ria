@@ -426,6 +426,12 @@ test("Hide & Seek SSE pushes clue, photo, deck, and QA clock updates without lea
       assert.ok(pendingQ, "Expected pending photo question");
 
       // 4. Hider uploads photo answer -> Seeker receives immediate SSE update + Hider gets draw batch
+      const invalidPhoto = await hider.post("/api/rulebooks/seek-photo", {
+        roomCode, questionId: pendingQ.id, actionId: "invalid-photo", photoBase64: "YmFk",
+      });
+      assert.ok(invalidPhoto.status >= 400);
+      const beforePhoto = (await seeker.get(`/api/rulebooks/rooms/${roomCode}`)).body.activity;
+      assert.equal(beforePhoto.events.some(event => event.kind === "photo-clue"), false);
       const seekerRevBeforePhoto = seekerStream.events.at(-1).data.stateRev;
       const photoRes = await hider.post("/api/rulebooks/seek-photo", {
         roomCode,
@@ -437,6 +443,17 @@ test("Hide & Seek SSE pushes clue, photo, deck, and QA clock updates without lea
       assert.equal(photoRes.body.error, undefined, JSON.stringify(photoRes.body));
       const afterPhotoEv = await seekerStream.waitForEvent((ev) => ev.data.stateRev > seekerRevBeforePhoto);
       assert.ok(afterPhotoEv.data.stateRev > seekerRevBeforePhoto);
+
+      const getPhotoNotices = async client => (await client.get(`/api/rulebooks/rooms/${roomCode}`)).body.activity.events
+        .filter(event => event.kind === "photo-clue");
+      const notices = await getPhotoNotices(seeker);
+      assert.equal(notices.length, 1);
+      assert.equal(notices[0].clueIndex, hiderAfterAsk.room.questions.findIndex(q => q.id === pendingQ.id));
+      assert.equal(notices[0].panel, "clues");
+      assert.equal(notices[0].alert, true);
+      assert.equal(JSON.stringify(notices).includes(pendingQ.id), false, "Exclude attachment IDs from notices");
+      assert.deepEqual(await getPhotoNotices(hider), []);
+      assert.deepEqual(await getPhotoNotices(seeker), notices, "A repeated read keeps the same sequence");
 
       // 5. Seeker asks a Radar clue (draw 2, keep 1) -> Hider answers -> resolves choose-draw via deck-action -> Seeker receives SSE update without leaking card identities
       const radarItem = seekerView.room.menu.find((entry) => entry.family === "radar" && entry.availableInCurrentPhase && !entry.isCustomRadius);

@@ -128,6 +128,7 @@ const AUTO_SAVE_FIELD_IDS = new Set([
   "ed-claim-fail-policy",
   "ed-claim-cooldown",
   "ed-claim-hand",
+  "ed-claim-reward-draw",
   "ed-cdeck-enabled",
   "ed-cdeck-maxc",
   "ed-seek-minp",
@@ -1703,6 +1704,10 @@ export function mountRulebookStudio(root: HTMLElement, onBack: () => void): () =
       if (cdEl) updatedPack.claiming.failCooldownMs = Number(cdEl.value || 5) * 60_000;
       const handEl = root.querySelector<HTMLInputElement>("#ed-claim-hand");
       if (handEl) updatedPack.tacticalDeck.maxHandSize = Number(handEl.value || 2);
+      const rewardDrawEl = root.querySelector<HTMLInputElement>("#ed-claim-reward-draw");
+      if (rewardDrawEl) {
+        updatedPack.tacticalDeck.claimRewardDrawCount = rewardDrawEl.value ? Number(rewardDrawEl.value) : undefined;
+      }
       const cdeckEnabledEl = root.querySelector<HTMLSelectElement>("#ed-cdeck-enabled");
       if (cdeckEnabledEl) updatedPack.tacticalDeck.enabled = cdeckEnabledEl.value === "true";
       const cdeckMaxcEl = root.querySelector<HTMLInputElement>("#ed-cdeck-maxc");

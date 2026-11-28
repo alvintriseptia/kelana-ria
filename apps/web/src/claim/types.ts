@@ -78,6 +78,7 @@ export type PendingClaimAction = {
   id: string;
   kind: string;
   cardInstanceId?: string;
+  offerId?: string;
   landmarkId?: string;
 };
 

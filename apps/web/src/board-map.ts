@@ -20,6 +20,7 @@ export type BoardMapPoint = SoloPoint & {
   markerText?: string;
   markerKind?: "thermometer" | "seeker" | "station" | "landmark" | "zone" | "rival";
   ownerStyle?: "mine" | "rival";
+  colors?: { foreground: string; background: string };
   freshness?: "fresh" | "aging" | "stale";
   dataAttrs?: Record<string, string>;
   eligible?: boolean;
@@ -75,6 +76,7 @@ type BoardMarkerEntry = {
   el: HTMLElement;
   tag: "BUTTON" | "SPAN";
   customClassList: string[];
+  colors?: BoardMapPoint["colors"];
   lat: number;
   lng: number;
   onClick: () => void;
@@ -685,6 +687,8 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
       tag: "BUTTON" | "SPAN";
       classes: string[];
       dataAttrs?: Record<string, string>;
+      colors?: BoardMapPoint["colors"];
+      role?: "img";
       text: string;
       title?: string;
       ariaLabel: string;
@@ -732,6 +736,8 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
           index < current.checkpoints.length && point.id === selectedId ? "board-map-pin-selected" : "",
         ].filter(Boolean),
         dataAttrs: point.dataAttrs,
+        colors: point.colors,
+        role: point.markerKind === "zone" ? "img" : undefined,
         text: point.markerText ?? (point.label ? `${index + 1} · ${point.name} · ${point.label}` : `${index + 1} · ${point.name}`),
         title: point.markerKind === "station" || point.markerKind === "landmark" || point.markerKind === "rival" ? point.name : undefined,
         ariaLabel: point.label ? `${point.name} (${point.label})` : point.name,
@@ -762,6 +768,13 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         existing.onClick = item.onClick;
         existing.customClassList = syncPinClasses(existing.el, existing.customClassList, item.classes);
         syncDataAttrs(existing.el, item.dataAttrs);
+        if (existing.colors?.foreground !== item.colors?.foreground) {
+          existing.el.style.color = item.colors?.foreground ?? "";
+        }
+        if (existing.colors?.background !== item.colors?.background) {
+          existing.el.style.backgroundColor = item.colors?.background ?? "";
+        }
+        existing.colors = item.colors;
         if (existing.el.textContent !== item.text) existing.el.textContent = item.text;
         existing.el.dataset.mapPoint = item.id;
         existing.el.setAttribute("aria-label", item.ariaLabel);
@@ -783,6 +796,7 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
           el,
           tag: item.tag,
           customClassList: item.classes,
+          colors: item.colors,
           lat: item.lat,
           lng: item.lng,
           onClick: item.onClick,
@@ -793,6 +807,11 @@ export function mountBoardMap(options: BoardMapOptions): BoardMapHandle {
         }
         el.classList.add(...item.classes);
         syncDataAttrs(el, item.dataAttrs);
+        if (item.colors) {
+          el.style.color = item.colors.foreground;
+          el.style.backgroundColor = item.colors.background;
+        }
+        if (item.role) el.setAttribute("role", item.role);
         if (item.title !== undefined) el.title = item.title;
         el.dataset.mapPoint = item.id;
         el.textContent = item.text;

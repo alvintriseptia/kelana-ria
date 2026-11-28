@@ -26,6 +26,7 @@ import {
 import { ClaimLobbyView } from "./claim/ClaimLobbyView";
 import { ClaimRivalPositionsList, ClaimScorePanel } from "./claim/ClaimScorePanel";
 import { ClaimDraftBar } from "./claim/ClaimShared";
+import { claimZoneOwnership, ClaimZoneList } from "./claim/ClaimZoneOwnership";
 import {
   cardTargets,
   destructiveExitSpec,
@@ -33,6 +34,7 @@ import {
   isQaRoom,
   landmarkStatus,
   nextFreshTeamId,
+  orderedTeamIds,
   readSessionId,
   resolveQaCoord,
   seatInitials,
@@ -339,6 +341,7 @@ function ClaimPlayApp({
 
   function buildClaimMapState(payload: ClaimRoomPayload): BoardMapUpdateOptions {
     const { room, publicBoard } = payload;
+    const teams = orderedTeamIds(room.seats);
     const mapNow = clockNowSig.peek();
     const stateById = new Map(room.landmarks.map((lm) => [lm.landmarkId, lm]));
     const targets =
@@ -454,20 +457,9 @@ function ClaimPlayApp({
       labels: room.zones.flatMap((zone) => {
         const points = publicBoard.landmarks.filter((lm) => lm.zoneId === zone.zoneId);
         if (points.length === 0) return [];
-        const controller = zone.controllerTeamId;
-        const soloDone = room.landmarks.some(
-          (lm) =>
-            lm.zoneId === zone.zoneId && lm.status === "locked" && lm.ownerTeamId === room.teamId,
-        );
-        const owner = room.isSolo
-          ? soloDone
-            ? "Tercapai"
-            : ""
-          : controller
-            ? controller === room.teamId
-              ? "Kamu"
-              : "Lawan"
-            : "";
+        const { state, label, visual } = claimZoneOwnership(room, zone, teams);
+        const markerState = visual && !room.isSolo ? `${visual.shape} ${visual.label}`
+          : state === "unclaimed" ? (room.isSolo ? "Belum" : "Netral") : label;
         return [
           {
             id: `zone:${zone.zoneId}`,
@@ -476,10 +468,11 @@ function ClaimPlayApp({
             y: 50,
             latitude: points.reduce((sum, point) => sum + point.latitude, 0) / points.length,
             longitude: points.reduce((sum, point) => sum + point.longitude, 0) / points.length,
-            markerText: owner ? `${zone.label} · ${owner}` : zone.label,
+            markerText: `${zone.label} · ${markerState}`,
             markerKind: "zone",
-            ownerStyle: owner ? (owner === "Lawan" ? "rival" : "mine") : undefined,
-            label: owner || "Netral",
+            dataAttrs: { "data-zone-state": state },
+            colors: visual && { foreground: visual.accent, background: visual.bg },
+            label,
           },
         ];
       }),
@@ -609,7 +602,7 @@ function ClaimPlayApp({
   function ensurePendingAction(
     signature: string,
     kind: string,
-    meta?: { cardInstanceId?: string; landmarkId?: string },
+    meta?: Pick<PendingClaimAction, "cardInstanceId" | "landmarkId" | "offerId">,
     persistKey?: string,
   ): PendingClaimAction {
     if (pendingActionRef.current?.signature === signature) return pendingActionRef.current;
@@ -628,13 +621,15 @@ function ClaimPlayApp({
   function reconcilePendingAction(room: ClaimEngineRoomView) {
     const pending = pendingActionRef.current;
     if (!pending) return;
-    const { kind, cardInstanceId, landmarkId } = pending;
+    const { kind, cardInstanceId, landmarkId, offerId } = pending;
     let resolvedOnServer = false;
     if (kind === "play-card" && cardInstanceId) {
       resolvedOnServer = !room.ownHand.some((card) => card.instanceId === cardInstanceId);
       if (resolvedOnServer && selectedCardIdSig.value === cardInstanceId) {
         selectedCardIdSig.value = "";
       }
+    } else if (kind === "choose-claim-reward" && offerId) {
+      resolvedOnServer = room.ownClaimReward?.offerId !== offerId;
     } else if (kind === "check-in-landmark" && landmarkId) {
       resolvedOnServer = room.ownActiveAttempt?.landmarkId === landmarkId;
     } else if (kind === "start") {
@@ -957,6 +952,7 @@ function ClaimPlayApp({
     const landmarkId = typeof action.landmarkId === "string" ? action.landmarkId : undefined;
     const cardInstanceId =
       typeof action.cardInstanceId === "string" ? action.cardInstanceId : undefined;
+    const offerId = typeof action.offerId === "string" ? action.offerId : undefined;
     const targetSeatId =
       typeof action.targetSeatId === "string" ? action.targetSeatId : undefined;
     const curseId =
@@ -967,6 +963,7 @@ function ClaimPlayApp({
       type,
       landmarkId,
       cardInstanceId,
+      offerId,
       targetSeatId,
       curseId,
       action.tier,
@@ -976,7 +973,7 @@ function ClaimPlayApp({
       action.name,
       action.ready,
     ]);
-    const pending = ensurePendingAction(signature, type, { cardInstanceId, landmarkId });
+    const pending = ensurePendingAction(signature, type, { cardInstanceId, landmarkId, offerId });
     const previousAttempt = liveSig.value?.room.ownActiveAttempt;
     const { slot, targetId } = inlineSlotForRoomAction(action);
 
@@ -2260,6 +2257,7 @@ function ClaimPlayApp({
               onEnableLocation={() => liveLocationRef.current?.start()}
               onSelectLandmark={selectLandmark}
             />
+            <ClaimZoneList room={room} />
             <ClaimRivalPositionsList room={room} clockNowSig={clockNowSig} />
           </>
         )}
@@ -2435,6 +2433,17 @@ function ClaimPlayApp({
                     landmarkId,
                     targetSeatId,
                   });
+                });
+              }}
+              onChooseReward={(offerId, cardInstanceId) => {
+                runBusyAction("choose-claim-reward", "landmark-checkin", offerId, async () => {
+                  if (await postRoomAction({ type: "choose-claim-reward", offerId, cardInstanceId })) {
+                    requestAnimationFrame(() => {
+                      root.querySelector<HTMLElement>(
+                        '[data-action="choose-claim-reward"], [data-action="select-card"], [data-action="close-card"]',
+                      )?.focus({ preventScroll: true });
+                    });
+                  }
                 });
               }}
             />

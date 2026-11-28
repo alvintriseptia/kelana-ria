@@ -1,4 +1,38 @@
+import type { ClaimRewardOffer } from "@kelana-ria/contracts";
+import { CardInfo } from "../card-info";
+import { claimCardRules } from "../card-rules";
 import { cardLabels, cardTargets, type ClaimRoomPayload } from "./types";
+
+function ClaimRewardChoices({ offer, busy, onChoose }: {
+  offer: ClaimRewardOffer;
+  busy: boolean;
+  onChoose: (offerId: string, cardInstanceId: string) => void;
+}) {
+  return (
+    <section aria-labelledby="cg-reward-title">
+      <h3 id="cg-reward-title">Pilih satu kartu hadiah</h3>
+      <div class="cg-reward-options">
+        {offer.cards.map((item) => (
+          <div key={item.instanceId} class="cg-reward-option">
+            <button
+              type="button"
+              class="sg-pick"
+              data-action="choose-claim-reward"
+              aria-label={`Simpan ${item.title}`}
+              aria-describedby={`cg-reward-${item.instanceId}`}
+              disabled={busy}
+              onClick={() => onChoose(offer.offerId, item.instanceId)}
+            >
+              <strong>{item.title}</strong>
+              <span id={`cg-reward-${item.instanceId}`}>{item.description}</span>
+            </button>
+            <CardInfo title={item.title} description={item.description} rules={claimCardRules(item.effect)} />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 export function ClaimCardsPanel({
   payload,
@@ -10,6 +44,7 @@ export function ClaimCardsPanel({
   onSelectCard,
   onCloseCard,
   onSelectRival,
+  onChooseReward,
   onPlayCard,
 }: {
   payload: ClaimRoomPayload;
@@ -21,6 +56,7 @@ export function ClaimCardsPanel({
   onSelectCard: (instanceId: string) => void;
   onCloseCard: () => void;
   onSelectRival: (seatId: string) => void;
+  onChooseReward: (offerId: string, cardInstanceId: string) => void;
   onPlayCard: (cardInstanceId: string, landmarkId?: string, targetSeatId?: string) => void;
 }) {
   const { room, publicBoard } = payload;
@@ -33,6 +69,9 @@ export function ClaimCardsPanel({
     );
   }
 
+  const rewardChoices = room.ownClaimReward
+    ? <ClaimRewardChoices offer={room.ownClaimReward} busy={busy} onChoose={onChooseReward} />
+    : null;
   const card = room.ownHand.find((item) => item.instanceId === selectedCardId);
   if (!card) {
     return (
@@ -41,8 +80,9 @@ export function ClaimCardsPanel({
           <h2>Kartu</h2>
           <span class="rb-badge">{room.ownHand.length}</span>
         </div>
+        {rewardChoices}
         {room.ownHand.length === 0 ? (
-          <p>Kunci atau rebut landmark untuk menarik kartu.</p>
+          !rewardChoices && <p>Kunci atau rebut landmark untuk menarik kartu.</p>
         ) : (
           <div class="cg-card-stack">
             {room.ownHand.map((item) => {
@@ -95,6 +135,8 @@ export function ClaimCardsPanel({
         </button>
       </div>
       <p>{card.description}</p>
+      <CardInfo title={card.title} description={card.description} rules={claimCardRules(card.effect)} />
+      {rewardChoices}
       {rivals.length > 0 && (
         <div class="sg-picks" aria-label="Pilih lawan">
           {rivals.map((seat) => (

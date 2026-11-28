@@ -231,6 +231,19 @@ test("valid synthetic ClaimRulebookPack passes all gates with all 6 challenge an
   assert.ok(result.summary.feasibleSoloOpenings >= 2);
 });
 
+test("validates an optional whole-number draw count from one to six", () => {
+  const snapshot = buildSnapshot();
+  const pack = buildClaimPack(snapshot);
+  for (const drawCount of [undefined, 1, 3, 6]) {
+    pack.tacticalDeck.claimRewardDrawCount = drawCount;
+    assert.equal(api.validateClaimRulebook(pack, snapshot).ok, true);
+  }
+  for (const drawCount of [0, 1.5, 7, "3", null]) {
+    pack.tacticalDeck.claimRewardDrawCount = drawCount;
+    assert.ok(api.validateClaimRulebook(pack, snapshot).errors.some((error) => error.code === "invalid-claim-reward-draw"));
+  }
+});
+
 test("rejects unknown zone assignment, unreviewed challenge, missing backupPool, and unbounded photo autoApproveMs", () => {
   const snapshot = buildSnapshot();
   const base = buildClaimPack(snapshot);
