@@ -1306,7 +1306,7 @@ try {
     await navPage.getByTestId("claim-landmark-directions").waitFor();
     const lmDirHref = await navPage.getByTestId("claim-landmark-directions").getAttribute("href");
     assert.ok(lmDirHref?.includes(`${targetLm.latitude}`), `Expected landmark coordinates in Google Maps URL, got ${lmDirHref}`);
-    assert.equal(await navPage.locator("#rb-claim-map-host").getAttribute("data-check-in-target"), String(checkRadius));
+    await navPage.locator(`#rb-claim-map-host[data-check-in-target="${checkRadius}"]`).waitFor({ state: "attached" });
 
     // Out of range
     await navPage.evaluate(({ lat, lng }) => window.__pushNavFix(lat + 0.003, lng, 15), { lat: targetLm.latitude, lng: targetLm.longitude });
