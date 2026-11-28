@@ -1,40 +1,34 @@
 # Kelana Ria
 
-A started Codex session owns one GitHub issue at a time. The PRD in [docs](docs/Exploration_Game_MVP_PRD.md) defines the game. Each acceptance scenario has an [owning issue](docs/acceptance.md). Keep trial rules, simulated runs and field observations labeled.
+One Codex session owns one GitHub issue at a time. The [PRD](docs/Exploration_Game_MVP_PRD.md) defines the game. The [acceptance index](docs/acceptance.md) links each scenario to its owning issue. Label trial rules, simulated evidence, and field observations.
 
-## Factory rules for planning and game design
-- **Put plans into GitHub delivery issues.** Do not write standalone unlinked design/plan specs into the repository. Convert approved plans into ordered GitHub issues using [`.github/ISSUE_TEMPLATE/work.yml`](.github/ISSUE_TEMPLATE/work.yml) (`## Outcome`, strict `## Dependencies` containing only `None` or `#N, #M`, `## Requirements`, `## Verification`) with `ready` and `priority:1` or `priority:2` labels so `factory/agent.py pickup` can claim them automatically.
-- **Keep game rules data-driven, never hardcoded.** Game engines must stay generic and free of hardcoded city names, stations, timers, question catalogs, decks, powerups, or curses. Official POC games must be authored as validated `RulebookPack` + `GeoSnapshot` data using the exact same schema and pre-publish validator that community marketplace creators use.
-- **Design every player & studio screen like a tactile mobile game, not a text-heavy admin form.** Prefer illustrated SVG/WebP assets, crisp visual card previews, compact iconography, color-independent shape badges, and interactive micro-tutorials over walls of prose. Enforce zero horizontal overflow (`scrollWidth <= innerWidth`) on `390x844` mobile viewports and keep persistent MapLibre map instances updated in-place (never tearing down and re-rendering the map on every click).
-- **Delete superseded code instead of keeping legacy shims during pre-release development.** Kelana Ria is still in pre-release development with no production legacy data or external customers to preserve. When a new design replaces an earlier flow, endpoint, schema field, UI control, or fallback (for example, replacing restore codes with Email OTP accounts), cleanly delete the superseded code, tests, and UI copy instead of maintaining backward-compatibility layers or dead UI.
-- **Autonomous merge through the ready queue.** Do not pause for maintainer review after each individual issue PR. Once you self-review the diff and all required `Factory CI` checks (`factory` and `workspace`) pass on a PR, squash-merge it into `main` (pinning the reviewed head SHA), clean up the finished worktree, pull `main`, and immediately claim the next ready issue. Continue until the ready queue is empty (or only `blocked` external-input issues remain), then present one consolidated review summary at the end. Never merge with failing or pending CI checks.
+## Delivery
 
-## Start a session
-
-Use Python 3.11+, Git and an authenticated GitHub CLI with repository read/write and Actions read access. Keep a clean checkout at the latest main as your control directory. From there, run:
+Use Python 3.11+, Git, and authenticated GitHub CLI with repository read/write and Actions read access. Start from a clean, current control checkout.
 
 ```sh
 git switch main
 git pull --ff-only origin main
 python3 factory/agent.py pickup
+python3 factory/agent.py context ISSUE_NUMBER
 ```
 
-Read the claimed issue and use the [GitHub delivery skill](.agents/skills/github-delivery/SKILL.md) to open a separate worktree and deliver it. When the queue is empty, report outstanding review or blockers and end the session. A future session can pick up newly ready work.
+The [GitHub delivery skill](.agents/skills/github-delivery/SKILL.md) defines worktree preparation, verification, exact-head review and squash merge, and recovery. Never merge with failing or pending required checks. After a verified merge, clean up its completed worktree and continue the ready queue without pausing after each PR. When there is no unclaimed ready work left, report outstanding evidence and blockers together.
 
-| When the issue touches | Load |
+Use the full issue and the relevant guidance. Follow the packet's source, test, dependency and PRD pointers to start reading. Widen the search when evidence warrants it. Run workspace checks with the Node version in `.nvmrc`, factory unit tests, and all applicable issue checks listed in the delivery skill.
+
+| Affected work | Required guidance |
 | --- | --- |
-| Player and Creator Studio screens, cards, motion, maps, accessibility or loading performance | [Mobile PWA](.agents/skills/mobile-pwa/SKILL.md) |
-| Sessions, clocks, claims, clues or scores | [Game rules](.agents/skills/game-rules/SKILL.md) |
-| AI, routing, content providers or payments | [Integration evidence](.agents/skills/integration-evidence/SKILL.md) |
+| Player or Studio screens, accessibility, cards, motion, maps, performance | [Mobile PWA](.agents/skills/mobile-pwa/SKILL.md) |
+| Editions, session state, clocks, claims, clues, hidden information, scores | [Game rules](.agents/skills/game-rules/SKILL.md) |
+| AI, routing, content providers, payments | [Integration evidence](.agents/skills/integration-evidence/SKILL.md) |
 
-## Verify and deliver
+## Product and evidence rules
 
-For workspace changes, run `npm ci` and `npm run build` with the Node version in `.nvmrc`. The [workspace guide](README.md) lists package boundaries and focused builds.
+- Use [the work issue template](.github/ISSUE_TEMPLATE/work.yml) for approved plans. List dependencies alone under `## Dependencies` as `None` or comma-separated issue references. Set ready or blocked status through the delivery skill.
+- Keep game engines generic. Author official data as validated `RulebookPack` and `GeoSnapshot` with the same schema and pre-publish validation as creator packs.
+- Keep player and Studio controls tactile and readable. Use existing art and shape plus color to signal state, keep touch targets usable, and test zero horizontal overflow at 390 × 844. Keep each MapLibre instance mounted and update its data in place.
+- Remove replaced pre-release flows, code, tests and UI copy. Preserve data privacy, verified rule gates, and the normal entry points for supported behavior.
+- Reuse the existing claim and PR when resuming a stopped session. Keep dirty, interrupted, or blocked work recoverable on its branch.
 
-Run `python3 -m unittest discover -s factory -v` from the issue worktree. Add the issue-specific checks from the relevant skill. Open a PR against main with a standalone `Closes #N` line and links to evidence. Monitor CI and fix recoverable failures.
-
-Once all `Factory CI` checks succeed on the current PR head SHA and you have reviewed the full diff for accuracy and scope, squash-merge the PR into `main` (pinning the head SHA), pull `main`, and immediately continue to the next ready issue in the queue. Only stop for maintainer review after all ready tasks are complete (or when an issue requires external human input and is labeled `blocked`). Never bypass a failed CI gate.
-
-## Recover work
-
-For an explicitly handed-off or interrupted issue, confirm the previous session has stopped, then run `python3 factory/agent.py resume ISSUE_NUMBER` from current main. Reuse its branch and open PR. Read issue comments, commits and CI before continuing. An existing claim always wins over another pickup. Keep the branch when a task blocks so its history survives.
+Record GitHub delivery evidence and separate optional efficiency telemetry with the [Factory baseline](docs/qa/factory-efficiency-baseline.md).
