@@ -458,7 +458,8 @@ function ClaimPlayApp({
         const points = publicBoard.landmarks.filter((lm) => lm.zoneId === zone.zoneId);
         if (points.length === 0) return [];
         const { state, label, visual } = claimZoneOwnership(room, zone, teams);
-        const markerState = visual && !room.isSolo ? `${visual.shape} ${visual.label}` : label;
+        const markerState = visual && !room.isSolo ? `${visual.shape} ${visual.label}`
+          : state === "unclaimed" ? (room.isSolo ? "Belum" : "Netral") : label;
         return [
           {
             id: `zone:${zone.zoneId}`,

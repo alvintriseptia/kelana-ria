@@ -50,7 +50,7 @@
   z-index: 2;
 }
 .cg-board .board-map-pin-zone {
-  margin-top: -24px;
+  margin-top: -36px;
   border-radius: 8px;
   background: #f6fbf7;
   color: #244438;
@@ -58,6 +58,7 @@
   box-shadow: 0 1px 4px #0b35253d;
   padding: 3px 6px;
   font: 800 .68rem/1.2 "DM Sans", sans-serif;
+  z-index: 3;
   pointer-events: none;
 }
 .cg-board .board-map-pin-zone[data-zone-state="unclaimed"],
